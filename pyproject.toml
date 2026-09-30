@@ -1,6 +1,6 @@
 [project]
 name = "hermes-call-dev"
-version = "0.6.1"
+version = "0.6.2"
 requires-python = ">=3.11"
 dependencies = ["hermescall-common", "hermescall-relay", "hermescall-bridge", "hermescall-testclient"]
 

@@ -1,6 +1,6 @@
 [project]
 name = "hermescall-relay"
-version = "0.6.1"
+version = "0.6.2"
 description = "Hermes Call relay: signaling rendezvous, TURN credentials and VoIP push"
 requires-python = ">=3.11"
 license = "MIT"

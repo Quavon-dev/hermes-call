@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 and iOS app share one version; the Hermes plugin (`hermes-integration/hermes-call`) is
 versioned separately and is at **0.7.0** in this release.
 
+## [0.6.2]
+
+- Relay and bridge commands work through `pct exec` (no login shell): the relay command lives in
+  `/usr/local/bin`, both wrappers set their own PATH.
+- Proxmox helper: a domain without a DNS record yet only warns instead of ending the helper.
+
 ## [0.6.1]
 
 - Relay: `--tls proxy` for running behind an existing reverse proxy (Nginx Proxy Manager, Traefik,
