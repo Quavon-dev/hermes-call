@@ -37,7 +37,9 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/m
 
 `ct/hermes-call-relay.sh` sets `COMMUNITY_SCRIPTS_URL` to this folder, so the community-scripts
 framework (`community-scripts/core`) fetches `install/hermes-call-relay-install.sh` from this
-repository. Unattended: `var_relay_address=relay.example.com` before the command.
+repository. It asks for the relay's domain on the host, before the container is created (the
+install script inside the container has no terminal); empty = public IP with a self-signed
+certificate. Unattended: `var_relay_address=relay.example.com` before the command.
 
 ## Status
 

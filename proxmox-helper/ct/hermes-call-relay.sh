@@ -23,6 +23,38 @@ var_unprivileged="${var_unprivileged:-1}"
 
 export var_relay_address="${var_relay_address:-}"
 
+# Asked here on the Proxmox host, before the container exists: the install script inside the
+# container has no terminal and cannot ask (the framework would silently use CHANGE_ME). Also in
+# "Default Settings" mode. Empty = the relay runs on the public IP with a self-signed certificate.
+ask_relay_address() {
+  [[ -z $var_relay_address && -t 0 ]] && command -v pct >/dev/null 2>&1 || return 0
+  local prompt="Domain for the relay, e.g. relay.example.com (Let's Encrypt).
+
+Its DNS A record must point at your public IP, with TCP 443 forwarded to the container.
+Leave empty to use your public IP with a self-signed certificate (the app pins it)."
+  if command -v whiptail >/dev/null 2>&1; then
+    var_relay_address=$(whiptail --backtitle "Proxmox VE Helper Scripts" --title "HERMES CALL RELAY" \
+      --inputbox "$prompt" 14 76 "" 3>&1 1>&2 2>&3) || var_relay_address=""
+  else
+    read -r -p "Domain for the relay (empty = public IP): " var_relay_address
+  fi
+  var_relay_address=$(tr '[:upper:]' '[:lower:]' <<<"${var_relay_address// /}")
+  [[ -z $var_relay_address ]] && return 0
+  if [[ ! $var_relay_address =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]]; then
+    echo "Not a domain name: $var_relay_address" >&2
+    exit 1
+  fi
+  local public resolved
+  public=$(curl -4fsS --max-time 10 https://api.ipify.org 2>/dev/null || true)
+  resolved=$(getent ahostsv4 "$var_relay_address" 2>/dev/null | awk 'NR==1 {print $1}')
+  if [[ -n $public && $resolved != "$public" ]]; then
+    echo "Warning: $var_relay_address resolves to ${resolved:-nothing}, your public IP is $public." >&2
+    echo "Let's Encrypt only works once the A record points at $public (the relay keeps retrying)." >&2
+  fi
+}
+ask_relay_address
+export var_relay_address
+
 header_info "$APP"
 variables
 color
@@ -77,7 +109,7 @@ msg_ok "Completed Successfully!\n"
 echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"
 echo -e "${INFO}${YW}Create a bridge pairing code inside the container with:${CL}"
 echo -e "${TAB}${BGN}pct exec ${CTID} -- hermescall-relay pair${CL}"
-if [[ -z ${var_relay_address:-} ]]; then
+if [[ -z ${var_relay_address:-} || ${var_relay_address} =~ ^[0-9.]+$ ]]; then
   echo -e "${INFO}${YW}The relay runs on your public IP. To use a domain instead (Let's Encrypt), point it at your IP, forward TCP 443 and run (then pair the bridge again):${CL}"
   echo -e "${TAB}${BGN}pct exec ${CTID} -- /opt/hermescall-relay/relay/install.sh install --domain relay.example.com --tls acme${CL}"
 fi

@@ -76,12 +76,10 @@ code. Pushes to the phone go through the Hermes Call push gateway, so no Apple a
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/proxmox-helper/ct/hermes-call-relay.sh)"
 ```
 
-It asks nothing: without a domain the relay runs on your public IP with a self-signed certificate
-that the app pins through the pairing QR. With a domain (Let's Encrypt), put it in front:
-
-```bash
-var_relay_address=relay.example.com bash -c "$(curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/proxmox-helper/ct/hermes-call-relay.sh)"
-```
+It asks one thing, also with the default settings: the **domain** for the relay (Let's Encrypt;
+its DNS A record must point at your public IP, and the helper warns if it does not yet). Leave it
+empty and the relay runs on your public IP with a self-signed certificate that the app pins through
+the pairing QR. Unattended: `var_relay_address=relay.example.com` in front of the command.
 
 Forward TCP 443, TCP/UDP 3478 and UDP 49160–49200 to the container ([details](docs/relay.md)).
 
