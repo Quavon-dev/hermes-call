@@ -14,7 +14,7 @@ network_check
 update_os
 
 # Release signing key (ssh-ed25519 public key of tools/release.sh). Installs fail closed without it.
-RELEASE_SIGNER="${RELEASE_SIGNER:-}"
+RELEASE_SIGNER="${RELEASE_SIGNER:-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBZcryC9omwjnjag9wJHwPgVH4MH+sfVxJAMs/NeplTx}"
 
 fetch_verified_release() {
   [[ -n $RELEASE_SIGNER ]] || { msg_error "RELEASE_SIGNER is not set: refusing to install an unverified release"; exit 1; }
