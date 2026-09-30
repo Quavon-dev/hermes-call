@@ -77,12 +77,20 @@ final class AppModel {
         HUDTheme.shared.apply(activeProfile?.agentPalette ?? .gold)
         PresenceStill.refresh(activeProfile?.agentPalette ?? .gold)
         SharedContainer.defaults.set(activeProfile?.bridgeName ?? RelayProfile.defaultAgentName, forKey: SharedContainer.agentNameKey)
+        shareAgents()
+    }
+
+    /// Names and colours of the paired agents for the widget's agent picker and the share sheet (no keys).
+    private func shareAgents() {
+        AgentDirectory.save(profiles.map { AgentInfo(id: $0.id, name: $0.bridgeName, palette: $0.agentPalette.rawValue) },
+                            active: activeProfile?.id)
     }
 
     func setPalette(_ id: UUID, to palette: AgentPalette) {
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { return }
         profiles[index].palette = palette
         persist()
+        shareAgents()
         if id == preferences.activeProfileID { HUDTheme.shared.apply(palette) }
     }
 
@@ -121,6 +129,8 @@ final class AppModel {
         }
         await ChatStore.shared.deleteAll()
         ChatSnapshot.clear()
+        AgentDirectory.clear()
+        ChatBadge.reset()
         disconnect()
         for entry in borrowed.values { await entry.session.stop() }
         borrowed = [:]

@@ -77,9 +77,12 @@ struct HermesCallApp: App {
         }
     }
 
-    /// `hermescall://chat` and `hermescall://call` (widget, shortcuts); pairing links are handled by onboarding.
+    /// `hermescall://chat` and `hermescall://call` (widget, shortcuts; `?agent=<id>` picks the agent);
+    /// pairing links are handled by onboarding.
     private func open(_ url: URL) {
         guard url.scheme == "hermescall" else { return }
+        let agent = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "agent" }?.value
+        if let id = agent.flatMap(UUID.init(uuidString:)), id != app.activeProfile?.id { app.activate(id) }
         switch url.host {
         case "chat": app.tab = .chat
         case "call":

@@ -15,8 +15,9 @@ final class TaskActivityModel {
     private(set) var currentProfile: UUID?
 
     static let lingerAfterEnd: Duration = .seconds(4)
-    /// A running task without news for this long is treated as over (the bridge or the phone lost track).
-    static let staleAfter: TimeInterval = 15 * 60
+    /// A running task without news for this long is treated as over (a lost end message). The bridge
+    /// itself ends a turn after 10 minutes without events and sends `done`; this is that plus a margin.
+    static let staleAfter: TimeInterval = 11 * 60
 
     private let app: AppModel
     private let log = Logger(subsystem: "de.quavon.hermescall", category: "tasks")
@@ -81,7 +82,7 @@ final class TaskActivityModel {
         current = update
         currentProfile = profile
         clearTask?.cancel()
-        enqueue { await self.showActivity(update, agentName: agentName) }
+        enqueue { await self.showActivity(update, profile: profile, agentName: agentName) }
         // Ended: linger briefly. Running: if the end never arrives (lost message), give up after `staleAfter`.
         let delay: Duration = update.state == .running ? .seconds(Self.staleAfter) : Self.lingerAfterEnd
         clearTask = Task {
@@ -123,7 +124,7 @@ final class TaskActivityModel {
 
     // MARK: Live Activity
 
-    private func showActivity(_ update: TaskUpdate, agentName: String) async {
+    private func showActivity(_ update: TaskUpdate, profile: UUID, agentName: String) async {
         // The Lock Screen names the step only when the owner allowed it (same rule as pushed updates).
         let state = update.contentState(details: app.preferences.taskDetailsOnLockScreen)
         let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(Self.staleAfter))
@@ -134,12 +135,19 @@ final class TaskActivityModel {
             return
         }
         if let running = activity, running.activityState == .active {
-            await Self.change(running.id, to: content, end: false)
-            return
+            // An activity names its agent for good: another agent's task gets its own.
+            if running.attributes.agentID == nil || running.attributes.agentID == profile {
+                await Self.change(running.id, to: content, end: false)
+                return
+            }
+            activity = nil
+            await Self.change(running.id, to: nil, end: true)
         }
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        let palette = app.profiles.first { $0.id == profile }?.agentPalette ?? .gold
+        let attributes = HermesTaskAttributes(agentID: profile, agentName: agentName, palette: palette.rawValue)
         do {
-            let started = try Activity.request(attributes: HermesTaskAttributes(), content: content, pushType: .token)
+            let started = try Activity.request(attributes: attributes, content: content, pushType: .token)
             activity = started
             watchToken(started)
         } catch {

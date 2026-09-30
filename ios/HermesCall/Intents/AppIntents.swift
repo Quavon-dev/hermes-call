@@ -13,9 +13,14 @@ final class AppServices {
         self.app = app
         self.chat = chat
         self.calls = calls
-        CallAgentIntent.handler = { [weak app, weak calls] in
+        CallAgentIntent.handler = { [weak app, weak calls] agent in
+            if let agent, agent != app?.activeProfile?.id { app?.activate(agent) }
             app?.tab = .call
             await calls?.startCall()
+        }
+        OpenChatIntent.handler = { [weak app] agent in
+            if let agent, agent != app?.activeProfile?.id { app?.activate(agent) }
+            app?.tab = .chat
         }
     }
 }
@@ -38,17 +43,6 @@ struct AskAgentIntent: AppIntent {
         case .sent: return .result(value: "", dialog: "Sent. The answer will arrive in Hermes Call.")
         case .failed: return .result(value: "", dialog: "Your relay could not be reached. The message waits in the outbox.")
         }
-    }
-}
-
-struct OpenChatIntent: AppIntent {
-    static let title: LocalizedStringResource = "Open Hermes Chat"
-    static let openAppWhenRun = true
-
-    @MainActor
-    func perform() async throws -> some IntentResult {
-        AppServices.shared.app?.tab = .chat
-        return .result()
     }
 }
 
