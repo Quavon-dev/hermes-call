@@ -46,11 +46,13 @@ def parse_networks(values: object) -> tuple[Network, ...]:
     return tuple(ipaddress.ip_network(str(net)) for net in values)
 
 
-def key(ip: str, prefix: int = 64) -> str:
-    """Rate-limit key: the IPv4 address, or the IPv6 /`prefix` it belongs to."""
+def key(ip: str, prefix: int = 64, v4_prefix: int = 32) -> str:
+    """Rate-limit key: the IPv4 address (or its /`v4_prefix`), or the IPv6 /`prefix` it belongs to."""
     address = _address(ip)
     if address is None:
         return ip
     if address.version == 6:
         return str(ipaddress.ip_network(f"{address}/{prefix}", strict=False))
+    if v4_prefix < 32:
+        return str(ipaddress.ip_network(f"{address}/{v4_prefix}", strict=False))
     return str(address)

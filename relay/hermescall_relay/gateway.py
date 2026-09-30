@@ -30,7 +30,7 @@ from hermescall_common.wire import b64d
 
 from . import logs, pushauth
 from .config import ApnsConfig, ConfigError
-from .gateway_state import GatewayState
+from .gateway_state import REPLAY_SECONDS, GatewayState
 from .metrics import CONTENT_TYPE, Registry
 from .netutil import Network, parse_networks
 from .netutil import client_ip as forwarded_client_ip
@@ -64,6 +64,11 @@ IPV6_PREFIX = 48
 NEW_RELAYS_PER_IP = (3600.0, 10)
 NEW_TOKENS_PER_RELAY = (3600.0, 60)
 MAX_KNOWN_RELAYS = 200_000
+# Replay cache entries per REPLAY_SECONDS: per relay (what RELAY_LIMIT allows) and per IPv4 /24 or
+# IPv6 /48, so one network cannot fill the cache for everyone (see gateway_state, PRESSURE_SEEN).
+SEEN_PER_RELAY = RELAY_LIMIT[1] * 2
+SEEN_PER_PREFIX = 4_800
+SEEN_IPV4_PREFIX = 24
 KNOWN_RELAY_SECONDS = 86_400.0
 # How often the blocklist files are checked for changes (SIGHUP reloads at once).
 RELOAD_SECONDS = 10.0
@@ -199,6 +204,8 @@ class PushGateway:
         self.relay_rate = _limiter(RELAY_LIMIT)
         self.new_relay_rate = _limiter(NEW_RELAYS_PER_IP)
         self.new_token_rate = _limiter(NEW_TOKENS_PER_RELAY)
+        self.seen_per_relay = _limiter((REPLAY_SECONDS, SEEN_PER_RELAY))
+        self.seen_per_prefix = _limiter((REPLAY_SECONDS, SEEN_PER_PREFIX))
         self.token_limits = {kind: [_limiter(limit) for limit in limits] for kind, limits in TOKEN_LIMITS.items()}
         self.known_relays = ExpiringSet(KNOWN_RELAY_SECONDS, MAX_KNOWN_RELAYS)
         self._stamps: tuple = ()
@@ -311,15 +318,17 @@ class PushGateway:
 
     async def _push(self, request: web.Request) -> PushResult:
         now = time.time()
-        ip_key = client_key(self.client_ip(request), IPV6_PREFIX)
+        ip = self.client_ip(request)
+        ip_key = client_key(ip, IPV6_PREFIX)
         if not self.ip_rate.allow(ip_key):
             raise Rejected(429, "rate_limited")
         try:
             body = await request.read()
         except web.HTTPRequestEntityTooLarge as exc:
             raise Rejected(413, "too_large") from exc
-        relay = self._authenticate(request.headers.get("Authorization", ""), body, now, ip_key)
-        kind, token, env, fields = parse_request(body)
+        relay, signature = self._authenticate(request.headers.get("Authorization", ""), body, now, ip_key)
+        kind, token, env, fields = parse_request(body)  # before anything is remembered
+        self._remember(relay, signature, client_key(ip, IPV6_PREFIX, SEEN_IPV4_PREFIX), now)
         limiters = self.token_limits[kind]
         if token not in limiters[0] and not self.new_token_rate.allow(relay):
             raise Rejected(429, "rate_limited")
@@ -330,13 +339,15 @@ class PushGateway:
         if not all(limiter.allow(token) for limiter in limiters):
             raise Rejected(429, "rate_limited")
         result = await self._send(kind, token, env, fields)
-        if result is PushResult.INVALID_TOKEN:
+        if result is PushResult.OK:
+            self.state.mark_delivered(relay, now)
+        elif result is PushResult.INVALID_TOKEN:
             self.state.forget(token)
         if result is not PushResult.OK:
             log.info("push for relay %s: %s", short(relay), result.value)
         return result
 
-    def _authenticate(self, header: str, body: bytes, now: float, ip_key: str) -> str:
+    def _authenticate(self, header: str, body: bytes, now: float, ip_key: str) -> tuple[str, bytes]:
         try:
             relay, signature = pushauth.verify(header, body, now)
         except pushauth.AuthError as exc:
@@ -349,7 +360,16 @@ class PushGateway:
             raise Rejected(429, "rate_limited")
         if not self.relay_rate.allow(relay):
             raise Rejected(429, "rate_limited")
-        # Persisted, so a restart does not re-open the window; refused (not evicted) when full.
+        return relay, signature
+
+    def _remember(self, relay: str, signature: bytes, prefix: str, now: float) -> None:
+        """Persists the signature, so a restart does not re-open the window; refused, never evicted,
+        when full. Under pressure only relays with a recent delivery get in: a flood from fresh
+        keys cannot take the gateway away from the relays in use."""
+        if self.state.under_pressure() and not self.state.delivered(relay, now):
+            raise Rejected(503, "busy")
+        if not (self.seen_per_relay.allow(relay) and self.seen_per_prefix.allow(prefix)):
+            raise Rejected(429, "rate_limited")
         seen = self.state.remember_signature(signature, now)
         if seen == "replayed":
             raise Rejected(401, "replayed")
@@ -358,7 +378,6 @@ class PushGateway:
         if not self.known_relays.add(relay, now):
             self.known_relays.evict_oldest()
             self.known_relays.add(relay, now)
-        return relay
 
     async def _send(self, kind: str, token: str, env: str, fields: dict) -> PushResult:
         if kind == "voip":

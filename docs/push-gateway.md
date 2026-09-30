@@ -27,9 +27,10 @@ The gateway receives exactly what the relay would otherwise send to Apple, and n
 It keeps no content and no access logs (Caddy logging is off); the service log contains only a
 6-character relay id prefix and the push result when Apple rejects a push. Rate counters live in
 memory. On disk it keeps, for abuse protection only: SHA-256 hashes of request signatures for two
-minutes (replay protection that survives a restart) and, per **SHA-256 hash of a push token**,
-which relay ids used it in the last 30 days (see [Token binding](#token-binding)); rows are
-deleted 30 days after their last use. The raw token is never stored. It cannot read calls or messages and cannot reach your relay or bridge. A
+minutes (replay protection that survives a restart; see [Replay cache](#replay-cache)), per
+**SHA-256 hash of a push token**, which relay ids used it in the last 30 days (see [Token
+binding](#token-binding)), and which relay ids had a push accepted by Apple in the last 30 days;
+rows are deleted 30 days after their last use. The raw token is never stored. It cannot read calls or messages and cannot reach your relay or bridge. A
 ring it sends for a call your bridge did not confirm is ended by the app after asking the bridge
 over the E2E channel (see [iOS app](ios.md)), as with a misbehaving relay.
 
@@ -78,11 +79,24 @@ Limits (in memory, per gateway process):
 | relay | 600 requests per minute, 60 new device tokens per hour |
 | IP (IPv6 /48) | 1200 requests per minute, 10 new relay keys per hour |
 | device token, relays | at most 5 different relay keys within 30 days ([Token binding](#token-binding)) |
+| replay cache entries | 1200 per relay and 4800 per IPv4 /24 or IPv6 /48 within 2 minutes ([Replay cache](#replay-cache)) |
 
 The per-token limits hold across relays, so nobody who learns a push token can flood that phone.
 The tables drop their least recently used entries when full instead of refusing newcomers, so
 filling them with made-up tokens or addresses cannot lock anyone out. Restarting the gateway
 resets the rate counters, not the replay cache or the token bindings.
+
+### Replay cache
+
+Every accepted signature is remembered (the first 16 bytes of its SHA-256, about 60 bytes per
+entry on disk) until it is too old to pass the clock check. The request body is checked before a
+signature is remembered, so malformed requests take no room. The cache holds up to 2,000,000
+entries (roughly 120 MB); when it is full the gateway answers `503 busy` rather than forget a
+signature. So that a flood of validly signed requests from many freshly made relay keys cannot
+bring every relay to that point, two things hold: entries are capped per relay and per network
+(table above), and above 500,000 entries only relays that had a push accepted by Apple in the last
+30 days are admitted; other relays get `503 busy` (and retry) until the flood has aged out. A relay
+proves nothing by signing, but a delivery needs a real device token of the app.
 
 ### Token binding
 

@@ -137,3 +137,79 @@ async def test_unreadable_blocklist_keeps_the_previous_one(tmp_path: Path) -> No
     blocklist.write_bytes(b"\xff\xfe broken")
     assert not gateway.reload_blocklist()
     assert "A" * 43 in gateway.blocked
+
+
+# ---- replay cache pressure (a signed flood must not lock out everyone) -----------------------
+
+
+def gateway_limiter(limit: int):
+    from hermescall_relay.ratelimit import RateLimiter
+
+    return RateLimiter(limit=limit, window=gateway_state.REPLAY_SECONDS, evict=True)
+
+
+async def test_invalid_bodies_are_not_remembered(gw) -> None:
+    gateway, client, sent = gw
+    relay = Ed25519PrivateKey.generate()
+    for body in ({**voip(), "bind": {}}, {"kind": "voip"}, [1]):
+        assert (await post(client, relay, body)).status == 400
+    assert gateway.state.counts()["seen_signatures"] == 0 and not sent.sent
+
+
+def test_replay_cache_is_large_and_stores_short_hashes() -> None:
+    assert gateway_state.MAX_SEEN >= 2_000_000
+    state = GatewayState(None)
+    assert state.remember_signature(b"s" * 64, now=1) == "new"
+    assert state.remember_signature(b"s" * 64, now=2) == "replayed"
+    assert [len(row[0]) for row in state._db.execute("SELECT sig FROM seen")] == [gateway_state.SEEN_HASH_BYTES]
+    assert state.seen_count == 1
+
+
+def test_replay_cache_from_schema_1_still_detects_replays(tmp_path: Path) -> None:
+    import hashlib
+    import sqlite3
+
+    path = tmp_path / "gateway.db"
+    old = sqlite3.connect(path, isolation_level=None)
+    old.execute("CREATE TABLE seen(sig BLOB PRIMARY KEY, expires INTEGER NOT NULL) WITHOUT ROWID")
+    old.execute("INSERT INTO seen VALUES(?, ?)", (hashlib.sha256(b"s" * 64).digest(), 500))
+    old.execute("PRAGMA user_version = 1")
+    old.close()
+    state = GatewayState(path)
+    assert state.seen_signature(b"s" * 64, now=100) and state.remember_signature(b"s" * 64, now=100) == "replayed"
+    assert state.seen_count == 1
+
+
+async def test_under_pressure_only_relays_that_delivered_get_in(gw, monkeypatch) -> None:
+    gateway, client, sent = gw
+    monkeypatch.setattr(gateway_state, "PRESSURE_SEEN", 3)
+    proven = Ed25519PrivateKey.generate()
+    assert (await post(client, proven, voip())).status == 200  # a real delivery
+    flood = Ed25519PrivateKey.generate()
+    sent.invalid.update(f"{n:064x}" for n in range(4))  # made-up tokens: APNs never accepts them
+    statuses = [(await post(client, flood, voip(f"{n:064x}"))).status for n in range(4)]
+    assert statuses == [200, 200, 503, 503]
+    assert (await post(client, Ed25519PrivateKey.generate(), voip())).status == 503
+    assert (await post(client, proven, voip())).status == 200  # not locked out
+    assert gateway.state.seen_count == 4
+
+
+async def test_replay_entries_are_capped_per_relay_and_per_prefix(gw, monkeypatch) -> None:
+    gateway, client, sent = gw
+    monkeypatch.setattr(gateway, "seen_per_relay", gateway_limiter(2))
+    monkeypatch.setattr(gateway, "seen_per_prefix", gateway_limiter(3))
+    relay = Ed25519PrivateKey.generate()
+    statuses = [(await post(client, relay, voip(f"{n:064x}"))).status for n in range(3)]
+    assert statuses == [200, 200, 429]
+    other = Ed25519PrivateKey.generate()
+    statuses = [(await post(client, other, voip(f"{n:064x}"))).status for n in range(10, 13)]
+    assert statuses == [200, 429, 429]  # 127.0.0.1's prefix already has 2 of 3
+    assert gateway.state.seen_count == 3
+
+
+def test_prefix_key_groups_ipv4_by_24_and_ipv6_by_48() -> None:
+    from hermescall_relay.netutil import key
+
+    assert key("203.0.113.9", 48, 24) == key("203.0.113.200", 48, 24) == "203.0.113.0/24"
+    assert key("2001:db8:1:2::1", 48, 24) == "2001:db8:1::/48"
+    assert key("203.0.113.9", 48) == "203.0.113.9"
