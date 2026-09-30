@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import queue
+import re
 import threading
 import urllib.request
 from collections import OrderedDict
@@ -29,6 +30,7 @@ MAX_PREVIEW = 200
 MAX_QUEUE = 200
 MAX_TURNS = 16
 POST_TIMEOUT = 5.0
+TOOLSET = re.compile(r"[a-z0-9_-]{1,64}")
 
 Post = Callable[[dict[str, Any]], None]
 
@@ -53,6 +55,17 @@ def tool_preview(tool_name: str, args: object) -> str | None:
     except Exception:
         return None
     return preview[:MAX_PREVIEW] if isinstance(preview, str) and preview else None
+
+
+def tool_toolset(tool_name: str) -> str | None:
+    """The tool's toolset from Hermes' registry (labels the phone shows for tools it does not know)."""
+    try:
+        from tools.registry import registry
+
+        toolset = getattr(registry.get_entry(tool_name), "toolset", None)
+    except Exception:  # an older or changed Hermes: no label hint, never an error in the agent loop
+        return None
+    return toolset if isinstance(toolset, str) and TOOLSET.fullmatch(toolset) else None
 
 
 def _failed(result: object) -> bool:
@@ -86,6 +99,8 @@ class ProgressReporter:
         body = {"turn_id": turn_id, "tool": tool_name, "index": index, "state": "started"}
         if preview := tool_preview(tool_name, args):
             body["preview"] = preview
+        if toolset := tool_toolset(tool_name):
+            body["toolset"] = toolset
         self._enqueue(body)
 
     def tool_finished(self, turn_id: str, tool_name: str, tool_call_id: str, duration_ms: object, result: object) -> None:

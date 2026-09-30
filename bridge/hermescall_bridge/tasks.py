@@ -8,7 +8,6 @@ tool names ("task details"). Argument previews only ever travel E2E. Logs carry 
 """
 
 import asyncio
-import contextlib
 import itertools
 import logging
 import math
@@ -21,17 +20,18 @@ from typing import Any
 
 import aiohttp
 
-from hermescall_common import sodium, wire
 from hermescall_common.client import RelaySession
 from hermescall_common.e2e import Channel
 from hermescall_common.errors import ProtocolError
 
 from .state import Device, State
+from .transport import Transport
 
 log = logging.getLogger(__name__)
 
 STATES = ("started", "finished", "done", "failed")
-PROGRESS_KEYS = frozenset({"turn_id", "tool", "index", "state", "ok", "duration", "preview"})
+PROGRESS_KEYS = frozenset({"turn_id", "tool", "index", "state", "ok", "duration", "preview", "total", "toolset"})
+TOOLSET = re.compile(r"[a-z0-9_-]{1,64}")
 DEFAULT_TURN = "chat"
 MAX_TURN_ID = 64
 MAX_PREVIEW = 200
@@ -64,12 +64,32 @@ LABELS = {
 }
 
 
-def label_for(tool: str) -> str:
+# Hermes' tool metadata (the registry's toolset) labels tools the fixed map does not know.
+TOOLSET_LABELS = {
+    "web": "Searching the web",
+    "search": "Searching the web",
+    "terminal": "Running a command",
+    "code_execution": "Running code",
+    "file": "Working on files",
+    "browser": "Browsing",
+    "vision": "Looking at an image",
+    "image_gen": "Making an image",
+    "memory": "Remembering",
+    "skills": "Using a skill",
+    "delegation": "Delegating",
+    "cronjob": "Scheduling",
+    "hermes_call": "Using your phone",
+}
+
+
+def label_for(tool: str, toolset: str | None = None) -> str:
     """A short human label for the Dynamic Island; never derived from arguments."""
     if tool in LABELS:
         return LABELS[tool]
     if tool.startswith("browser_"):
         return "Browsing"
+    if toolset in TOOLSET_LABELS:
+        return TOOLSET_LABELS[toolset]
     return f"Using {tool}"[:MAX_LABEL]
 
 
@@ -82,6 +102,8 @@ class Progress:
     ok: bool | None = None
     duration: float | None = None
     preview: str | None = None
+    total: int | None = None
+    toolset: str | None = None
 
 
 def _number(value: object) -> bool:
@@ -112,7 +134,12 @@ def parse_progress(body: object) -> Progress:
         raise ValueError("duration: number ≥ 0")
     if preview is not None and (not isinstance(preview, str) or len(preview) > MAX_PREVIEW):
         raise ValueError("preview: at most 200 chars")
-    return Progress(turn_id, tool, index, state, ok, duration, preview or None)
+    total, toolset = body.get("total"), body.get("toolset")
+    if total is not None and (isinstance(total, bool) or not isinstance(total, int) or not 1 <= total <= MAX_STEP):
+        raise ValueError(f"total: integer 1–{MAX_STEP}")
+    if toolset is not None and (not isinstance(toolset, str) or not TOOLSET.fullmatch(toolset)):
+        raise ValueError("toolset: 1–64 chars of a–z 0–9 _ -")
+    return Progress(turn_id, tool, index, state, ok, duration, preview or None, total, toolset)
 
 
 @dataclass
@@ -122,6 +149,7 @@ class Turn:
     started_at: int  # ms since epoch of the turn's first event
     pushes: bool = True  # False: over the new-turn limit, shown in the app but no Live Activity pushes
     step: int = 0
+    total: int | None = None  # tools this turn will run, when Hermes knows it (never below step)
     tool: str = ""
     label: str = ""
     preview: str | None = None
@@ -148,6 +176,7 @@ class TaskService:
         self._state = state
         self._relay = relay
         self._channel = channel
+        self._transport = Transport(state, relay, channel)
         self._prefs = dict(prefs or {})
         self._save_prefs = save_prefs
         self._turn: Turn | None = None
@@ -200,7 +229,9 @@ class TaskService:
             return None  # a repeated start counts once
         turn.indexes.add(event.index)
         turn.step += 1
-        turn.tool, turn.label, turn.preview = event.tool, label_for(event.tool), event.preview
+        turn.tool, turn.label, turn.preview = event.tool, label_for(event.tool, event.toolset), event.preview
+        if event.total is not None:
+            turn.total = max(event.total, turn.total or 0)
         turn.e2e_pending = True
         turn.push_pending = set(self._state.devices) if turn.pushes else set()
         if turn.timer is None or turn.timer.done():
@@ -309,7 +340,7 @@ class TaskService:
             "type": "task",
             "turn_id": turn.turn_id,
             "step": turn.step,
-            "total": None,
+            "total": _total(turn),
             "tool": turn.tool,
             "label": turn.label,
             "state": turn.state,
@@ -336,7 +367,7 @@ class TaskService:
             event = "update" if device_id in turn.pushed or device_id in turn.informed else "start"
         content_state = {
             "step": min(turn.step, MAX_STEP),
-            "total": None,
+            "total": _total(turn),
             "label": turn.label if self.details(device_id) else GENERIC_LABEL,
             "state": turn.state,
             "startedAt": turn.started_at / 1000,
@@ -391,14 +422,11 @@ class TaskService:
     # ---- transport -------------------------------------------------------
 
     async def _mail(self, device: Device, body: dict[str, Any]) -> None:
-        mid = wire.b64e(sodium.random_bytes(16))
-        sealed = self._channel.seal(device.id, device.box_key, body, mid=mid)
-        try:
-            await self._relay.request({"t": "mail", "to": device.id, "id": mid, "data": sealed, "alert": False})
-        except TRANSPORT_ERRORS as exc:
-            log.warning("task end for %s not stored: %s", device.id[:6], exc)
+        await self._transport.mail(device, body, alert=False)
 
     async def _live(self, device: Device, body: dict[str, Any]) -> None:
-        sealed = self._channel.seal(device.id, device.box_key, body)
-        with contextlib.suppress(*TRANSPORT_ERRORS):
-            await self._relay.send({"t": "e2e", "to": device.id, "data": sealed})
+        await self._transport.live(device, body)
+
+
+def _total(turn: Turn) -> int | None:
+    return min(max(turn.total, turn.step), MAX_STEP) if turn.total is not None else None
