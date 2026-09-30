@@ -53,7 +53,7 @@ struct PresenceDeck: View {
             HUD.label("\(presentation.items.count)", size: 9)
             Spacer()
             Button(action: fold) {
-                Image(systemName: "chevron.down").font(.system(size: 13, weight: .semibold)).foregroundStyle(HUD.glow)
+                Image(systemName: "chevron.down").font(.footnote.weight(.semibold)).foregroundStyle(HUD.glow)
                     .frame(width: Metrics.iconButton, height: Metrics.iconButton)
             }
             .accessibilityLabel("Close results")

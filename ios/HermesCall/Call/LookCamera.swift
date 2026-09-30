@@ -111,6 +111,7 @@ struct LookPreview: UIViewRepresentable {
 struct LookSheet: View {
     @Environment(CallCoordinator.self) private var calls
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Called for every sent frame (the presence absorbs it).
     var onSent: () -> Void = {}
 
@@ -146,7 +147,7 @@ struct LookSheet: View {
                     Spacer()
                     if sentCount > 0 { HUD.label("\(sentCount) sent", size: 9).opacity(0.7) }
                     Button { dismiss() } label: {
-                        Image(systemName: "xmark").font(.system(size: 15, weight: .semibold)).foregroundStyle(HUD.light)
+                        Image(systemName: "xmark").font(.body.weight(.semibold)).foregroundStyle(HUD.light)
                             .frame(width: Metrics.iconButton, height: Metrics.iconButton)
                     }
                     .accessibilityLabel("Close")
@@ -184,7 +185,7 @@ struct LookSheet: View {
     private var controls: some View {
         HStack(spacing: 36) {
             Button { picking = true } label: {
-                Image(systemName: "photo.on.rectangle").font(.system(size: 20)).foregroundStyle(HUD.light)
+                Image(systemName: "photo.on.rectangle").font(.title3).foregroundStyle(HUD.light)
                     .frame(width: 52, height: 52).background(Circle().fill(Color.black.opacity(0.5)))
             }
             .accessibilityLabel("Show a photo from the library")
@@ -197,7 +198,7 @@ struct LookSheet: View {
             .disabled(allowed != true)
             .accessibilityLabel("Show this to the agent")
             Button { live.toggle() } label: {
-                Image(systemName: live ? "livephoto" : "livephoto.slash").font(.system(size: 20))
+                Image(systemName: live ? "livephoto" : "livephoto.slash").font(.title3)
                     .foregroundStyle(live ? HUD.glow : HUD.light)
                     .frame(width: 52, height: 52).background(Circle().fill(Color.black.opacity(0.5)))
             }
@@ -210,6 +211,8 @@ struct LookSheet: View {
         guard await calls.showImage(jpeg) else { return }
         sentCount += 1
         onSent()
+        // Reduce Motion: no flash (the counter still says it was sent).
+        guard !reduceMotion else { return }
         withAnimation(.easeOut(duration: 0.15)) { flash = true }
         try? await Task.sleep(for: .milliseconds(150))
         withAnimation(.easeIn(duration: 0.3)) { flash = false }

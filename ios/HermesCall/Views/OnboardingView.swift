@@ -22,18 +22,20 @@ struct OnboardingView: View {
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
-            if page < Self.pageCount - 1 {
-                Button {
-                    withAnimation { page += 1 }
-                } label: {
-                    Text("Continue").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 12)
-                .accessibilityIdentifier("onboarding.continue")
+            // Always laid out (hidden on the last page), so the page dots never jump.
+            Button {
+                withAnimation { page = min(page + 1, Self.pageCount - 1) }
+            } label: {
+                Text("Continue").frame(maxWidth: .infinity)
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 12)
+            .opacity(page < Self.pageCount - 1 ? 1 : 0)
+            .disabled(page == Self.pageCount - 1)
+            .accessibilityHidden(page == Self.pageCount - 1)
+            .accessibilityIdentifier("onboarding.continue")
         }
         .sheet(isPresented: $addingRelay) { AddRelayView() }
     }

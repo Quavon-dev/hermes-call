@@ -15,7 +15,11 @@ final class HermesCallUITests: XCTestCase {
 
     func testOnboardingDemoChatAndCall() throws {
         app.launch()
-        for _ in 0..<3 { tap("onboarding.continue") }
+        for page in 1...3 {
+            snap("onboarding-\(page)")
+            tap("onboarding.continue")
+        }
+        snap("onboarding-4")
         tap("onboarding.demo")
         XCTAssertTrue(app.buttons["consent.allow"].waitForExistence(timeout: 5))
         snap("consent")
@@ -79,6 +83,24 @@ final class HermesCallUITests: XCTestCase {
         tap("agent.Atlas")
         tap("demo.remove")
         XCTAssertTrue(app.buttons["onboarding.continue"].waitForExistence(timeout: 8), "removing the demo returns to onboarding")
+    }
+
+    func testPairingExplainsWhatIsWrong() throws {
+        app.launch()
+        for _ in 0..<3 { tap("onboarding.continue") }
+        tap("onboarding.addRelay")
+        let address = app.textFields["pair.address"]
+        XCTAssertTrue(address.waitForExistence(timeout: 5))
+        address.tap()
+        address.typeText("relay.example.com")
+        let code = app.textFields["Code, e.g. K7Q-4TXP9"]
+        code.tap()
+        code.typeText("12")
+        app.navigationBars["Add relay"].buttons["Pair"].tap()
+        let error = app.descendants(matching: .any)["pair.error"].firstMatch
+        XCTAssertTrue(error.waitForExistence(timeout: 5))
+        snap("pairing-error")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '8-character code'")).firstMatch.exists)
     }
 
     // MARK: helpers

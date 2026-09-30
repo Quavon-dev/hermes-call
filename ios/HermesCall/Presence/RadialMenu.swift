@@ -42,7 +42,7 @@ struct RadialMenu: View {
                     } label: {
                         VStack(spacing: 4) {
                             Image(systemName: item.symbol)
-                                .font(.system(size: 20, weight: .medium))
+                                .font(.title3.weight(.medium))
                                 .foregroundStyle(item.destructive ? HUD.alert : HUD.light)
                                 .frame(width: Self.itemSize, height: Self.itemSize)
                                 .background(Circle().fill(Color.black.opacity(0.8)))

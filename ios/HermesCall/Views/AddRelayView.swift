@@ -56,7 +56,13 @@ struct AddRelayView: View {
                     } header: {
                         Text("Relay and pairing code")
                     } footer: {
-                        Text("You can also paste the whole hermescall:// link into the address field.")
+                        // Right under the fields, so the keyboard never hides it.
+                        if let error {
+                            Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.subheadline)
+                                .accessibilityIdentifier("pair.error")
+                        } else {
+                            Text("You can also paste the whole hermescall:// link into the address field.")
+                        }
                     }
                 } else {
                     Section {
@@ -76,7 +82,7 @@ struct AddRelayView: View {
                     TextField("Name shown on the bridge", text: $deviceName)
                 }
 
-                if let error {
+                if let error, method == .scan {
                     Section {
                         Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                             .accessibilityIdentifier("pair.error")

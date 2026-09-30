@@ -130,6 +130,8 @@ final class ShareModel {
 
     /// Only when the app is not running: its own connection, up to 25 s.
     private static func deliver(_ message: ChatMessage, profile: RelayProfile, store: ChatStore) async -> Bool {
+        // Nothing reaches the agent before the owner allowed it in the app; the message waits in the outbox.
+        guard SharedContainer.hasAIConsent else { return false }
         guard let session = try? RelaySession(profile: profile, acceptsMail: false) else { return false }
         do {
             try await session.waitUntilConnected(timeout: 10)
