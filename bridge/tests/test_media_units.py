@@ -128,3 +128,15 @@ async def test_blob_transfer_through_the_relay(h) -> None:  # noqa: F811
     with pytest.raises(ProtocolError):
         await blobs.download(device.session, blob_id)
     await asyncio.sleep(0)
+
+
+# ---- vad ------------------------------------------------------------------------------
+
+
+async def test_vad_shares_one_onnx_session_and_runs_off_the_loop() -> None:
+    from hermescall_bridge.vad import StreamingVad
+
+    first, second = StreamingVad(), StreamingVad()
+    assert first._session is second._session
+    chunk = np.zeros(512, dtype=np.float32)
+    assert abs(await first.probability_async(chunk) - second.probability(chunk)) < 1e-6

@@ -170,7 +170,8 @@ class Conversation:
                 pending = np.concatenate([pending, block])
                 while len(pending) >= CHUNK:
                     chunk, pending = pending[:CHUNK], pending[CHUNK:]
-                    self._on_chunk(chunk)
+                    probability = None if self._ptt_mode else await self._vad.probability_async(chunk)
+                    self._on_chunk(chunk, probability)
         finally:
             await self.stop()
 
@@ -242,7 +243,8 @@ class Conversation:
         self._silence = 0
         self._barged = False
 
-    def _on_chunk(self, chunk: np.ndarray) -> None:
+    def _on_chunk(self, chunk: np.ndarray, probability: float | None = None) -> None:
+        """`probability`: the VAD result computed off the event loop (None: compute it here)."""
         if self._ptt_mode:
             if self._ptt_down:
                 self._ptt_audio.append(chunk)
@@ -250,7 +252,9 @@ class Conversation:
                     self._submit(np.concatenate(self._ptt_audio))
                     self._ptt_audio = []
             return
-        speech = self._vad.probability(chunk) >= self._s.threshold
+        if probability is None:
+            probability = self._vad.probability(chunk)
+        speech = probability >= self._s.threshold
         if self._utterance is None:
             self._preroll.append(chunk)
             self._speech_run = self._speech_run + CHUNK_MS if speech else 0
