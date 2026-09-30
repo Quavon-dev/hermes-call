@@ -168,6 +168,49 @@ async def test_unreadable_blocklist_keeps_the_previous_one(tmp_path: Path) -> No
     assert "A" * 43 in gateway.blocked
 
 
+async def test_missing_blocklist_keeps_the_previous_one_and_logs_an_error(tmp_path: Path, caplog) -> None:
+    blocklist = tmp_path / "blocked.txt"
+    blocklist.write_text("A" * 43 + "\n")
+    gateway = PushGateway(dataclasses.replace(gateway_config(), blocklist_path=blocklist), FakePush())
+    blocklist.unlink()
+    assert not gateway.reload_blocklist()
+    assert "A" * 43 in gateway.blocked
+    assert any(record.levelname == "ERROR" and "blocklist" in record.getMessage() for record in caplog.records)
+
+
+def test_gateway_starts_with_a_missing_blocklist_but_says_so(tmp_path: Path, caplog) -> None:
+    config = dataclasses.replace(gateway_config(frozenset({"B" * 43})), blocklist_path=tmp_path / "missing")
+    gateway = PushGateway(config, FakePush())
+    assert gateway.blocked == {"B" * 43}
+    assert any(record.levelname == "ERROR" and "blocklist" in record.getMessage() for record in caplog.records)
+
+
+def test_unblock_replaces_the_blocklist_atomically(tmp_path: Path) -> None:
+    import shutil
+    import subprocess
+
+    script = Path(__file__).parents[1] / "push-gateway-install.sh"
+    function = script.read_text().split("\ncmd_unblock() {", 1)[1].split("\n}\n", 1)[0]
+    blocklist = tmp_path / "blocked_relays"
+    keep, drop = "A" * 43, "B" * 43
+    blocklist.write_text(f"# reported\n{keep}\n{drop}\n")
+    inode = blocklist.stat().st_ino
+    harness = f"""
+set -Eeuo pipefail
+ETC={tmp_path}; SERVICE_USER=$(id -gn)
+need_root() {{ :; }}; die() {{ echo "$*" >&2; exit 1; }}; log() {{ :; }}
+chown() {{ :; }}; systemctl() {{ :; }}
+cmd_unblock() {{{function}
+}}
+cmd_unblock {drop}
+"""
+    subprocess.run([shutil.which("bash") or "/bin/bash", "-c", harness], check=True)
+    assert blocklist.read_text() == f"# reported\n{keep}\n"
+    assert blocklist.stat().st_ino != inode  # a new file moved into place, never truncated in place
+    assert oct(blocklist.stat().st_mode & 0o777) == "0o640"
+    assert not list(tmp_path.glob(".blocked_relays.*"))
+
+
 # ---- replay cache pressure (a signed flood must not lock out everyone) -----------------------
 
 

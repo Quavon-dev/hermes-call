@@ -208,9 +208,15 @@ cmd_block() {
 cmd_unblock() {
   need_root
   [[ ${1:-} =~ ^[A-Za-z0-9_-]{43}$ ]] || die "usage: unblock RELAY_ID"
-  local kept
-  kept=$(grep -vxF "$1" "$ETC/blocked_relays" || true)
-  printf '%s\n' "$kept" | sed '/^$/d' >"$ETC/blocked_relays"
+  local list="$ETC/blocked_relays" tmp
+  [[ -f $list ]] || die "$list is missing"
+  # The gateway re-reads the file every 10 s: never truncate it in place, move a new one over it.
+  tmp=$(mktemp "$ETC/.blocked_relays.XXXXXX")
+  if ! awk -v id="$1" '$0 != id && NF' "$list" >"$tmp" || ! chown root:"$SERVICE_USER" "$tmp" || ! chmod 0640 "$tmp"; then
+    rm -f "$tmp"
+    die "could not rewrite $list"
+  fi
+  mv -f "$tmp" "$list"
   systemctl kill -s HUP hermescall-push.service
   log "Unblocked relay ${1:0:6}…"
 }

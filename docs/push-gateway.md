@@ -158,6 +158,10 @@ git -C /root/hermes-call pull && /root/hermes-call/relay/push-gateway-install.sh
 
 The blocklist is `/etc/hermescall-push/blocked_relays` (one relay id per line, `#` comments); the
 gateway re-reads it when it changes and on `systemctl reload hermescall-push`, no restart needed.
+Edit it by writing a new file and moving it over the old one (as `block`/`unblock` do), not in
+place. If the file cannot be read or has disappeared, the gateway keeps the list it has and logs
+an error every 10 s until the file is back; if it is missing at start, only `blocked_relays` from
+`gateway.toml` apply (also logged as an error).
 State (replay cache, token bindings) lives in `/var/lib/hermescall-push/gateway.db`.
 
 Rotating the APNs key: create a new key in the Apple developer account, `rotate-apns-key`, check

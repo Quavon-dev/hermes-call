@@ -13,6 +13,7 @@ the publisher's APNs key.
 import argparse
 import asyncio
 import contextlib
+import dataclasses
 import json
 import logging
 import re
@@ -134,12 +135,13 @@ def load_gateway(path: Path = DEFAULT_GATEWAY_CONFIG) -> GatewayConfig:
 
 def read_blocklist(config: GatewayConfig) -> frozenset[str]:
     """blocked_relays from gateway.toml plus the lines of blocklist_path. Raises OSError or
-    ValueError when a file cannot be read, so the caller keeps the previous list (fail closed)."""
+    ValueError when a file cannot be read, also when the configured blocklist file is missing, so
+    the caller keeps the previous list (fail closed)."""
     blocked = set(config.blocked_relays)
     if config.config_path is not None:
         raw = tomllib.loads(config.config_path.read_text())
         blocked = {str(item) for item in raw.get("blocked_relays", [])}
-    if config.blocklist_path is not None and config.blocklist_path.exists():
+    if config.blocklist_path is not None:
         for line in config.blocklist_path.read_text().splitlines():
             entry = line.split("#", 1)[0].strip()
             if _RELAY_ID.match(entry):
@@ -199,7 +201,7 @@ class PushGateway:
         self.config = config
         self.sender = sender
         self.state = state or GatewayState(config.state_path)
-        self.blocked = read_blocklist(config)  # at start a broken file is a config error
+        self.blocked = self._initial_blocklist(config)
         self.ip_rate = _limiter(IP_LIMIT)
         self.relay_rate = _limiter(RELAY_LIMIT)
         self.new_relay_rate = _limiter(NEW_RELAYS_PER_IP)
@@ -215,6 +217,15 @@ class PushGateway:
         self.metrics.gauge("push_total", "APNs results (retry = repeated attempts).", self._sender_stats, "counter")
         self.metrics.gauge("state_rows", "Replay cache and token binding rows.", self._state_counts)
         self.metrics.gauge("blocked_relays", "Relays on the blocklist.", lambda: len(self.blocked))
+
+    @staticmethod
+    def _initial_blocklist(config: GatewayConfig) -> frozenset[str]:
+        """At start a broken file is a config error; a missing blocklist file is logged loudly and
+        the gateway starts with gateway.toml's list (refusing every push would be worse)."""
+        if config.blocklist_path is not None and not config.blocklist_path.exists():
+            log.error("blocklist %s is missing: only blocked_relays from gateway.toml apply", config.blocklist_path)
+            return read_blocklist(dataclasses.replace(config, blocklist_path=None))
+        return read_blocklist(config)
 
     def _sender_stats(self) -> dict:
         return {(("result", str(key)),): value for key, value in (getattr(self.sender, "stats", None) or {}).items()}
@@ -284,7 +295,7 @@ class PushGateway:
         try:
             blocked = read_blocklist(self.config)
         except (OSError, ValueError, TypeError) as exc:
-            log.warning("blocklist not reloaded, keeping %d relay(s): %s", len(self.blocked), exc.__class__.__name__)
+            log.error("blocklist not reloaded, keeping %d relay(s): %s", len(self.blocked), exc.__class__.__name__)
             return False
         if blocked != self.blocked:
             log.info("blocklist reloaded: %d relay(s)", len(blocked))
