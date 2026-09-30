@@ -101,6 +101,8 @@ targets:
         NSMotionUsageDescription: When you allow it, your agent can ask whether you are walking or driving and for today's steps. Sent end-to-end encrypted to your own bridge only.
         NSAppleMusicUsageDescription: When you allow it, your agent can ask which song is playing in the Music app. Sent end-to-end encrypted to your own bridge only.
         NSHealthShareUsageDescription: When you allow it, your agent can read today's steps and active energy, last night's sleep and your resting heart rate. Sent end-to-end encrypted to your own bridge only; nothing is written to Health.
+        # Required by App Store validation whenever the HealthKit entitlement is present, even without writes.
+        NSHealthUpdateUsageDescription: Hermes Call never writes to Health; it only reads what you allow above.
         NSFocusStatusUsageDescription: When you allow it, your agent can ask whether a Focus is on, so it knows when not to disturb you. Sent end-to-end encrypted to your own bridge only.
         NSLocalNetworkUsageDescription: Hermes Call connects calls directly to your own bridge when it is on the same network as this iPhone.
         NSHomeKitUsageDescription: When you allow it, your agent can read which Home accessories are on. Hermes Call never controls them. Sent end-to-end encrypted to your own bridge only.
