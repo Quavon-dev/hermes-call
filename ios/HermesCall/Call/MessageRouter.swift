@@ -23,6 +23,11 @@ final class MessageRouter {
         return message["call_id"]?.string == nil ? .drop : .call
     }
 
+    /// The `unsupported` answer for a message nobody in the app handles (nil: it has an owner, or is never answered).
+    nonisolated static func unsupportedReply(for message: [String: JSON]) -> [String: JSON]? {
+        destination(for: message) == .drop ? AppHello.unsupportedReply(to: message) : nil
+    }
+
     /// Starts reading `session` unless it is read already; the stream ends when the session is stopped.
     func listen(to session: RelaySession) {
         let key = ObjectIdentifier(session)
@@ -41,7 +46,19 @@ final class MessageRouter {
         case .phone: onPhone?(message, session)
         case .task: onTask?(message, session)
         case .call: onCall?(message, session)
-        case .drop: break
+        case .drop: answerUnknown(message, from: session)
+        }
+    }
+
+    /// A newer bridge sent something this app does not know: say so (so it can fall back), and take an
+    /// unknown mailbox message out of the mailbox instead of fetching it again forever.
+    private func answerUnknown(_ message: [String: JSON], from session: RelaySession) {
+        let reply = Self.unsupportedReply(for: message)
+        let mailID = message["mail_id"]?.string
+        guard reply != nil || mailID != nil else { return }
+        Task {
+            if let reply { try? await session.send(reply) }
+            if let mailID { try? await session.ackMail([mailID]) }
         }
     }
 }

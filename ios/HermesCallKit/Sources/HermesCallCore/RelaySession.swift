@@ -11,6 +11,11 @@ public actor RelaySession {
     private let onReady: @Sendable (RelayInfo) -> Void
     /// What the relay said about itself on the last connect (version, caps); nil before the first one.
     public private(set) var relayInfo: RelayInfo?
+    /// The E2E `hello` sent to the bridge after every connect (nil: none, e.g. in the extensions).
+    private let hello: [String: JSON]?
+    private let onBridgeHello: @Sendable (BridgeInfo) -> Void
+    /// What the bridge said in its `hello` (nil: not yet, or an older bridge that sends none).
+    public private(set) var bridgeInfo: BridgeInfo?
     private let channel: E2EChannel
     private let bridgeKey: Data
     private var socket: RelaySocket?
@@ -31,10 +36,13 @@ public actor RelaySession {
 
     public init(profile: RelayProfile, replayStore: UserDefaults? = nil, mailStore: UserDefaults? = SharedContainer.defaults,
                 acceptsMail: Bool = true, onStatus: @escaping @Sendable (Status) -> Void = { _ in },
-                onReady: @escaping @Sendable (RelayInfo) -> Void = { _ in }) throws {
+                onReady: @escaping @Sendable (RelayInfo) -> Void = { _ in }, hello: [String: JSON]? = nil,
+                onBridgeHello: @escaping @Sendable (BridgeInfo) -> Void = { _ in }) throws {
         self.profile = profile
         self.onStatus = onStatus
         self.onReady = onReady
+        self.hello = hello
+        self.onBridgeHello = onBridgeHello
         self.acceptsMail = acceptsMail
         channel = try profile.channel(seenStore: replayStore, mailStore: mailStore)
         bridgeKey = try Base64URL.decode(profile.bridgeBoxKey, length: 32)
@@ -263,6 +271,7 @@ public actor RelaySession {
                 let ready = waiters
                 waiters.removeAll()
                 ready.values.forEach { $0.resume() }
+                if let hello { Task { try? await self.send(hello) } }
                 try await readLoop(socket)
             } catch {
                 closeCode = self.socket?.closeCode
@@ -321,7 +330,12 @@ public actor RelaySession {
                 resolve(rid, RelayReply.error(in: message).map { .failure($0) } ?? .success(message))
             } else if message["t"]?.string == "e2e", let data = message["data"]?.string,
                       let body = try? channel.open(from: profile.bridgeID, peerKey: bridgeKey, data: data) {
-                messageSink.yield(body)
+                if let info = BridgeInfo(hello: body) {
+                    bridgeInfo = info
+                    onBridgeHello(info)
+                } else {
+                    messageSink.yield(body)
+                }
             } else if message["t"]?.string == "mail", acceptsMail, let id = message["id"]?.string,
                       let data = message["data"]?.string {
                 receiveMail(id: id, data: data)

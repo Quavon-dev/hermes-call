@@ -94,6 +94,14 @@ import Testing
         #expect(MessageRouter.destination(for: ["type": "something_new"]) == .drop)
     }
 
+    /// H11: what nobody in the app handles is answered with `unsupported` (never `unsupported` itself).
+    @Test func routerAnswersUnknownTypes() {
+        #expect(MessageRouter.unsupportedReply(for: ["type": "something_new"])?["unknown"]?.string == "something_new")
+        #expect(MessageRouter.unsupportedReply(for: ["type": "unsupported", "unknown": "chat"]) == nil)
+        #expect(MessageRouter.unsupportedReply(for: ["type": "chat", "id": "x"]) == nil)
+        #expect(MessageRouter.unsupportedReply(for: ["type": "invite", "call_id": "c"]) == nil)
+    }
+
     // MARK: calls (C3, C2)
 
     @Test func pushRingsNameTheAgent() {

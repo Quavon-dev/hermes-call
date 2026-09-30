@@ -172,6 +172,34 @@ Every plaintext carries `"from"`, `"to"` (relay ids) and `"ts"` (ms since epoch,
 strictly increasing per sender, ±120 s of the receiver's clock); receivers
 reject anything else, so the relay cannot reflect, redirect or replay.
 
+### App ↔ bridge versions (E2E)
+
+After every relay connect the app sends a live E2E `hello`; the bridge answers with its own. Both are
+lenient: unknown fields are ignored, invalid cap names dropped.
+
+| Direction | `type` | Fields |
+|---|---|---|
+| device → bridge | `hello` | `v` (protocol version, 1), `app` (app version, ≤ 40 chars, e.g. `"1.4 (77)"`), `caps` (≤ 32 names `[a-z0-9_]{1,32}`) |
+| bridge → device | `hello` | `v`, `bridge` (software version, e.g. `"0.7.0"`), `caps` |
+| either way | `unsupported` | `unknown?` (the type that was not understood, only when it is a valid name) |
+
+A side sends a new message type or field only when the other side listed the matching cap. A peer
+that never sent `hello` (apps before 0.7, bridges up to 0.6.2) supports none of them, so both keep
+working as before. The bridge keeps a phone's `hello` in memory only (the app repeats it on every
+connect). An E2E type the receiver does not know is answered with `unsupported` (never `unsupported`
+itself, and never `hello`); bridges up to 0.6.2 log and drop it instead. The app also removes an
+unknown mailbox message from its mailbox.
+
+| Cap | Side | Meaning |
+|---|---|---|
+| `unsupported` | both | answers unknown types with `unsupported` |
+
+The bridge's `state.json` carries `"schema": 1`; files without it are schema 0. On start the bridge
+runs its migration hooks from the file's schema up to its own and writes the file back; a file from a
+newer bridge (after a downgrade) is read as far as it is understood, with a warning.
+
+### Calls
+
 The **device always sends the SDP offer** (non-trickle: wait for ICE gathering
 to finish), with `iceTransportPolicy = relay` and only the relay's TURN server.
 

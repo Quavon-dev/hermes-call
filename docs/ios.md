@@ -101,6 +101,12 @@ account to get incoming calls.
   transfers retry HTTP 503 (busy) on the same ticket with 1, 2, 4… s pauses (a download ticket works three
   times, then one more ticket), within the 300 s deadline. Calls pass every TURN URL on the relay's host to
   ICE, including `turns:<host>:5349?transport=tcp`. `too_many_devices` while pairing has its own message.
+- **Bridge protocol**: after every relay connect the app sends an E2E `hello` (protocol version, app
+  version, caps; `AppHello`); the bridge's answer (`BridgeInfo`: version, caps) is kept per agent and its
+  version shown in Diagnostics ("0.6.2 or older" when a connected bridge does not answer). Optional
+  features (call resume, history sync, session approvals) are used only when the bridge lists their cap.
+  E2E types nobody in the app handles are answered with `unsupported`; an unknown mailbox message is
+  acked so it is not fetched forever. The share and notification extensions send no `hello`.
 - **Presence**: paused under full-screen sheets and in the background; 30 fps in Low Power Mode, with Reduce
   Motion or a serious thermal state, 20 fps when critical; voice levels are read per frame instead of
   polling. HUD labels follow Dynamic Type (up to twice their size), hairlines get stronger with Increase

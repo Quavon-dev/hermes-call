@@ -45,8 +45,12 @@ import Testing
         #expect(profile.pin == server.info["pin"] as? String)
         #expect(profile.bridgeName == "Hermes")
 
-        let session = try RelaySession(profile: profile)
+        let session = try RelaySession(profile: profile, hello: AppHello.body(appVersion: "test"))
         try await session.waitUntilConnected()
+        // The bridge answers the app's `hello` with its version and caps.
+        for _ in 0..<50 where await session.bridgeInfo == nil { try await Task.sleep(for: .milliseconds(100)) }
+        #expect(await session.bridgeInfo?.bridgeVersion != nil)
+        #expect(await session.bridgeInfo?.supports("unsupported") == true)
         let turn = try await session.request(["t": "turn"])
         #expect(turn["urls"] != nil)
         // The relay names its version and caps and answers unknown request types without dropping the session.

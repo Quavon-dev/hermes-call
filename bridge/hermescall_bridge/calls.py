@@ -21,6 +21,7 @@ from .audio import SpeechTrack, read_16k
 from .conversation import Conversation
 from .hermes import APPROVAL_CHOICES, MAX_APPROVAL_TEXT, ApprovalRequest
 from .metrics import METRICS
+from .peers import Peers, hello_body, unsupported_body
 from .present import to_jpeg
 from .state import Device, State
 from .transport import Transport
@@ -161,6 +162,7 @@ class CallManager:
         self._hung_up: set[str] = set()
         self._image_messages: dict[str, deque[float]] = {}
         self.active: ActiveCall | None = None
+        self.peers = Peers()
 
     # ---- outbound ------------------------------------------------------
 
@@ -221,12 +223,25 @@ class CallManager:
                 "transcript": self._on_transcript,
                 "approval": self._on_approval_answer,
                 "unpair": self._on_unpair,
+                "hello": self._on_hello,
+                "unsupported": self._on_unsupported,
             }.get(body["type"])
             if handler is None:
-                raise ProtocolError("unknown message type")
+                log.info("unknown message type from device %s; answered unsupported", device.id[:6])
+                await self._send(device.id, unsupported_body(body["type"]))
+                return
             await handler(device, body)
         except ProtocolError as exc:
             log.warning("rejected message from device %s: %s", device.id[:6], exc)
+
+    async def _on_hello(self, device: Device, body: dict) -> None:
+        self.peers.on_hello(device.id, body)
+        await self._send(device.id, hello_body())
+
+    async def _on_unsupported(self, device: Device, body: dict) -> None:
+        """The phone did not know something the bridge sent (an older app); never answered in turn."""
+        unknown = body.get("unknown")
+        log.info("phone %s does not support %s", device.id[:6], unknown if isinstance(unknown, str) else "a message")
 
     def last_activity(self, device_id: str) -> float:
         """Monotonic time of the phone's last authentic message (-inf: none since start)."""
@@ -509,6 +524,7 @@ class CallManager:
 
     async def forget_device(self, device_id: str) -> None:
         """A revoked device loses any ring slot and its active call immediately."""
+        self.peers.forget(device_id)
         for ring in self._rings.values():
             ring.targets.discard(device_id)
             if not ring.targets and not ring.outcome.done():

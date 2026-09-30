@@ -51,6 +51,7 @@ struct DiagnosticsView: View {
         Section(profile.bridgeName) {
             LabeledContent("Relay", value: profile.relay.authority)
             LabeledContent("Relay version", value: app.relayInfo[profile.id]?.displayVersion ?? "Not connected yet")
+            LabeledContent("Bridge version", value: bridgeVersion(profile))
             LabeledContent("Connection", value: connection(profile))
             LabeledContent("Round trip", value: roundTrip[profile.id] ?? "–")
             LabeledContent("Incoming calls", value: registered(app.preferences.pushRegistrations[profile.id.uuidString]))
@@ -58,6 +59,13 @@ struct DiagnosticsView: View {
             Button("Measure round trip") { Task { await measure(profile) } }
                 .disabled(app.openSession(for: profile.id) == nil)
         }
+    }
+
+    /// Bridges before 0.7 do not answer the app's `hello`.
+    private func bridgeVersion(_ profile: RelayProfile) -> String {
+        if let info = app.bridgeInfo[profile.id] { return info.displayVersion }
+        guard let since = app.upSince(profile.id) else { return "Not connected yet" }
+        return Date().timeIntervalSince(since) > 5 ? "0.6.2 or older" : "Asking…"
     }
 
     private func connection(_ profile: RelayProfile) -> String {

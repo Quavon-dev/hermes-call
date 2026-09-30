@@ -1,16 +1,30 @@
 """Persistent bridge state: identity keys, relay pairing and paired devices."""
 
 import json
+import logging
 import os
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from hermescall_common.client import RelayEndpoint, new_identity_keys
 from hermescall_common.wire import b64d
 
+log = logging.getLogger(__name__)
+
 MAX_DEVICE_NAME = 64
+
+
+def _v0_to_v1(raw: dict) -> dict:
+    """Files before 0.7 had no schema field; nothing else changed."""
+    return raw
+
+
+# MIGRATIONS[n] turns a state.json of schema n into schema n + 1 (on the raw JSON, before parsing).
+MIGRATIONS: tuple[Callable[[dict], dict], ...] = (_v0_to_v1,)
+SCHEMA = len(MIGRATIONS)
 
 
 @dataclass(frozen=True)
@@ -66,11 +80,23 @@ class StateStore:
             self.save(state)
             return state
         raw = json.loads(self.path.read_text())
+        schema = raw.get("schema", 0) if isinstance(raw.get("schema", 0), int) else 0
+        if schema > SCHEMA:
+            log.warning(
+                "state.json has schema %d, newer than this bridge's %d (a downgrade?); reading what it can", schema, SCHEMA
+            )
+        for migrate in MIGRATIONS[schema:]:
+            raw = migrate(raw)
         devices = {d["id"]: Device(**d) for d in raw.get("devices", [])}
-        return State(keys=raw["keys"], relay=raw.get("relay"), devices=devices)
+        state = State(keys=raw["keys"], relay=raw.get("relay"), devices=devices)
+        if schema < SCHEMA:
+            log.info("state.json migrated from schema %d to %d", schema, SCHEMA)
+            self.save(state)
+        return state
 
     def save(self, state: State) -> None:
-        self._write(self.path, {"keys": state.keys, "relay": state.relay, "devices": [asdict(d) for d in state.devices.values()]})
+        devices = [asdict(d) for d in state.devices.values()]
+        self._write(self.path, {"schema": SCHEMA, "keys": state.keys, "relay": state.relay, "devices": devices})
 
     def load_seen(self) -> dict[str, int]:
         return self._load_counts(self.seen_path)
