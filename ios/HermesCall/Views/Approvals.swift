@@ -1,5 +1,18 @@
+import HermesCallCore
 import LocalAuthentication
 import SwiftUI
+
+/// The owner's answer to an approval request. `session` (allow this command until the Hermes session ends)
+/// only when the bridge offered it; approving either way needs Face ID or the passcode.
+enum ApprovalChoice: String, Sendable {
+    case once, session, deny
+
+    /// Whether an `approval_request` offers "Allow for this session" (its `choices` list it; older bridges send none).
+    nonisolated static func allowsSession(_ body: [String: JSON]) -> Bool {
+        guard case .array(let choices)? = body["choices"] else { return false }
+        return choices.contains(.string(ApprovalChoice.session.rawValue))
+    }
+}
 
 /// What Face ID or the passcode said about approving a command.
 enum OwnerCheck: Equatable, Sendable {
@@ -45,8 +58,8 @@ enum ApprovalStep: Equatable, Sendable {
     }
 }
 
-/// The approval request, the same for calls and chat: command, what it does, Deny / Approve once,
-/// and a retry state when Face ID was cancelled.
+/// The approval request, the same for calls and chat: command, what it does, Deny / Approve once (and
+/// Allow for this session when the bridge offers it), and a retry state when Face ID was cancelled.
 struct ApprovalPanel: View {
     let command: String
     let details: String
@@ -54,12 +67,15 @@ struct ApprovalPanel: View {
     var voiceNote = false
     let onDeny: () -> Void
     let onApprove: () -> Void
+    /// Set when the bridge offers `session`: a third button.
+    var onApproveSession: (() -> Void)?
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
                 Label("Your assistant wants to run a command that needs your approval.", systemImage: "exclamationmark.shield")
                     .font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
                 if !details.isEmpty {
                     Text(details).foregroundStyle(.secondary)
                 }
@@ -70,6 +86,7 @@ struct ApprovalPanel: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding()
                 }
+                .frame(minHeight: 64)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
                 status
                 HStack {
@@ -82,6 +99,14 @@ struct ApprovalPanel: View {
                 }
                 .controlSize(.large)
                 .disabled(step == .confirming)
+                if let onApproveSession {
+                    Button(action: onApproveSession) { Text("Allow for this session").frame(maxWidth: .infinity) }
+                        .buttonStyle(.bordered)
+                        .tint(.orange)
+                        .controlSize(.large)
+                        .disabled(step == .confirming || step == .unavailable)
+                        .accessibilityHint("Allows this command again until the agent's session ends. Needs Face ID or your passcode.")
+                }
             }
             .padding()
             .navigationTitle("Approval needed")
@@ -101,8 +126,11 @@ struct ApprovalPanel: View {
                   systemImage: "lock.slash")
                 .font(.footnote).foregroundStyle(.orange)
         case .waiting, .confirming:
-            Text("Approving requires Face ID or your passcode and applies to this one command only."
+            Text((onApproveSession == nil
+                  ? "Approving requires Face ID or your passcode and applies to this one command only."
+                  : "Approving requires Face ID or your passcode. “Allow for this session” lets this command run again until the agent’s session ends.")
                  + (voiceNote ? " Voice never approves." : ""))
+                .fixedSize(horizontal: false, vertical: true)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

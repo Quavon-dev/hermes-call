@@ -14,6 +14,13 @@ enum ChatDemo {
     /// `-ChatDemoReveal <text>`: jump to the first message containing it, as from a search hit.
     static var reveal: String? { UserDefaults.standard.string(forKey: "ChatDemoReveal") }
 
+    /// `-ChatDemoApproval YES`: an approval request that offers "Allow for this session".
+    static func approval(_ profile: UUID) -> ChatApproval? {
+        guard enabled, UserDefaults.standard.bool(forKey: "ChatDemoApproval") else { return nil }
+        return ChatApproval(id: "demo-approval", profileID: profile, command: "git push origin main",
+                            details: "Push the release branch to GitHub", mailID: nil, allowsSession: true)
+    }
+
     /// Before the models load: a demo profile in the Keychain when none is paired.
     static func seedIfRequested() {
         let store = ProfileStore()

@@ -72,7 +72,10 @@ account to get incoming calls.
 - **Pairing errors**: unreachable, TLS key mismatch, rate limited (relay HTTP 429), relay busy (503), wrong
   or expired code, invalid input (`PairingFailure`); a denied camera shows an explanation and Open Settings.
 - **Approvals**: one panel for call and chat approvals; a cancelled Face ID keeps the request open (*Try
-  again* / *Deny*) instead of denying it; without a passcode only *Deny* remains.
+  again* / *Deny*) instead of denying it; without a passcode only *Deny* remains. When the request's
+  `choices` list `session` (bridges with Hermes ≥ 0.15), a third button *Allow for this session* sends
+  `choice: "session"`, also only after Face ID / passcode; older bridges keep *Approve once* / *Deny*.
+  Screenshot: `-UITestReset YES -UITestConsent YES -ChatDemo YES -ChatDemoApproval YES`.
 - **Calls**: interruptions and route changes are followed (`CallAudioRoute`), *Speaker* shows the real
   route, the call screen has iOS' audio route picker and captions, CallKit shows a template icon, and push
   rings with several agents show "Atlas or Nova" until the bridge confirms which one rang.
@@ -104,7 +107,7 @@ account to get incoming calls.
 - **Bridge protocol**: after every relay connect the app sends an E2E `hello` (protocol version, app
   version, caps; `AppHello`); the bridge's answer (`BridgeInfo`: version, caps) is kept per agent and its
   version shown in Diagnostics ("0.6.2 or older" when a connected bridge does not answer). Optional
-  features (call resume, history sync, session approvals) are used only when the bridge lists their cap.
+  features (call resume, history sync) are used only when the bridge lists their cap.
   E2E types nobody in the app handles are answered with `unsupported`; an unknown mailbox message is
   acked so it is not fetched forever. The share and notification extensions send no `hello`.
 - **Presence**: paused under full-screen sheets and in the background; 30 fps in Low Power Mode, with Reduce

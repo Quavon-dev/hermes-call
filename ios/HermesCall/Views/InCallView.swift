@@ -167,7 +167,8 @@ struct ApprovalSheet: View {
 
     var body: some View {
         ApprovalPanel(command: approval.command, details: approval.details, step: calls.approvalStep, voiceNote: true,
-                      onDeny: { Task { await calls.answerApproval(approve: false) } },
-                      onApprove: { Task { await calls.answerApproval(approve: true) } })
+                      onDeny: { Task { await calls.answerApproval(.deny) } },
+                      onApprove: { Task { await calls.answerApproval(.once) } },
+                      onApproveSession: approval.allowsSession ? { Task { await calls.answerApproval(.session) } } : nil)
     }
 }

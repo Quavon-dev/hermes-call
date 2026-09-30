@@ -332,7 +332,8 @@ struct ChatApprovalSheet: View {
 
     var body: some View {
         ApprovalPanel(command: approval.command, details: approval.details, step: chat.approvalStep,
-                      onDeny: { Task { await chat.answerApproval(approve: false) } },
-                      onApprove: { Task { await chat.answerApproval(approve: true) } })
+                      onDeny: { Task { await chat.answerApproval(.deny) } },
+                      onApprove: { Task { await chat.answerApproval(.once) } },
+                      onApproveSession: approval.allowsSession ? { Task { await chat.answerApproval(.session) } } : nil)
     }
 }

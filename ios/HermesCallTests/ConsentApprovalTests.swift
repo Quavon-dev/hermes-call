@@ -65,6 +65,38 @@ final class FakeAuthenticator: OwnerAuthenticator {
         #expect(fixture.chat.pendingApproval != nil && approvals(fixture).isEmpty)
     }
 
+    // MARK: session approvals (Hermes ≥ 0.15)
+
+    @Test func sessionChoiceIsOfferedOnlyWhenTheBridgeListsIt() {
+        #expect(ApprovalChoice.allowsSession(["type": "approval_request", "choices": ["once", "session", "deny"]]))
+        #expect(!ApprovalChoice.allowsSession(["type": "approval_request", "choices": ["once", "deny"]]))
+        #expect(!ApprovalChoice.allowsSession(["type": "approval_request"]), "older bridges: once/deny")
+    }
+
+    @Test func allowForThisSessionNeedsFaceIDToo() async throws {
+        let fixture = try ChatFixture()
+        let auth = FakeAuthenticator(.cancelled)
+        fixture.chat.authenticator = auth
+        var approval = pendingApproval(fixture)
+        approval.allowsSession = true
+        fixture.chat.pendingApproval = approval
+        await fixture.chat.answerApproval(.session)
+        #expect(auth.asked == 1 && approvals(fixture).isEmpty && fixture.chat.approvalStep == .retry)
+        auth.answer = .confirmed
+        await fixture.chat.answerApproval(.session)
+        #expect(approvals(fixture) == ["session"])
+        #expect(fixture.chat.pendingApproval == nil)
+    }
+
+    @Test func sessionIsNeverSentWhenNotOffered() async throws {
+        let fixture = try ChatFixture()
+        fixture.chat.authenticator = FakeAuthenticator(.confirmed)
+        fixture.chat.pendingApproval = pendingApproval(fixture)
+        await fixture.chat.answerApproval(.session)
+        #expect(approvals(fixture).isEmpty)
+        #expect(fixture.chat.pendingApproval?.id == "req-1")
+    }
+
     @Test func approvalStepsAfterAChecks() {
         #expect(ApprovalStep.after(.cancelled) == .retry)
         #expect(ApprovalStep.after(.unavailable) == .unavailable)

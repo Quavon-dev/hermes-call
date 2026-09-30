@@ -22,6 +22,8 @@ struct ChatApproval: Identifiable, Equatable {
     let details: String
     /// Acked in the relay mailbox only once answered, so the request survives the app being closed.
     let mailID: String?
+    /// The bridge offers "Allow for this session" (`choices` lists `session`).
+    var allowsSession = false
 }
 
 /// The chat with the agent of each paired relay: history on this phone (a window of it on screen), an
@@ -162,6 +164,7 @@ final class ChatModel {
         }
         #if DEBUG
         await ChatDemo.fillIfRequested(profile, store: store)
+        if pendingApproval == nil { pendingApproval = ChatDemo.approval(profile) }
         #endif
         let latest = await store.latest(profile, limit: ChatWindow.pageSize)
         let total = await store.count(profile)
@@ -424,16 +427,23 @@ final class ChatModel {
               let details = body["description"]?.string, details.count <= CallCoordinator.maxApprovalText,
               pendingApproval == nil || pendingApproval?.id == id
         else { return false }
-        pendingApproval = ChatApproval(id: id, profileID: profile, command: command, details: details, mailID: mailID)
+        pendingApproval = ChatApproval(id: id, profileID: profile, command: command, details: details, mailID: mailID,
+                                       allowsSession: ApprovalChoice.allowsSession(body))
         return true
     }
 
     /// Approving needs Face ID / passcode; denying never does. `id`: only answer this request (the watch).
     /// A cancelled Face ID keeps the request open (Try again / Deny) instead of denying it.
     func answerApproval(approve: Bool, id: String? = nil) async {
+        await answerApproval(approve ? .once : .deny, id: id)
+    }
+
+    /// `session` is sent only when the bridge offered it, and like `once` only after Face ID / passcode.
+    func answerApproval(_ choice: ApprovalChoice, id: String? = nil) async {
         guard let approval = pendingApproval, id == nil || approval.id == id, approvalStep != .confirming,
+              choice != .session || approval.allowsSession,
               let profile = app.profiles.first(where: { $0.id == approval.profileID }) else { return }
-        if approve {
+        if choice != .deny {
             approvalStep = .confirming
             let check = await authenticator.confirm(reason: ApprovalStep.reason)
             guard pendingApproval?.id == approval.id else { return }
@@ -442,7 +452,7 @@ final class ChatModel {
         guard pendingApproval?.id == approval.id else { return }
         pendingApproval = nil
         await withSession(profile) { session in
-            try await session.send(["type": "approval", "request_id": .string(approval.id), "choice": .string(approve ? "once" : "deny")],
+            try await session.send(["type": "approval", "request_id": .string(approval.id), "choice": .string(choice.rawValue)],
                                    mail: true)
             if let mailID = approval.mailID { try await session.ackMail([mailID]) }
         }

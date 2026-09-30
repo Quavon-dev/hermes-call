@@ -32,6 +32,8 @@ final class CallCoordinator: NSObject {
         let callID: String
         let command: String
         let details: String
+        /// The bridge offers "Allow for this session".
+        var allowsSession = false
     }
 
     private(set) var phase: Phase = .idle
@@ -264,11 +266,16 @@ final class CallCoordinator: NSObject {
     }
 
     /// Approving needs Face ID / passcode; denying never does. A cancelled Face ID keeps the request open
-    /// (Try again / Deny) instead of denying it.
+    /// (Try again / Deny) instead of denying it. `session` only when the bridge offered it.
     func answerApproval(approve: Bool) async {
-        guard let approval = pendingApproval, approvalStep != .confirming, let current = call, approval.callID == current.callID
+        await answerApproval(approve ? .once : .deny)
+    }
+
+    func answerApproval(_ choice: ApprovalChoice) async {
+        guard let approval = pendingApproval, approvalStep != .confirming, let current = call, approval.callID == current.callID,
+              choice != .session || approval.allowsSession
         else { return }
-        if approve {
+        if choice != .deny {
             approvalStep = .confirming
             let check = await authenticator.confirm(reason: ApprovalStep.reason)
             guard pendingApproval?.id == approval.id else { return }
@@ -278,7 +285,7 @@ final class CallCoordinator: NSObject {
         pendingApproval = nil
         try? await current.session?.send([
             "type": "approval", "call_id": .string(approval.callID), "request_id": .string(approval.id),
-            "choice": .string(approve ? "once" : "deny"),
+            "choice": .string(choice.rawValue),
         ])
     }
 
@@ -605,7 +612,8 @@ final class CallCoordinator: NSObject {
             }
             return
         }
-        pendingApproval = Approval(id: id, callID: current.callID, command: command, details: details)
+        pendingApproval = Approval(id: id, callID: current.callID, command: command, details: details,
+                                   allowsSession: ApprovalChoice.allowsSession(message))
     }
 
     /// Ends the call locally; `notify` tells the bridge (we hung up or failed).
