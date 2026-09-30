@@ -126,6 +126,9 @@ class CallManager:
         self._rings: dict[str, Ring] = {}
         self._ring_times: deque[float] = deque(maxlen=max(n for _, n in RING_LIMITS))
         self._offer_lock = asyncio.Lock()
+        # Offers being set up (call id → device id) and those hung up meanwhile (no ghost calls).
+        self._starting: dict[str, str] = {}
+        self._hung_up: set[str] = set()
         self._image_messages: dict[str, deque[float]] = {}
         self.active: ActiveCall | None = None
 
@@ -211,8 +214,19 @@ class CallManager:
             ring.outcome.set_result("declined")
 
     async def _on_offer(self, device: Device, body: dict) -> None:
-        async with self._offer_lock:
-            await self._accept_offer(device, body)
+        call_id = body.get("call_id")
+        if isinstance(call_id, str):
+            self._starting.setdefault(call_id, device.id)
+        try:
+            async with self._offer_lock:
+                await self._accept_offer(device, body)
+        finally:
+            if isinstance(call_id, str):
+                self._starting.pop(call_id, None)
+                self._hung_up.discard(call_id)
+
+    def _cancelled(self, call_id: str) -> bool:
+        return call_id in self._hung_up
 
     async def _accept_offer(self, device: Device, body: dict) -> None:
         call_id = valid_call_id(body.get("call_id"))
@@ -230,14 +244,22 @@ class CallManager:
         if ring is not None and (device.id not in ring.targets or ring.outcome.done()):
             await self._send(device.id, {"type": "cancel", "call_id": call_id, "why": "answered_elsewhere"})
             return
-        await self._start_call(device, call_id, sdp, ring, body.get("stt") == "device")
+        if self._cancelled(call_id):
+            log.info("call hung up before it was set up")
+            return
+        if not await self._start_call(device, call_id, sdp, ring, body.get("stt") == "device"):
+            return
         if ring is not None:
             ring.outcome.set_result("answered")
             for other in ring.targets - {device.id}:
                 await self._send(other, {"type": "cancel", "call_id": call_id, "why": "answered_elsewhere"})
 
-    async def _start_call(self, device: Device, call_id: str, sdp: str, ring: Ring | None, device_stt: bool) -> None:
+    async def _start_call(self, device: Device, call_id: str, sdp: str, ring: Ring | None, device_stt: bool) -> bool:
+        """False: the owner hung up while this was being set up (nothing was answered)."""
         turn = await self._relay.request({"t": "turn"})
+        if self._cancelled(call_id):
+            log.info("call hung up while fetching TURN credentials")
+            return False
         pc = peer_connection(turn)
         call = ActiveCall(call_id, device, pc, device_stt=device_stt)
         self.active = call
@@ -266,9 +288,14 @@ class CallManager:
         except Exception as exc:
             await self.end(call_id, notify=False)
             raise ProtocolError("offer rejected") from exc
+        if self._cancelled(call_id) or self.active is not call:
+            await self.end(call_id, notify=False)
+            log.info("call hung up while it was being set up")
+            return False
         answer = prefer_constant_bitrate(pc.localDescription.sdp)
         await self._send(device.id, {"type": "answer", "call_id": call_id, "sdp": answer})
         log.info("call started (%s) with device %s", "outbound" if ring else "inbound", device.id[:6])
+        return True
 
     async def _run_conversation(self, call: ActiveCall, inbound: Any, first_message: str) -> None:
         level = {"seconds": 0.0, "peak": 0.0}
@@ -279,6 +306,9 @@ class CallManager:
         await self.end(call.call_id)
 
     async def _on_hangup(self, device: Device, body: dict) -> None:
+        call_id = body.get("call_id")
+        if isinstance(call_id, str) and self._starting.get(call_id) == device.id:
+            self._hung_up.add(call_id)
         call = self.active
         if call is not None and call.device.id == device.id and call.call_id == body.get("call_id"):
             await self.end(call.call_id, notify=False)
