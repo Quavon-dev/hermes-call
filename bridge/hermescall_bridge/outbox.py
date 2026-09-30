@@ -5,6 +5,7 @@ still cannot be stored after `MAX_AGE` (or whose phone was unpaired) is reported
 import asyncio
 import contextlib
 import logging
+import sqlite3
 import time
 from collections.abc import Awaitable, Callable
 
@@ -73,10 +74,13 @@ class Outbox:
     async def _run(self) -> None:
         while True:
             self._wake.clear()
+            if not self._transport.relay.connected.is_set():
+                await self._wake.wait()  # kicked by the relay's reconnect (ChatService.on_relay_ready)
+                continue
             try:
                 await self._deliver_due()
-            except Exception:
-                log.exception("outbox delivery failed")
+            except (sqlite3.Error, *TRANSPORT_ERRORS) as exc:
+                log.warning("outbox delivery interrupted: %s", exc.__class__.__name__)
             next_try = await self._store.call(self._store.store.next_mail_time)
             if next_try is None:
                 await self._wake.wait()
@@ -87,9 +91,9 @@ class Outbox:
     async def _deliver_due(self) -> None:
         while due := await self._store.call(self._store.store.due_mail, time.time()):
             for mail in due:
+                if not self._transport.relay.connected.is_set():
+                    return  # no point waiting for the relay per message; the reconnect kicks us
                 await self._deliver(mail)
-            if not self._transport.relay.connected.is_set():
-                return
 
     async def _deliver(self, mail: Mail) -> None:
         store = self._store.store
