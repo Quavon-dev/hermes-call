@@ -1,0 +1,14 @@
+# Reviews requested automatically for pull requests. The team must exist in the Quavon-dev
+# organization with write access to this repository (Settings > Collaborators and teams).
+*                       @Quavon-dev/maintainers
+
+# Security-sensitive: crypto, pairing, installers, release signing, CI.
+/common/                @Quavon-dev/maintainers
+/ios/HermesCallKit/     @Quavon-dev/maintainers
+/relay/install.sh       @Quavon-dev/maintainers
+/bridge/install.sh      @Quavon-dev/maintainers
+/bridge/get.sh          @Quavon-dev/maintainers
+/proxmox-helper/        @Quavon-dev/maintainers
+/tools/release.sh       @Quavon-dev/maintainers
+/.github/               @Quavon-dev/maintainers
+/THREAT_MODEL.md        @Quavon-dev/maintainers

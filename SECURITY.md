@@ -29,7 +29,9 @@ Helpful to include:
 - **iOS app** (`ios/`), including its extensions, widgets and the watch app.
 - **Crypto and pairing** (`common/`, `ios/HermesCallKit`): CPace pairing, identities,
   end-to-end encryption, the wire protocol ([docs/protocol.md](docs/protocol.md)).
-- The signed-release and Proxmox helper scripts (`tools/release.sh`, `proxmox-helper/`).
+- The signed-release and Proxmox helper scripts (`tools/release.sh`, `proxmox-helper/`,
+  `bridge/get.sh`), the release workflows (`.github/workflows`) and the relay container image.
+- The push gateway (`relay/hermescall_relay/gateway.py`) and its deployment at `hermes-push.quavon.de`.
 
 The security design and its assumptions are in [THREAT_MODEL.md](THREAT_MODEL.md).
 
@@ -44,8 +46,21 @@ those upstream), and findings that need a jailbroken or already compromised phon
 
 ## Supported versions
 
-Only the latest release receives security fixes. Please check that the issue still exists
-on `main` before reporting.
+| Component | Supported | How to update |
+|---|---|---|
+| Relay, bridge, Hermes plugin | the latest `v*` release (the one marked *latest*) | run the installer again ([README](README.md)); the relay's `install.sh update` |
+| Push gateway `hermes-push.quavon.de` | the running deployment | operated by Quavon |
+| iOS app | the latest App Store / TestFlight build | automatic through the App Store |
+| Older releases, `main` between releases | not supported | – |
+
+Security fixes ship as a new patch release (for example 0.7.1), announced in a GitHub security
+advisory and the changelog. Relays and bridges do not update themselves: subscribe to releases
+(Watch → Custom → Releases) to hear about them. Please check that an issue still exists in the
+latest release or on `main` before reporting.
+
+Releases are signed with an offline key; the installers verify the signature and refuse older
+versions than the installed one ([docs/releasing.md](docs/releasing.md)). The container image is
+signed with cosign (keyless, this repository's workflow).
 
 ## What to expect
 
