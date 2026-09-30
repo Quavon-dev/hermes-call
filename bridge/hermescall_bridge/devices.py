@@ -46,7 +46,16 @@ class DeviceRegistry:
         e = self._state.endpoint
         return pairing.Context("device", e.host, e.port, e.pin)
 
+    def _gc_invitations(self) -> None:
+        """Expired invitations go (the relay closes their slots itself after their ttl)."""
+        now = time.monotonic()
+        for slot in [s for s, inv in self._invitations.items() if inv.expires < now]:
+            invitation = self._invitations.pop(slot)
+            if not invitation.result.done():
+                invitation.result.cancel()
+
     async def invite(self, name: str) -> tuple[Invitation, codes.PairingInvite]:
+        self._gc_invitations()
         opened = await self._relay.request({"t": "open_slot"})
         slot = opened["slot"]
         invitation = Invitation(codes.new_code(slot), name, time.monotonic() + opened.get("ttl", 600))
@@ -55,6 +64,7 @@ class DeviceRegistry:
         return invitation, codes.PairingInvite("device", e.host, e.port, e.pin, invitation.code)
 
     def invitation(self, slot: str) -> Invitation | None:
+        self._gc_invitations()
         return self._invitations.get(slot)
 
     async def on_pair_join(self, message: dict) -> None:
@@ -94,7 +104,12 @@ class DeviceRegistry:
         if invitation is None:
             await self._relay.send({"t": "pair_done", "conn": conn, "ok": False})
             return
-        registered = await self._relay.request({"t": "pair_done", "conn": conn, "ok": True, "sign_pk": sign_pk})
+        try:
+            registered = await self._relay.request({"t": "pair_done", "conn": conn, "ok": True, "sign_pk": sign_pk})
+        except ProtocolError as exc:
+            # e.g. `too_many_devices`: the relay refused to register another phone for this bridge
+            log.warning("device pairing refused by the relay: %s", exc)
+            return
         device = new_device(registered["device_id"], str(payload.get("name") or invitation.name), sign_pk, box_pk)
         self._state.devices[device.id] = device
         self._store.save(self._state)
@@ -133,17 +148,37 @@ class DeviceRegistry:
             log.info("closing pairing slot failed: %s", exc)
 
     async def revoke(self, device_id: str) -> bool:
+        """Local first: the phone is forgotten here at once (its messages are dropped from now on),
+        the relay is told now or, if it cannot be reached, after it reconnects."""
         if device_id not in self._state.devices:
             return False
-        try:
-            await self._relay.request({"t": "revoke_device", "device_id": device_id})
-        except ProtocolError as exc:
-            if "unknown_device" not in str(exc):
-                raise
         del self._state.devices[device_id]
         self._store.save(self._state)
+        self._store.save_revocations(sorted({*self._store.load_revocations(), device_id}))
         log.info("device revoked: %s", device_id[:6])
+        await self.flush_revocations()
         return True
+
+    async def flush_revocations(self) -> None:
+        """Tells the relay about revocations it has not confirmed yet (also after every reconnect)."""
+        pending = self._store.load_revocations()
+        if pending and not self._relay.connected.is_set():
+            log.info("relay offline: %d revocation(s) are sent after it reconnects", len(pending))
+            return
+        done: set[str] = set()
+        for device_id in pending:
+            try:
+                await self._relay.request({"t": "revoke_device", "device_id": device_id})
+            except ProtocolError as exc:
+                if "unknown_device" not in str(exc):
+                    log.warning("relay not told about revoked device %s yet (%s); retrying after reconnect", device_id[:6], exc)
+                    continue
+            except TimeoutError:
+                log.warning("relay unreachable; revocation of %s is sent after it reconnects", device_id[:6])
+                continue
+            done.add(device_id)
+        if done:
+            self._store.save_revocations([d for d in pending if d not in done])
 
     def list(self) -> list[Device]:
         return sorted(self._state.devices.values(), key=lambda d: d.created)

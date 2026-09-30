@@ -104,6 +104,7 @@ def build_bridge(
             tasks.on_presence(message.get("device_id"), message.get("online"))
 
     async def on_ready() -> None:
+        await devices.flush_revocations()
         await calls.on_relay_ready()
         await chat.on_relay_ready()
 

@@ -95,6 +95,17 @@ class StateStore:
     def save_task_prefs(self, prefs: dict[str, bool]) -> None:
         self._write(self.task_prefs_path, prefs)
 
+    def load_revocations(self) -> list[str]:
+        """Revoked device ids the relay has not confirmed yet (it was unreachable)."""
+        try:
+            raw = json.loads((self.directory / "revocations.json").read_text())
+        except (OSError, ValueError):
+            return []
+        return [d for d in raw if isinstance(d, str)] if isinstance(raw, list) else []
+
+    def save_revocations(self, device_ids: list[str]) -> None:
+        self._write(self.directory / "revocations.json", device_ids)
+
     @staticmethod
     def _load_counts(path: Path) -> dict[str, int]:
         try:
