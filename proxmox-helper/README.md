@@ -8,26 +8,13 @@
 ## Signed releases
 
 The helper does **not** use `fetch_and_deploy_gh_release`: it downloads
-`hermes-call.tar.gz`, `SHA256SUMS` and `SHA256SUMS.sig` from the latest release,
-checks the signature against the pinned `RELEASE_SIGNER` key (`ssh-keygen -Y
-verify`, namespace `hermes-call-release`) and the checksum, and only then
-unpacks and runs anything as root. Without a pinned key it refuses to install.
+`hermes-call.tar.gz`, `SHA256SUMS(.sig)` and, from 0.7 on, `MANIFEST(.sig)` from the latest
+release, checks the signature against the pinned `RELEASE_SIGNER` key (`ssh-keygen -Y verify`)
+and the checksum, and only then unpacks and runs anything as root. Without a pinned key it
+refuses to install. On `update` it also refuses a release older than the installed version
+(rollback protection; `HC_ALLOW_DOWNGRADE=1` in front of the command forces it).
 
-Create the release key once and keep it offline:
-
-```bash
-ssh-keygen -t ed25519 -f ~/.ssh/hermes-call-release -C release@quavon
-```
-
-Put the public key (`ssh-ed25519 AAAA…`) into `RELEASE_SIGNER` in both
-`ct/hermes-call-relay.sh` and `install/hermes-call-relay-install.sh`, tag a
-release, then build and sign it:
-
-```bash
-tools/release.sh v0.6.0 ~/.ssh/hermes-call-release
-```
-
-Upload the three files from `dist/` to the GitHub release.
+Key handling, building, signing and publishing a release: [docs/releasing.md](../docs/releasing.md).
 
 ## One command
 
