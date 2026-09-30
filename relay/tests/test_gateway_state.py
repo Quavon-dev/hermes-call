@@ -126,3 +126,14 @@ async def test_gateway_health_and_metrics(gw, aiohttp_client, monkeypatch) -> No
     assert (await client.get("/metrics")).status == 404
     monkeypatch.setattr(gateway.state, "writable", lambda: False)
     assert (await client.get("/healthz")).status == 503
+
+
+async def test_unreadable_blocklist_keeps_the_previous_one(tmp_path: Path) -> None:
+    blocklist = tmp_path / "blocked.txt"
+    blocklist.write_text("A" * 43 + "\n")
+    config = dataclasses.replace(gateway_config(), blocklist_path=blocklist)
+    gateway = PushGateway(config, FakePush())
+    assert "A" * 43 in gateway.blocked
+    blocklist.write_bytes(b"\xff\xfe broken")
+    assert not gateway.reload_blocklist()
+    assert "A" * 43 in gateway.blocked

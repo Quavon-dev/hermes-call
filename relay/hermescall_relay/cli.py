@@ -226,6 +226,12 @@ def main(argv: list[str] | None = None) -> int:
     except (ConfigError, backup.BackupError, schema.SchemaError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except PermissionError as exc:
+        print(
+            f"error: {exc.strerror}: {exc.filename} (backup/restore of a packaged relay: install.sh backup|restore)",
+            file=sys.stderr,
+        )
+        return 2
 
 
 if __name__ == "__main__":

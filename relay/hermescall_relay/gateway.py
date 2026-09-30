@@ -128,18 +128,17 @@ def load_gateway(path: Path = DEFAULT_GATEWAY_CONFIG) -> GatewayConfig:
 
 
 def read_blocklist(config: GatewayConfig) -> frozenset[str]:
-    """blocked_relays from gateway.toml plus the lines of blocklist_path."""
+    """blocked_relays from gateway.toml plus the lines of blocklist_path. Raises OSError or
+    ValueError when a file cannot be read, so the caller keeps the previous list (fail closed)."""
     blocked = set(config.blocked_relays)
     if config.config_path is not None:
-        with contextlib.suppress(OSError, ValueError, tomllib.TOMLDecodeError):
-            raw = tomllib.loads(config.config_path.read_text())
-            blocked = {str(item) for item in raw.get("blocked_relays", [])}
-    if config.blocklist_path is not None:
-        with contextlib.suppress(OSError):
-            for line in config.blocklist_path.read_text().splitlines():
-                entry = line.split("#", 1)[0].strip()
-                if _RELAY_ID.match(entry):
-                    blocked.add(entry)
+        raw = tomllib.loads(config.config_path.read_text())
+        blocked = {str(item) for item in raw.get("blocked_relays", [])}
+    if config.blocklist_path is not None and config.blocklist_path.exists():
+        for line in config.blocklist_path.read_text().splitlines():
+            entry = line.split("#", 1)[0].strip()
+            if _RELAY_ID.match(entry):
+                blocked.add(entry)
     return frozenset(blocked)
 
 
@@ -195,7 +194,7 @@ class PushGateway:
         self.config = config
         self.sender = sender
         self.state = state or GatewayState(config.state_path)
-        self.blocked = read_blocklist(config)
+        self.blocked = read_blocklist(config)  # at start a broken file is a config error
         self.ip_rate = _limiter(IP_LIMIT)
         self.relay_rate = _limiter(RELAY_LIMIT)
         self.new_relay_rate = _limiter(NEW_RELAYS_PER_IP)
@@ -271,15 +270,19 @@ class PushGateway:
 
     def _reload_if_changed(self) -> None:
         stamps = self._file_stamps()
-        if stamps != self._stamps:
+        if stamps != self._stamps and self.reload_blocklist():
             self._stamps = stamps
-            self.reload_blocklist()
 
-    def reload_blocklist(self) -> None:
-        blocked = read_blocklist(self.config)
+    def reload_blocklist(self) -> bool:
+        try:
+            blocked = read_blocklist(self.config)
+        except (OSError, ValueError, TypeError) as exc:
+            log.warning("blocklist not reloaded, keeping %d relay(s): %s", len(self.blocked), exc.__class__.__name__)
+            return False
         if blocked != self.blocked:
             log.info("blocklist reloaded: %d relay(s)", len(blocked))
         self.blocked = blocked
+        return True
 
     async def healthz(self, request: web.Request) -> web.Response:
         ok = self.state.writable()
@@ -292,7 +295,7 @@ class PushGateway:
     def client_ip(self, request: web.Request) -> str:
         return forwarded_client_ip(
             request.remote or "",
-            request.headers.get("X-Forwarded-For", ""),
+            ",".join(request.headers.getall("X-Forwarded-For", [])),
             self.config.trust_proxy,
             self.config.trusted_proxies,
         )

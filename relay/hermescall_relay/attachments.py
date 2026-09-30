@@ -119,8 +119,12 @@ class AttachmentsMixin:
             self._remove_blob(blob_id)
         known = self.store.blob_ids()
         cutoff = time.time() - STALE_TMP_SECONDS
-        with contextlib.suppress(OSError):
-            for path in self.blob_dir.iterdir():
+        try:
+            paths = list(self.blob_dir.iterdir())
+        except OSError:
+            paths = []
+        for path in paths:
+            with contextlib.suppress(OSError):
                 stale_tmp = path.name.startswith(".") and path.stat().st_mtime < cutoff
                 if stale_tmp or (not path.name.startswith(".") and path.name not in known):
                     path.unlink(missing_ok=True)
@@ -171,12 +175,16 @@ class AttachmentsMixin:
                 raise ProtocolError("size mismatch")
             os.replace(tmp, self._blob_path(blob_id))
             self.store.complete_blob(blob_id, size)
-        except (ProtocolError, OSError, ConnectionError, TimeoutError) as exc:
+        except Exception as exc:  # noqa: BLE001 - any failure (aiohttp payload errors too) frees the reservation
             tmp.unlink(missing_ok=True)
             self._remove_blob(blob_id)
             log.info("blob upload failed: %s", exc.__class__.__name__)
             self.transfers_total.inc(direction="upload", result="failed")
             return _refuse_upload(400)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            self._remove_blob(blob_id)
+            raise
         finally:
             self.blob_transfers -= 1
         self.transfers_total.inc(direction="upload", result="ok")

@@ -291,13 +291,22 @@ deploy_code() {
   find "$staging" -type d -exec chmod 0755 {} + && find "$staging" -type f -exec chmod 0644 {} +
   chmod 0755 "$staging/relay/install.sh"
   write_version_file "$staging/VERSION"
-  # The previous code stays as ${PREFIX}.old for `install.sh rollback`.
-  if [[ -d $PREFIX ]]; then
+  # The previous code stays as ${PREFIX}.old for `install.sh rollback` -- unless this is the same
+  # build again (a retried or repeated update), which must not replace the real previous version.
+  if [[ -d $PREFIX ]] && [[ $(build_of "$PREFIX") == "$(build_of "$staging")" ]]; then
+    rm -rf "$PREFIX"
+  elif [[ -d $PREFIX ]]; then
     rm -rf "${PREFIX}.old"
     mv "$PREFIX" "${PREFIX}.old"
   fi
   mv "$staging" "$PREFIX"
   write_wrapper
+}
+
+# "version commit" of an installed tree (empty before 0.7).
+build_of() {
+  [[ -f $1/VERSION ]] || return 0
+  sed -n 's/^version=//p; s/^commit=//p' "$1/VERSION" | paste -sd' ' -
 }
 
 write_version_file() {
@@ -505,7 +514,7 @@ EOF
 
 # The ACME certificate Caddy keeps for the domain (any issuer directory).
 caddy_cert() {
-  find /var/lib/caddy/.local/share/caddy/certificates -type f -name "$HC_DOMAIN.$1" 2>/dev/null | head -n 1
+  { find /var/lib/caddy/.local/share/caddy/certificates -type f -name "$HC_DOMAIN.$1" 2>/dev/null || true; } | head -n 1
 }
 
 # TURNS uses Caddy's certificate; coturn gets its own copy (it runs as another user). Run before
@@ -606,9 +615,14 @@ install_units() {
   systemctl daemon-reload
 }
 
+# SSH ports from sshd's config and, on Ubuntu 24.04 (socket activation), from ssh.socket, which
+# may listen elsewhere than sshd -T reports.
 ssh_ports() {
   install -d -m 0755 /run/sshd
-  { sshd -T 2>/dev/null || true; } | awk '$1 == "port" {print $2}' | paste -sd, -
+  {
+    { sshd -T 2>/dev/null || true; } | awk '$1 == "port" {print $2}'
+    { systemctl show -p Listen --value ssh.socket 2>/dev/null || true; } | tr ' ' '\n' | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p'
+  } | sort -un | paste -sd, -
 }
 
 setup_firewall() {
@@ -803,8 +817,15 @@ cmd_install() {
 }
 
 snapshot_db() {
-  local db=$DATA/relay.db
+  local db=$DATA/relay.db new
   [[ -f $db ]] || return 0
+  new=$(mktemp -d)
+  write_version_file "$new/VERSION"
+  if [[ -n $(build_of "$PREFIX") && $(build_of "$PREFIX") == "$(build_of "$new")" ]]; then
+    rm -rf "$new"
+    return 0  # same build again: keep the snapshot from before the real update
+  fi
+  rm -rf "$new"
   log "Snapshot of the database before the update: $db.pre-update"
   runuser -u "$SERVICE_USER" -- python3 -c \
     'import sqlite3, sys; s = sqlite3.connect(sys.argv[1]); d = sqlite3.connect(sys.argv[2]); s.backup(d); d.close()' \
@@ -877,6 +898,7 @@ cmd_restore() {
   tar --no-same-owner --no-same-permissions -xzf "$archive" -C "$work" manifest.json relay.db files ||
     die "not a relay backup: $archive"
   [[ -f $work/relay.db && -d $work/files$ETC ]] || die "backup lacks the database or $ETC"
+  check_backup_db "$work/relay.db"
   systemctl stop hermescall-relay.service hermescall-turn.service 2>/dev/null || true
   create_user
   install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$DATA"
@@ -892,12 +914,28 @@ cmd_restore() {
       [[ -f $file && ! -L $file ]] && install -m 0600 "$file" "$CADDY_TLS/$(basename "$file")"
     done
   fi
+  if [[ -f $DATA/relay.db ]]; then
+    cp -p "$DATA/relay.db" "$DATA/relay.db.pre-restore"
+    log "The database it replaces is kept as $DATA/relay.db.pre-restore"
+  fi
   rm -f "$DATA/relay.db-wal" "$DATA/relay.db-shm"
   install -m 0600 -o "$SERVICE_USER" -g "$SERVICE_USER" "$work/relay.db" "$DATA/relay.db"
   log "Restored $ETC and the database; reinstalling with the restored settings"
   INTERACTIVE=0
   cmd_install quiet
   log "Restore complete. Bridges and phones reconnect by themselves if the address and TLS key are unchanged."
+}
+
+# Integrity and schema of a backup's database, checked before anything is replaced.
+check_backup_db() {
+  command -v python3 >/dev/null || { apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 >/dev/null; }
+  PYTHONPATH="$SRC_ROOT/relay" python3 - "$1" <<'EOF' || die "the backup's database is damaged or from a newer relay; nothing was changed"
+import sqlite3, sys
+from hermescall_relay import schema
+db = sqlite3.connect(sys.argv[1])
+ok = db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+sys.exit(0 if ok and (schema.version(db) <= schema.LATEST or schema.min_reader(db) <= schema.LATEST) else 1)
+EOF
 }
 
 cmd_rotate() {
@@ -954,6 +992,10 @@ remove_firewall() {
     ufw delete allow "$TURN_PORT" >/dev/null 2>&1 || true
     ufw delete allow "$TURN_MIN_PORT:$TURN_MAX_PORT/udp" >/dev/null 2>&1 || true
     ufw delete allow "$TURNS_PORT/tcp" >/dev/null 2>&1 || true
+    local net
+    for net in ${HC_PROXY_FROM//,/ }; do
+      ufw delete allow from "$net" to any port "$LISTEN_PORT" proto tcp >/dev/null 2>&1 || true
+    done
   fi
   # Our table goes in any case; the rules that were loaded before the relay are still loaded (the
   # relay only ever replaced its own table). The previous nftables.conf is put back for the next

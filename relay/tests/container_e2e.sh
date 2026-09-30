@@ -80,10 +80,15 @@ check "re-run install is idempotent (keeps pin + secret)" "
   /root/hc/relay/install.sh install --non-interactive >/root/install2.log 2>&1 &&
   [[ \$(grep tls_pin /etc/hermescall-relay/relay.toml) == \"\$PIN\" && \$(cat /etc/hermescall-relay/turn_secret) == \"\$SEC\" ]] &&
   hermescall-relay bridges | grep -q 'devices=0'"
+# Pretend the installed code is an older release, so this update is a real version change.
+run "sed -i 's/^version=.*/version=0.0.1/' /opt/hermescall-relay/VERSION"
 check "update keeps data" "/opt/hermescall-relay/relay/install.sh update >/root/update.log 2>&1 && hermescall-relay bridges | grep -q paired"
 check "update keeps the old code and a database snapshot" "
   [[ -d /opt/hermescall-relay.old && -s /var/lib/hermescall-relay/relay.db.pre-update ]] &&
   [[ \$(stat -c '%a %U' /var/lib/hermescall-relay/relay.db.pre-update) == '600 hermescall-relay' ]]"
+check "repeating the same update keeps the rollback point" "
+  /opt/hermescall-relay/relay/install.sh update >/root/update1b.log 2>&1 &&
+  grep -q '^version=0.0.1' /opt/hermescall-relay.old/VERSION"
 check "rollback and forward again" "
   /opt/hermescall-relay/relay/install.sh rollback >/root/rollback.log 2>&1 && systemctl is-active -q hermescall-relay &&
   /opt/hermescall-relay/relay/install.sh rollback >>/root/rollback.log 2>&1 && systemctl is-active -q hermescall-relay &&

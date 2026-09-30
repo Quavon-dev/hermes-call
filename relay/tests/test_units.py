@@ -215,6 +215,8 @@ def test_client_ip_behind_an_external_proxy(tmp_path) -> None:
     from dataclasses import replace
     from types import SimpleNamespace
 
+    from multidict import CIMultiDict
+
     from hermescall_relay.server import Relay
     from hermescall_relay.store import Store
 
@@ -224,7 +226,7 @@ def test_client_ip_behind_an_external_proxy(tmp_path) -> None:
     relay = Relay(config, Store(config.db_path), FakePush(), b"t")
 
     def req(remote: str):
-        return SimpleNamespace(remote=remote, headers={"X-Forwarded-For": "6.6.6.6, 203.0.113.9"})
+        return SimpleNamespace(remote=remote, headers=CIMultiDict({"X-Forwarded-For": "6.6.6.6, 203.0.113.9"}))
 
     assert relay.client_ip(req("192.168.0.50")) == "203.0.113.9"  # NPM on the LAN
     assert relay.client_ip(req("::ffff:192.168.0.50")) == "203.0.113.9"

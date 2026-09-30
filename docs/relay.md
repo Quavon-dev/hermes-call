@@ -91,7 +91,7 @@ git -C /root/hermes-call pull && /root/hermes-call/relay/install.sh update
 
 `update` keeps settings, keys and paired devices, keeps the previous code in
 `/opt/hermescall-relay.old` and takes a database snapshot
-(`/var/lib/hermescall-relay/relay.db.pre-update`). `rollback` swaps the code back (run it again to
+(`/var/lib/hermescall-relay/relay.db.pre-update`); running the same update again keeps both. `rollback` swaps the code back (run it again to
 return); the database stays, because schema changes so far only add. `rollback --restore-db` also
 puts the snapshot back (whatever was paired or queued since the update is then lost).
 
@@ -133,8 +133,9 @@ Restore, on the same host or a new one with the same address (clone the reposito
 /root/hermes-call/relay/install.sh restore /root/relay.tar.gz
 ```
 
-It stops the services, puts back the database, config and keys, then runs the normal install with
-the restored settings. Bridges and phones reconnect by themselves when the address and TLS key are
+It checks the archive's database first (integrity, schema), stops the services, keeps the current
+database as `relay.db.pre-restore`, puts back the database, config and keys, then runs the normal
+install with the restored settings. Bridges and phones reconnect by themselves when the address and TLS key are
 unchanged. Moving to a new domain needs a new pairing of the bridge.
 
 Docker users: `hermescall-relay backup FILE` / `restore FILE` (see [Docker Compose](#docker-compose)).

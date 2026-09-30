@@ -26,6 +26,7 @@ MANIFEST = "manifest.json"
 DATABASE = "relay.db"
 FILES = "files"
 MAX_FILE_BYTES = 1024 * 1024
+MAX_DATABASE_BYTES = 8 * 1024 * 1024 * 1024
 FORMAT = 1
 
 
@@ -92,9 +93,12 @@ def create(config: Config, config_path: Path, target: Path, include: list[Path] 
     return [MANIFEST, DATABASE, *(f"{FILES}{path}" for path in files)]
 
 
-def _read(tar: tarfile.TarFile, name: str) -> bytes:
-    member = tar.getmember(name)
-    if not member.isfile() or member.size > 4 * 1024 * 1024 * 1024:
+def _read(tar: tarfile.TarFile, name: str, limit: int = MAX_FILE_BYTES) -> bytes:
+    try:
+        member = tar.getmember(name)
+    except KeyError as exc:
+        raise BackupError(f"{name} missing from the backup") from exc
+    if not member.isfile() or member.size > limit:
         raise BackupError(f"{name}: not a regular file")
     handle = tar.extractfile(member)
     if handle is None:
@@ -103,12 +107,18 @@ def _read(tar: tarfile.TarFile, name: str) -> bytes:
 
 
 def _write(path: Path, data: bytes) -> None:
+    """Atomically, mode 600, owned like the file it replaces (or like its directory): a restore
+    run as root must leave the service user's keys and database readable by that user."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    reference = path if path.exists() else path.parent
+    owner = reference.stat()
     partial = path.with_name(f".{path.name}.restore")
     partial.unlink(missing_ok=True)
     fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "wb") as handle:
         handle.write(data)
+    if os.geteuid() == 0:
+        os.chown(partial, owner.st_uid, owner.st_gid)
     os.replace(partial, path)
 
 
@@ -135,8 +145,11 @@ def restore(archive: Path, db_path: Path, roots: list[Path]) -> dict:
             raise BackupError(f"backup is from a newer relay ({manifest.get('relay')}); update this relay first")
         files = [str(item) for item in manifest.get("files", [])]
         planned = [(_allowed(item, roots), _read(tar, f"{FILES}{item}")) for item in files]
-        database = _read(tar, DATABASE)
+        database = _read(tar, DATABASE, MAX_DATABASE_BYTES)
     _check_database(database)
+    if db_path.exists():
+        # The database being replaced stays next to it until the next restore.
+        _write(db_path.with_name(f"{db_path.name}.pre-restore"), db_path.read_bytes())
     for path, data in planned:
         _write(path, data)
     for suffix in ("-wal", "-shm"):
@@ -155,5 +168,9 @@ def _check_database(data: bytes) -> None:
         try:
             if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise BackupError("backup database failed its integrity check")
+            if schema.version(db) > schema.LATEST and schema.min_reader(db) > schema.LATEST:
+                raise BackupError("backup database is from a newer relay; update this relay first")
+        except sqlite3.DatabaseError as exc:
+            raise BackupError(f"backup database is unreadable: {exc}") from exc
         finally:
             db.close()

@@ -235,7 +235,7 @@ class Relay(AttachmentsMixin, MailboxMixin):
         """The client's address as the nearest untrusted hop saw it (see netutil.client_ip)."""
         return netutil.client_ip(
             request.remote or "",
-            request.headers.get("X-Forwarded-For", ""),
+            ",".join(request.headers.getall("X-Forwarded-For", [])),
             self.config.trust_proxy,
             self.config.trusted_proxies,
         )

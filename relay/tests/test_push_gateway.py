@@ -272,11 +272,13 @@ def test_client_ip_trusts_only_configured_proxies() -> None:
     from dataclasses import replace
     from types import SimpleNamespace
 
+    from multidict import CIMultiDict
+
     config = replace(gateway_config(), trusted_proxies=(ipaddress.ip_network("10.42.0.0/16"),))
     gateway = PushGateway(config, FakePush())
 
     def request(remote: str, forwarded: str = "198.51.100.7, 203.0.113.9"):
-        return SimpleNamespace(remote=remote, headers={"X-Forwarded-For": forwarded})
+        return SimpleNamespace(remote=remote, headers=CIMultiDict({"X-Forwarded-For": forwarded}))
 
     assert gateway.client_ip(request("10.42.3.4")) == "203.0.113.9"  # Traefik pod
     assert gateway.client_ip(request("127.0.0.1")) == "203.0.113.9"  # Caddy on the host

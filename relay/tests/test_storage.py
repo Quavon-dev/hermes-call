@@ -228,3 +228,15 @@ def test_restore_refuses_a_corrupt_database(tmp_path: Path) -> None:
             tar.addfile(info, io.BytesIO(data))
     with pytest.raises(backup.BackupError):
         backup.restore(archive, config.db_path, [config.secrets_dir.resolve()])
+
+
+def test_restore_keeps_the_replaced_database(tmp_path: Path) -> None:
+    config, config_path = _config(tmp_path)
+    store = Store(config.db_path)
+    archive = tmp_path / "backup.tar.gz"
+    backup.create(config, config_path, archive)
+    newer = store.add_bridge(b"n" * 32)
+    store.close()
+    backup.restore(archive, config.db_path, [config.secrets_dir.resolve()])
+    kept = Store(config.db_path.with_name("relay.db.pre-restore"))
+    assert kept.bridge_key(newer) == b"n" * 32
