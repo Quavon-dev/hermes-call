@@ -263,6 +263,7 @@ async def test_a5_resent_message_after_restart_is_delivered_once(h) -> None:
     await next_of(device, "chat_ack")
     cursor, events = await h.bridge.chat.poll(0, 5)
     assert len(events) == 1
+    await h.bridge.chat.poll(cursor, 0)  # Hermes has it: acked
     bridge = await restart(h)
     await device.send(body, mail=True)  # the phone did not see the ack and resends (new envelope, same id)
     assert (await next_of(device, "chat_ack"))["state"] == "delivered"

@@ -184,10 +184,12 @@ class ChatStore:
 
     # ---- outbox -----------------------------------------------------------------
 
-    def queue_mail(self, device_id: str, mid: str, message_id: str, data: str, alert: bool, expires: float) -> int:
+    def queue_mail(
+        self, device_id: str, mid: str, message_id: str, data: str, alert: bool, expires: float, next_try: float | None = None
+    ) -> int:
         cursor = self._db.execute(
             "INSERT INTO outbox (device_id, mid, message_id, data, alert, next_try, expires) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (device_id, mid, message_id, data, int(alert), time.time(), expires),
+            (device_id, mid, message_id, data, int(alert), time.time() if next_try is None else next_try, expires),
         )
         return int(cursor.lastrowid)
 

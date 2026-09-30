@@ -54,6 +54,7 @@ class State:
 
 class StateStore:
     def __init__(self, directory: Path) -> None:
+        self.directory = directory
         self.path = directory / "state.json"
         self.seen_path = directory / "e2e_seen.json"
         self.seen_mail_path = directory / "e2e_seen_mail.json"

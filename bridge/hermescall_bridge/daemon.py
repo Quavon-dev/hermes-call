@@ -15,12 +15,14 @@ from .api import build_app
 from .audio import SpeechTrack
 from .calls import CallManager, Ring
 from .chat import ChatService
+from .chatstore import ChatStore
 from .config import Config, ConfigError
 from .conversation import Conversation
 from .devices import DeviceRegistry
 from .hermes import HermesClient
 from .phone import PhoneService
 from .present import Fetcher, PresentService, fetch_image
+from .seen import SeenLog
 from .state import Device, State, StateStore
 from .tasks import TaskService
 from .tts import KokoroTts
@@ -38,6 +40,7 @@ class Bridge:
     presenter: PresentService
     tasks: TaskService
     app: web.Application
+    seen: SeenLog
 
 
 def outbound_note(ring: Ring | None, chat_context: str = "") -> str:
@@ -62,6 +65,7 @@ def build_bridge(
     call_token: str = "",
     agent_name: str = "Hermes",
     image_fetcher: Fetcher = fetch_image,
+    transcribe_long: Callable[[np.ndarray], Awaitable[str]] | None = None,
 ) -> Bridge:
     async def on_event(message: dict) -> None:
         kind = message["t"]
@@ -91,16 +95,23 @@ def build_bridge(
             "chat_adapter": time.monotonic() - chat.last_poll < 90,
         }
 
-    relay = RelaySession(state.endpoint, "bridge", state.bridge_id, state.key("sign_sk"), on_event)
-    channel = Channel(
-        state.bridge_id, state.key("box_sk"), store.load_seen(), store.save_seen, store.load_seen_mail(), store.save_seen_mail
-    )
+    async def on_ready() -> None:
+        await chat.on_relay_ready()
 
-    async def unpair(device_id: str) -> None:
-        await devices.revoke(device_id)
+    relay = RelaySession(state.endpoint, "bridge", state.bridge_id, state.key("sign_sk"), on_event, on_ready)
+    seen = SeenLog(store.directory)
+    seen_peers, seen_mail = seen.load()
+    channel = Channel(state.bridge_id, state.key("box_sk"), seen_peers, seen_mail=seen_mail, on_mark=seen.mark)
+
+    async def unpair(device_id: str) -> bool:
+        """Revoke a phone everywhere (API, CLI and the phone's own `unpair`). False: unknown device."""
+        if not await devices.revoke(device_id):
+            return False
         await calls.forget_device(device_id)
         phone.forget_device(device_id)
         tasks.forget_device(device_id)
+        chat.forget_device(device_id)
+        return True
 
     async def missed(ring: Ring, status: str) -> bool:
         return await chat.missed_call(ring.reason, ring.first_message, status)
@@ -113,14 +124,16 @@ def build_bridge(
         else:
             await chat.handle(device, body)
 
-    chat = ChatService(state, relay, channel, transcribe, agent_name, tts)
+    chat = ChatService(
+        state, relay, channel, transcribe, agent_name, tts, ChatStore(store.directory / "chat.db"), transcribe_long
+    )
     phone = PhoneService(state, relay, channel)
     presenter = PresentService(chat, image_fetcher)
     tasks = TaskService(state, relay, channel, store.load_task_prefs(), store.save_task_prefs)
     calls = CallManager(state, relay, channel, make_conversation, unpair, other_messages, missed, chat.note_call)
     devices = DeviceRegistry(state, store, relay, agent_name)
-    app = build_app(api_token, calls, devices, status, call_token, chat, phone, presenter, tasks)
-    return Bridge(relay, calls, devices, chat, phone, presenter, tasks, app)
+    app = build_app(api_token, calls, devices, status, call_token, chat, phone, presenter, tasks, unpair)
+    return Bridge(relay, calls, devices, chat, phone, presenter, tasks, app, seen)
 
 
 async def serve(config: Config) -> None:

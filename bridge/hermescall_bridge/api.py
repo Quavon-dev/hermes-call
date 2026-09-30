@@ -3,6 +3,7 @@
 import hmac
 import json
 import logging
+from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
@@ -52,6 +53,7 @@ def build_app(
     phone: PhoneService | None = None,
     presenter: PresentService | None = None,
     tasks: TaskService | None = None,
+    unpair: Callable[[str], Awaitable[bool]] | None = None,
 ) -> web.Application:
     """`token` may do everything; `call_token` (given to Hermes) may only ring the phone and chat."""
 
@@ -105,14 +107,10 @@ def build_app(
 
     async def revoke(request: web.Request) -> web.Response:
         device_id = request.match_info["device_id"]
-        if not await devices.revoke(device_id):
+        revoked = await unpair(device_id) if unpair is not None else await devices.revoke(device_id)
+        if not revoked:
             raise _error(web.HTTPNotFound, "unknown device")
-        await calls.forget_device(device_id)
-        if phone is not None:
-            phone.forget_device(device_id)
-        if tasks is not None:
-            tasks.forget_device(device_id)
-        return web.json_response({"revoked": request.match_info["device_id"]})
+        return web.json_response({"revoked": device_id})
 
     async def get_status(request: web.Request) -> web.Response:
         return web.json_response(status())
@@ -129,8 +127,9 @@ def build_app(
             wait = float(request.query.get("wait", "25"))
         except ValueError as exc:
             raise _error(web.HTTPBadRequest, "cursor and wait must be numbers") from exc
-        cursor, events = await chat.poll(max(cursor, 0), max(0.0, wait))
-        return web.json_response({"cursor": cursor, "events": events})
+        epoch = request.query.get("epoch")
+        cursor, events = await chat.poll(max(cursor, 0), max(0.0, wait), epoch[:64] if epoch else None)
+        return web.json_response({"cursor": cursor, "events": events, "epoch": chat.epoch})
 
     async def chat_message(request: web.Request) -> web.Response:
         body = await json_body(request)
@@ -141,7 +140,7 @@ def build_app(
             reply_to if isinstance(reply_to, str) and len(reply_to) <= 64 else None,
             answers=answers if isinstance(answers, str) and len(answers) <= 64 else None,
         )
-        return web.json_response({"message_id": message_id})
+        return web.json_response({"message_id": message_id, "queued": await chat.queued(message_id)})
 
     async def chat_file(request: web.Request) -> web.Response:
         body = await json_body(request)

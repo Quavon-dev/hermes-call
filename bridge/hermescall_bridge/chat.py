@@ -5,6 +5,10 @@ encrypted relay blobs. Bridge → Hermes: an event queue the plugin's adapter
 long-polls on the local API. Hermes → phones: E2E messages through the relay
 mailbox with an alert push. All paired phones share one chat ("owner").
 
+Durability (chatstore.py): an owner message is written to the store before the phone gets
+`delivered`, handed to Hermes from there (also after a restart), and only dropped once the
+adapter's cursor passed it. Agent messages wait in a persistent outbox until the relay took them.
+
 Logs carry ids and sizes only — never message text.
 """
 
@@ -12,6 +16,7 @@ import asyncio
 import contextlib
 import io
 import logging
+import sqlite3
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -26,8 +31,11 @@ from hermescall_common.client import RelaySession
 from hermescall_common.e2e import Channel
 from hermescall_common.errors import CryptoError, ProtocolError
 
+from .chatstore import AsyncStore, ChatStore, Pending
 from .hermes import APPROVAL_CHOICES, MAX_APPROVAL_TEXT
+from .outbox import Outbox
 from .state import Device, State
+from .transport import Transport
 from .tts import SAMPLE_RATE as TTS_RATE
 from .voice import MAX_SPOKEN_SECONDS, encode_voice, speech_text
 
@@ -41,7 +49,6 @@ MAX_EVENTS = 500
 MAX_POLL_SECONDS = 30.0
 MAX_VOICE_SECONDS = 300
 RECENT_LINES = 16
-SEEN_MESSAGES = 2000
 MAX_CONTEXT_CHARS = 6000
 APPROVAL_TTL = 600.0
 MAX_MAIL = 48 * 1024
@@ -115,24 +122,65 @@ class ChatService:
         transcribe: Callable[[np.ndarray], Awaitable[str]],
         agent_name: str = "Hermes",
         tts: Any = None,
+        store: ChatStore | None = None,
+        transcribe_long: Callable[[np.ndarray], Awaitable[str]] | None = None,
     ) -> None:
+        """`transcribe_long` (voice notes) runs behind live-call speech recognition (stt.py)."""
         self._state = state
         self._tts = tts
         # (owner voice-note id, monotonic deadline): the agent's reply to it is also spoken
         self._voice_note: tuple[str, float] | None = None
         self._relay = relay
         self._channel = channel
-        self._transcribe = transcribe
+        self._transport = Transport(state, relay, channel)
+        self._transcribe = transcribe_long or transcribe
         self._agent_name = agent_name
-        self._events: deque[tuple[int, dict[str, Any]]] = deque(maxlen=MAX_EVENTS)
-        self._seq = 0
+        self._db = AsyncStore(store or ChatStore(":memory:"))
+        self.epoch = self._db.store.epoch
+        self.outbox = Outbox(self._transport, self._db, self._delivery_failed)
         self._changed = asyncio.Condition()
-        self._recent: deque[tuple[str, str]] = deque(maxlen=RECENT_LINES)
-        self._call_context = ""
+        recent = self._db.store.get_json("recent", [])
+        self._recent: deque[tuple[str, str]] = deque(
+            (tuple(line) for line in recent if isinstance(line, list) and len(line) == 2), maxlen=RECENT_LINES
+        )
+        self._call_context = str(self._db.store.get_json("call_context", "") or "")
         self._approvals: dict[str, float] = {}
-        # Phones resend unacknowledged messages (new envelope, same id): ack again, deliver once.
-        self._seen_messages: deque[str] = deque(maxlen=SEEN_MESSAGES)
+        self._resumed = False
         self.last_poll = 0.0
+
+    # ---- lifecycle ---------------------------------------------------------
+
+    async def on_relay_ready(self) -> None:
+        """After every relay (re)connect: queued mail goes out; after a restart, accepted messages resume."""
+        self.outbox.kick()
+        if not self._resumed:
+            self._resumed = True
+            for pending in await self._db.call(self._db.store.pending):
+                await self._resume(pending)
+
+    async def _resume(self, pending: Pending) -> None:
+        device = self._state.devices.get(pending.device_id)
+        if device is None:
+            await self._db.call(self._db.store.drop_pending, pending.message_id)
+            return
+        log.info("resuming chat message %s from before a restart", pending.message_id[:6])
+        try:
+            await self._process(device, pending.message_id, pending.body)
+        except ProtocolError as exc:
+            log.warning("chat message %s dropped: %s", pending.message_id[:6], exc)
+            await self._db.call(self._db.store.drop_pending, pending.message_id)
+
+    async def close(self) -> None:
+        self.outbox.stop()
+        await asyncio.get_running_loop().run_in_executor(None, self._db.close)
+
+    async def depths(self) -> dict[str, int]:
+        store = self._db.store
+        return {
+            "events": await self._db.call(store.event_depth),
+            "inbox": await self._db.call(store.inbox_depth),
+            "outbox": await self._db.call(store.outbox_depth),
+        }
 
     # ---- phones → Hermes -----------------------------------------------
 
@@ -157,10 +205,22 @@ class ChatService:
         attachments = [Attachment.parse(item) for item in raw]
         if not text.strip() and not attachments:
             raise ProtocolError("empty chat message")
-        await self._live(device, {"type": "chat_ack", "id": message_id, "state": "delivered"})
-        if message_id in self._seen_messages:
+        kept = {key: body[key] for key in ("id", "text", "attachments", "reply_to", "voice_replies") if key in body}
+        try:
+            fresh = await self._db.call(self._db.store.accept, message_id, device.id, kept)
+        except sqlite3.Error as exc:
+            # No ack: the phone keeps the message and sends it again.
+            log.error("chat message %s not stored, not acked: %s", message_id[:6], exc)
             return
-        self._seen_messages.append(message_id)
+        # Phones resend unacknowledged messages (new envelope, same id): ack again, deliver once.
+        await self._live(device, {"type": "chat_ack", "id": message_id, "state": "delivered"})
+        if fresh:
+            await self._process(device, message_id, kept)
+
+    async def _process(self, device: Device, message_id: str, body: dict[str, Any]) -> None:
+        """Stored and acked → attachments, transcripts, mirror → an event for Hermes (one transaction with the inbox row)."""
+        text = body.get("text", "")
+        attachments = [Attachment.parse(item) for item in body.get("attachments", [])]
         wants_voice = body.get("voice_replies") is True and any(a.kind == "voice" for a in attachments)
         self._voice_note = (message_id, time.monotonic() + VOICE_REPLY_TTL) if wants_voice else None
         files, voice, problems = await self._fetch_attachments(device, attachments)
@@ -171,7 +231,7 @@ class ChatService:
         full_text = "\n".join(part for part in parts if part)
         self._remember("owner", full_text or f"[{len(files)} attachment(s)]")
         await self._mirror(device, message_id, text.strip(), attachments, transcript)
-        context, self._call_context = self._call_context, ""
+        context = self._take_call_context()
         await self._emit(
             {
                 "type": "message",
@@ -183,8 +243,12 @@ class ChatService:
                 "attachments": files,
                 "reply_to": body.get("reply_to") if isinstance(body.get("reply_to"), str) else None,
                 "ts": int(time.time() * 1000),
-            }
+            },
+            handed_over=message_id,
         )
+        for item in attachments:
+            with contextlib.suppress(ProtocolError, TimeoutError):
+                await blobs.delete(self._relay, item.blob_id)
         log.info("chat message from %s: %d chars, %d attachments", device.id[:6], len(text), len(attachments))
 
     async def _fetch_attachments(self, device: Device, attachments: list[Attachment]) -> tuple[list[dict], list[str], list[str]]:
@@ -192,6 +256,7 @@ class ChatService:
         files: list[dict] = []
         voice: list[str] = []
         problems: list[str] = []
+        # Blobs are deleted only once the message is stored for Hermes (after a crash they are fetched again).
         for item in attachments:
             try:
                 data = blobs.open_sealed(item.key, await blobs.download(self._relay, item.blob_id))
@@ -199,9 +264,6 @@ class ChatService:
                 log.warning("attachment from %s unavailable: %s", device.id[:6], exc.__class__.__name__)
                 problems.append(f"(attachment '{item.name}' could not be downloaded)")
                 continue
-            finally:
-                with contextlib.suppress(ProtocolError, TimeoutError):
-                    await blobs.delete(self._relay, item.blob_id)
             if item.kind == "voice":
                 voice.append(await self._voice_to_text(data))
             else:
@@ -229,23 +291,42 @@ class ChatService:
             if other.id != device.id:
                 await self._live(other, {"type": "approval_done", "request_id": request_id})
 
-    async def _emit(self, event: dict[str, Any]) -> None:
+    async def _emit(self, event: dict[str, Any], handed_over: str | None = None) -> None:
+        store = self._db.store
+        if handed_over is None:
+            await self._db.call(store.add_event, event)
+        else:
+            await self._db.call(store.hand_over, handed_over, event)
+        dropped = await self._db.call(store.trim_events, MAX_EVENTS)
+        if dropped:
+            log.warning("chat adapter is not polling: %d old events dropped", dropped)
         async with self._changed:
-            self._seq += 1
-            self._events.append((self._seq, event))
             self._changed.notify_all()
 
-    async def poll(self, cursor: int, wait: float) -> tuple[int, list[dict[str, Any]]]:
-        """Events after `cursor`; everything up to `cursor` counts as received by Hermes."""
+    async def poll(self, cursor: int, wait: float, epoch: str | None = None) -> tuple[int, list[dict[str, Any]]]:
+        """Events after `cursor`; everything up to `cursor` counts as received by Hermes.
+
+        `epoch` names the event store the adapter's cursor belongs to. A different one (the store
+        was lost, seq numbers restarted) makes the cursor meaningless: nothing is acked, all is sent."""
         self.last_poll = time.monotonic()
+        store = self._db.store
+        if epoch is not None and epoch != self.epoch:
+            log.info("chat adapter cursor belongs to another event store; delivering from the start")
+            cursor = 0
+        await self._db.call(store.ack, cursor)
         async with self._changed:
-            while self._events and self._events[0][0] <= cursor:
-                self._events.popleft()
-            if not self._events and wait > 0:
+            events = await self._db.call(store.events_after, cursor)
+            if not events and wait > 0:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._changed.wait(), min(wait, MAX_POLL_SECONDS))
-            events = [event for seq, event in self._events if seq > cursor]
-            return (self._events[-1][0] if self._events else max(cursor, self._seq)), events
+                events = await self._db.call(store.events_after, cursor)
+        last = events[-1][0] if events else max(cursor, await self._db.call(store.last_seq))
+        return last, [event for _, event in events]
+
+    async def _delivery_failed(self, message_id: str, device_id: str, why: str) -> None:
+        """The outbox gave up on a message; the adapter hears of it (Hermes cannot resend it)."""
+        event = {"type": "delivery_failed", "chat_id": CHAT_ID, "message_id": message_id, "device_id": device_id}
+        await self._emit({**event, "why": why[:100]})
 
     # ---- Hermes → phones -----------------------------------------------
 
@@ -262,6 +343,10 @@ class ChatService:
         else:
             await self._send_voice_reply(body, audio)
         return message_id
+
+    async def queued(self, message_id: str) -> bool:
+        """Whether some phone's copy still waits in the outbox (the relay has not taken it yet)."""
+        return await self._db.call(self._db.store.queued, message_id)
 
     # ---- spoken replies (the owner sent a voice note) --------------------
 
@@ -429,6 +514,17 @@ class ChatService:
 
     def _remember(self, who: str, text: str) -> None:
         self._recent.append((who, text[:1000]))
+        self._persist("recent", [list(line) for line in self._recent])
+
+    def _persist(self, key: str, value: Any) -> None:
+        """Ordered after earlier store calls; a failure only costs context, never a message."""
+        self._db.submit(self._db.store.set_json, key, value).add_done_callback(_log_failure)
+
+    def _take_call_context(self) -> str:
+        context, self._call_context = self._call_context, ""
+        if context:
+            self._persist("call_context", "")
+        return context
 
     def recent_context(self) -> str:
         lines = [f"{who}: {text}" for who, text in self._recent]
@@ -442,6 +538,7 @@ class ChatService:
         lines = "\n".join(f"{who}: {text}" for who, text in transcript)[-MAX_CONTEXT_CHARS:]
         stamp = time.strftime("%H:%M UTC", time.gmtime())
         self._call_context = f"[Context: a phone call with your owner ended at {stamp}. Transcript:\n{lines}]\n\n"
+        self._persist("call_context", self._call_context)
         for who, text in transcript:
             self._remember(f"{who} (call)", text)
 
@@ -464,14 +561,16 @@ class ChatService:
             await self._mail(device, body, alert)
 
     async def _mail(self, device: Device, body: dict[str, Any], alert: bool) -> None:
-        mid = new_id()
-        sealed = self._channel.seal(device.id, device.box_key, body, mid=mid)
-        try:
-            await self._relay.request({"t": "mail", "to": device.id, "id": mid, "data": sealed, "alert": alert})
-        except (ProtocolError, TimeoutError) as exc:
-            log.warning("chat message for %s not stored: %s", device.id[:6], exc)
+        """Through the persistent outbox: kept and retried until the relay's mailbox took it."""
+        await self.outbox.queue(device.id, str(body.get("id") or body.get("request_id") or ""), body, alert)
 
     async def _live(self, device: Device, body: dict[str, Any]) -> None:
-        sealed = self._channel.seal(device.id, device.box_key, body)
-        with contextlib.suppress(ProtocolError):
-            await self._relay.send({"t": "e2e", "to": device.id, "data": sealed})
+        await self._transport.live(device, body)
+
+    def forget_device(self, device_id: str) -> None:
+        self._db.submit(self._db.store.forget_device, device_id).add_done_callback(_log_failure)
+
+
+def _log_failure(future: asyncio.Future) -> None:
+    if not future.cancelled() and future.exception() is not None:
+        log.warning("chat store update failed: %s", future.exception())
