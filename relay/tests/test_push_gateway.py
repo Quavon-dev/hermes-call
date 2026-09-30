@@ -145,8 +145,7 @@ async def test_gateway_limits_per_token_and_new_relays_per_ip(gw, sent: FakePush
     assert statuses == [200] * 10 + [429]
     # A second relay cannot keep ringing the same phone.
     assert (await post(client, Ed25519PrivateKey.generate(), body)).status == 429
-    other = {**body, "token": "cd" * 32}
-    statuses = [(await post(client, Ed25519PrivateKey.generate(), other)).status for _ in range(10)]
+    statuses = [(await post(client, Ed25519PrivateKey.generate(), {**body, "token": f"{n:064x}"})).status for n in range(10)]
     assert statuses[-1] == 429 and statuses.count(200) == 8  # 10 new keys per IP per hour, 2 used
 
 

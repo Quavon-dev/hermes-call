@@ -4,15 +4,19 @@ It runs next to the app's publisher key (hermes-push.quavon.de for the published
 signs each request with its own Ed25519 key (`pushauth`); the key is its identity, so no sign-up
 is needed. The gateway accepts only the three fixed payload shapes the relay sends to Apple
 itself — a call id, a generic alert with E2E ciphertext, a checked Live Activity state — so it
-never sees message text. It stores nothing; limits per relay, per device token and per IP keep a
-relay (or anyone who learnt a token) from flooding a phone or the publisher's APNs key.
+never sees message text. It keeps only what abuse protection needs (`gateway_state`): hashes of
+recent request signatures and, per hashed device token, which relays used it. Limits per relay,
+per device token and per IP keep a relay (or anyone who learnt a token) from flooding a phone or
+the publisher's APNs key.
 """
 
 import argparse
-import ipaddress
+import asyncio
+import contextlib
 import json
 import logging
 import re
+import signal
 import sys
 import time
 import tomllib
@@ -24,18 +28,25 @@ from aiohttp import web
 from hermescall_common.errors import ProtocolError
 from hermescall_common.wire import b64d
 
-from . import pushauth
+from . import logs, pushauth
 from .config import ApnsConfig, ConfigError
+from .gateway_state import GatewayState
+from .metrics import CONTENT_TYPE, Registry
+from .netutil import Network, parse_networks
+from .netutil import client_ip as forwarded_client_ip
+from .netutil import key as client_key
 from .push import LIVE_EVENTS, MAX_ALERT_CIPHERTEXT, DirectApns, PushResult, PushSender
 from .ratelimit import RateLimiter
-from .server import client_key, short, valid_content_state
+from .server import short, valid_content_state
 from .store import PUSH_ENVS
+from .version import VERSION
 
 log = logging.getLogger(__name__)
 
 DEFAULT_GATEWAY_CONFIG = Path("/etc/hermescall-push/gateway.toml")
 MAX_BODY = 8 * 1024
 _PUSH_TOKEN = re.compile(r"^[0-9a-f]{64,200}\Z")
+_RELAY_ID = re.compile(r"^[A-Za-z0-9_-]{43}\Z")
 # Per device token: a ring is one push; chat alerts match the relay's own limit; Live Activity
 # updates come at most every 3 s from a relay, starts rarely.
 TOKEN_LIMITS = {
@@ -54,7 +65,9 @@ NEW_RELAYS_PER_IP = (3600.0, 10)
 NEW_TOKENS_PER_RELAY = (3600.0, 60)
 MAX_KNOWN_RELAYS = 200_000
 KNOWN_RELAY_SECONDS = 86_400.0
-MAX_SEEN_SIGNATURES = 200_000
+# How often the blocklist files are checked for changes (SIGHUP reloads at once).
+RELOAD_SECONDS = 10.0
+PRUNE_SECONDS = 600.0
 
 
 @dataclass(frozen=True)
@@ -67,7 +80,16 @@ class GatewayConfig:
     secrets_dir: Path
     # Proxies whose X-Forwarded-For is believed (e.g. the Traefik pods' network in Kubernetes);
     # loopback is always trusted when trust_proxy is on (Caddy on the same host).
-    trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = ()
+    trusted_proxies: tuple[Network, ...] = ()
+    # SQLite file for the replay cache and token bindings; None keeps them in memory only.
+    state_path: Path | None = None
+    # Extra blocklist, one relay id per line (# comments); reloaded when it changes.
+    blocklist_path: Path | None = None
+    config_path: Path | None = None
+    metrics_host: str = "127.0.0.1"
+    metrics_port: int = 0
+    log_level: str = "info"
+    log_format: str = "text"
 
     def apns_key(self) -> bytes:
         try:
@@ -83,6 +105,8 @@ def load_gateway(path: Path = DEFAULT_GATEWAY_CONFIG) -> GatewayConfig:
         apns = ApnsConfig(str(section["key_id"]), str(section["team_id"]), str(section["topic"]))
         if not (apns.key_id.isalnum() and apns.team_id.isalnum() and apns.topic.endswith(".voip")):
             raise ValueError("invalid apns settings")
+        log_level, log_format = logs.validate(raw.get("log_level", "info"), raw.get("log_format", "text"))
+        metrics = raw.get("metrics", {})
         return GatewayConfig(
             listen_host=str(raw.get("listen_host", "127.0.0.1")),
             listen_port=int(raw.get("listen_port", 8744)),
@@ -90,10 +114,33 @@ def load_gateway(path: Path = DEFAULT_GATEWAY_CONFIG) -> GatewayConfig:
             apns=apns,
             blocked_relays=frozenset(str(item) for item in raw.get("blocked_relays", [])),
             secrets_dir=Path(raw.get("secrets_dir", "/etc/hermescall-push")),
-            trusted_proxies=tuple(ipaddress.ip_network(str(net)) for net in raw.get("trusted_proxies", [])),
+            trusted_proxies=parse_networks(raw.get("trusted_proxies", [])),
+            state_path=Path(raw["state_path"]) if raw.get("state_path") else None,
+            blocklist_path=Path(raw["blocklist_path"]) if raw.get("blocklist_path") else None,
+            config_path=path,
+            metrics_host=str(metrics.get("listen_host", "127.0.0.1")),
+            metrics_port=int(metrics.get("port", 0)),
+            log_level=log_level,
+            log_format=log_format,
         )
-    except (OSError, KeyError, ValueError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, AttributeError, KeyError, TypeError, ValueError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"invalid gateway config {path}: {exc}") from exc
+
+
+def read_blocklist(config: GatewayConfig) -> frozenset[str]:
+    """blocked_relays from gateway.toml plus the lines of blocklist_path."""
+    blocked = set(config.blocked_relays)
+    if config.config_path is not None:
+        with contextlib.suppress(OSError, ValueError, tomllib.TOMLDecodeError):
+            raw = tomllib.loads(config.config_path.read_text())
+            blocked = {str(item) for item in raw.get("blocked_relays", [])}
+    if config.blocklist_path is not None:
+        with contextlib.suppress(OSError):
+            for line in config.blocklist_path.read_text().splitlines():
+                entry = line.split("#", 1)[0].strip()
+                if _RELAY_ID.match(entry):
+                    blocked.add(entry)
+    return frozenset(blocked)
 
 
 class Rejected(Exception):
@@ -144,50 +191,119 @@ class ExpiringSet:
 
 
 class PushGateway:
-    def __init__(self, config: GatewayConfig, sender: PushSender) -> None:
+    def __init__(self, config: GatewayConfig, sender: PushSender, state: GatewayState | None = None) -> None:
         self.config = config
         self.sender = sender
+        self.state = state or GatewayState(config.state_path)
+        self.blocked = read_blocklist(config)
         self.ip_rate = _limiter(IP_LIMIT)
         self.relay_rate = _limiter(RELAY_LIMIT)
         self.new_relay_rate = _limiter(NEW_RELAYS_PER_IP)
         self.new_token_rate = _limiter(NEW_TOKENS_PER_RELAY)
         self.token_limits = {kind: [_limiter(limit) for limit in limits] for kind, limits in TOKEN_LIMITS.items()}
         self.known_relays = ExpiringSet(KNOWN_RELAY_SECONDS, MAX_KNOWN_RELAYS)
-        self.seen_signatures = ExpiringSet(2 * pushauth.MAX_SKEW_SECONDS, MAX_SEEN_SIGNATURES)
+        self._stamps: tuple = ()
+        self.metrics = Registry("hermescall_gateway")
+        self.metrics.gauge("build_info", "Gateway version.", lambda: {(("version", VERSION),): 1})
+        self.requests = self.metrics.counter("requests_total", "Push requests by outcome.")
+        self.metrics.gauge("push_total", "APNs results (retry = repeated attempts).", self._sender_stats, "counter")
+        self.metrics.gauge("state_rows", "Replay cache and token binding rows.", self._state_counts)
+        self.metrics.gauge("blocked_relays", "Relays on the blocklist.", lambda: len(self.blocked))
+
+    def _sender_stats(self) -> dict:
+        return {(("result", str(key)),): value for key, value in (getattr(self.sender, "stats", None) or {}).items()}
+
+    def _state_counts(self) -> dict:
+        return {(("kind", key),): value for key, value in self.state.counts().items()}
 
     def app(self) -> web.Application:
         app = web.Application(client_max_size=MAX_BODY)
         app.router.add_post("/v1/push", self.handle_push)
         app.router.add_get("/healthz", self.healthz)
+        app.on_startup.append(self._start)
         app.on_cleanup.append(self._close)
         return app
 
+    def metrics_app(self) -> web.Application:
+        app = web.Application()
+        app.router.add_get("/metrics", self.metrics_endpoint)
+        return app
+
+    async def _start(self, app: web.Application) -> None:
+        app["maintenance"] = asyncio.create_task(self._maintenance())
+        with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
+            asyncio.get_running_loop().add_signal_handler(signal.SIGHUP, self.reload_blocklist)
+        app["metrics_runner"] = None
+        if self.config.metrics_port:
+            runner = web.AppRunner(self.metrics_app(), access_log=None)
+            await runner.setup()
+            await web.TCPSite(runner, self.config.metrics_host, self.config.metrics_port).start()
+            app["metrics_runner"] = runner
+
     async def _close(self, app: web.Application) -> None:
+        app["maintenance"].cancel()
+        if app["metrics_runner"] is not None:
+            await app["metrics_runner"].cleanup()
         await self.sender.close()
+        self.state.close()
+
+    async def _maintenance(self) -> None:
+        last_prune = 0.0
+        while True:
+            await asyncio.sleep(RELOAD_SECONDS)
+            try:
+                self._reload_if_changed()
+                if time.monotonic() - last_prune > PRUNE_SECONDS:
+                    self.state.prune(time.time())
+                    last_prune = time.monotonic()
+            except Exception:
+                log.exception("gateway maintenance failed; retrying")
+
+    def _file_stamps(self) -> tuple:
+        stamps = []
+        for path in (self.config.config_path, self.config.blocklist_path):
+            try:
+                stat = path.stat() if path else None
+                stamps.append((stat.st_mtime_ns, stat.st_size, stat.st_ino) if stat else None)
+            except OSError:
+                stamps.append(None)
+        return tuple(stamps)
+
+    def _reload_if_changed(self) -> None:
+        stamps = self._file_stamps()
+        if stamps != self._stamps:
+            self._stamps = stamps
+            self.reload_blocklist()
+
+    def reload_blocklist(self) -> None:
+        blocked = read_blocklist(self.config)
+        if blocked != self.blocked:
+            log.info("blocklist reloaded: %d relay(s)", len(blocked))
+        self.blocked = blocked
 
     async def healthz(self, request: web.Request) -> web.Response:
-        return web.Response(text="ok")
+        ok = self.state.writable()
+        body = {"status": "ok" if ok else "unhealthy", "version": VERSION, "checks": {"state": "ok" if ok else "failed"}}
+        return web.json_response(body, status=200 if ok else 503, headers={"Cache-Control": "no-store"})
+
+    async def metrics_endpoint(self, request: web.Request) -> web.Response:
+        return web.Response(body=self.metrics.render().encode(), headers={"Content-Type": CONTENT_TYPE})
 
     def client_ip(self, request: web.Request) -> str:
-        """The address the trusted proxy saw: the last X-Forwarded-For entry is the one it appended."""
-        remote = request.remote or ""
-        forwarded = request.headers.get("X-Forwarded-For", "")
-        if self.config.trust_proxy and forwarded and self._is_trusted_proxy(remote):
-            return forwarded.split(",")[-1].strip()
-        return remote
-
-    def _is_trusted_proxy(self, remote: str) -> bool:
-        try:
-            address = ipaddress.ip_address(remote)
-        except ValueError:
-            return False
-        return address.is_loopback or any(address in net for net in self.config.trusted_proxies)
+        return forwarded_client_ip(
+            request.remote or "",
+            request.headers.get("X-Forwarded-For", ""),
+            self.config.trust_proxy,
+            self.config.trusted_proxies,
+        )
 
     async def handle_push(self, request: web.Request) -> web.Response:
         try:
             result = await self._push(request)
         except Rejected as exc:
+            self.requests.inc(outcome=exc.reason)
             return web.json_response({"error": exc.reason}, status=exc.status)
+        self.requests.inc(outcome=result.value)
         return web.json_response({"result": result.value})
 
     async def _push(self, request: web.Request) -> PushResult:
@@ -204,9 +320,15 @@ class PushGateway:
         limiters = self.token_limits[kind]
         if token not in limiters[0] and not self.new_token_rate.allow(relay):
             raise Rejected(429, "rate_limited")
+        decision = self.state.check_token(token, relay, now)
+        if not decision.allowed:
+            log.info("relay %s refused: token used by too many relays", short(relay))
+            raise Rejected(403, decision.reason)
         if not all(limiter.allow(token) for limiter in limiters):
             raise Rejected(429, "rate_limited")
         result = await self._send(kind, token, env, fields)
+        if result is PushResult.INVALID_TOKEN:
+            self.state.forget(token)
         if result is not PushResult.OK:
             log.info("push for relay %s: %s", short(relay), result.value)
         return result
@@ -216,16 +338,19 @@ class PushGateway:
             relay, signature = pushauth.verify(header, body, now)
         except pushauth.AuthError as exc:
             raise Rejected(401, "unauthorized") from exc
-        if relay in self.config.blocked_relays:
+        if relay in self.blocked:
             raise Rejected(403, "blocked")
-        if self.seen_signatures.contains(signature, now):
+        if self.state.seen_signature(signature, now):
             raise Rejected(401, "replayed")
         if not self.known_relays.contains(relay, now) and not self.new_relay_rate.allow(ip_key):
             raise Rejected(429, "rate_limited")
         if not self.relay_rate.allow(relay):
             raise Rejected(429, "rate_limited")
-        # Evicting a signature would re-open it for replay: refuse instead (bounded by the IP limits).
-        if not self.seen_signatures.add(signature, now):
+        # Persisted, so a restart does not re-open the window; refused (not evicted) when full.
+        seen = self.state.remember_signature(signature, now)
+        if seen == "replayed":
+            raise Rejected(401, "replayed")
+        if seen == "full":
             raise Rejected(503, "busy")
         if not self.known_relays.add(relay, now):
             self.known_relays.evict_oldest()
@@ -240,6 +365,13 @@ class PushGateway:
         return await self.sender.send_live_activity(token, env, fields["event"], fields["content_state"])
 
 
+_SHAPES = {
+    "voip": {"kind", "token", "env", "call_id"},
+    "alert": {"kind", "token", "env", "ciphertext"},
+    "liveactivity": {"kind", "token", "env", "event", "content_state"},
+}
+
+
 def parse_request(body: bytes) -> tuple[str, str, str, dict]:
     """Returns (limit kind, token, env, fields); anything but the three known shapes is rejected."""
     try:
@@ -251,23 +383,20 @@ def parse_request(body: bytes) -> tuple[str, str, str, dict]:
     kind, token, env = message.get("kind"), message.get("token"), message.get("env")
     if not isinstance(token, str) or not _PUSH_TOKEN.match(token) or env not in PUSH_ENVS:
         raise Rejected(400, "invalid")
+    if kind not in _SHAPES or set(message) != _SHAPES[kind]:
+        raise Rejected(400, "invalid")
     try:
-        if kind == "voip" and set(message) == {"kind", "token", "env", "call_id"}:
+        if kind == "voip":
             b64d(message["call_id"], length=16)
             return kind, token, env, message
-        if kind == "alert" and set(message) == {"kind", "token", "env", "ciphertext"}:
+        if kind == "alert":
             ciphertext = message["ciphertext"]
             if ciphertext is not None:
                 b64d(ciphertext, max_length=MAX_ALERT_CIPHERTEXT)
             return kind, token, env, message
     except ProtocolError as exc:
         raise Rejected(400, "invalid") from exc
-    if (
-        kind == "liveactivity"
-        and set(message) == {"kind", "token", "env", "event", "content_state"}
-        and message["event"] in LIVE_EVENTS
-        and valid_content_state(message["content_state"])
-    ):
+    if message["event"] in LIVE_EVENTS and valid_content_state(message["content_state"]):
         return ("liveactivity_start" if message["event"] == "start" else kind), token, env, message
     raise Rejected(400, "invalid")
 
@@ -275,13 +404,13 @@ def parse_request(body: bytes) -> tuple[str, str, str, dict]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hermescall-push-gateway")
     parser.add_argument("--config", type=Path, default=DEFAULT_GATEWAY_CONFIG)
+    parser.add_argument("--version", action="version", version=VERSION)
     parser.add_argument("command", choices=("serve", "check-config"))
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    # httpx logs every request URL at INFO, and APNs URLs contain the device token.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logs.setup()
     try:
         config = load_gateway(args.config)
+        logs.setup(config.log_level, config.log_format)
         sender = DirectApns(config.apns, config.apns_key())
     except (ConfigError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -290,8 +419,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"config ok: topic {config.apns.topic.removesuffix('.voip')}")
         return 0
     gateway = PushGateway(config, sender)
-    log.info("push gateway listening on %s:%s", config.listen_host, config.listen_port)
-    web.run_app(gateway.app(), host=config.listen_host, port=config.listen_port, access_log=None, print=None)
+    log.info(
+        "push gateway %s listening on %s:%s (state %s)",
+        VERSION,
+        config.listen_host,
+        config.listen_port,
+        config.state_path or "in memory: replays possible after a restart",
+    )
+    web.run_app(gateway.app(), host=config.listen_host, port=config.listen_port, access_log=None, print=None, shutdown_timeout=10)
     return 0
 
 
