@@ -9,7 +9,10 @@ cache").
 
 Token binding (trust on first use, soft): per device token (stored as its SHA-256, never the
 token) the relays that pushed to it. At most MAX_RELAYS_PER_TOKEN relays may use one token within
-RELAY_WINDOW; a relay that stops using a token frees its place after that. Moving to a new relay,
+RELAY_WINDOW; a relay that stops using a token frees its place after that, and a binding unused
+for STALE_BINDING can be taken over earlier by a relay that has had a push delivered (so a phone
+that moved relays is not locked out for a month by old or abandoned relay keys). Only pushes that
+pass the per-token rate limits count as use. Moving to a new relay,
 reinstalling one or rotating its key keeps working; a token that leaked cannot be used by an
 unbounded number of relay keys. A hard binding (only the relay the app chose) needs a key the
 gateway can trust to speak for the app, i.e. App Attest; relays cannot provide that proof, since
@@ -29,6 +32,7 @@ MAX_SEEN = 2_000_000
 PRESSURE_SEEN = MAX_SEEN // 4
 MAX_RELAYS_PER_TOKEN = 5
 RELAY_WINDOW = 30 * 86_400
+STALE_BINDING = 7 * 86_400
 FORGET_AFTER = RELAY_WINDOW
 
 _SCHEMA = (
@@ -130,23 +134,49 @@ class GatewayState:
     # ---- token bindings ---------------------------------------------------
 
     def check_token(self, token: str, relay: str, now: float) -> Decision:
-        """Applies the binding rule and, when allowed, records the use."""
+        """token_allowed, and when allowed, record_token (for callers without further limits)."""
+        decision = self.token_allowed(token, relay, now)
+        if decision.allowed:
+            self.record_token(token, relay, now)
+        return decision
+
+    def token_allowed(self, token: str, relay: str, now: float) -> Decision:
+        """Applies the binding rule without recording anything."""
+        relays = self._bound_relays(token_hash(token), int(now))
+        if relay in relays or len(relays) < MAX_RELAYS_PER_TOKEN:
+            return Decision(True)
+        if self._stale(relays, int(now)) is not None and self.delivered(relay, now):
+            return Decision(True)
+        return Decision(False, "token_bound")
+
+    def record_token(self, token: str, relay: str, now: float) -> None:
+        """Records a use (after the rate limits passed); takes over the oldest stale binding when
+        the token has no free place (token_allowed only allows that for a relay that delivered)."""
         digest, now = token_hash(token), int(now)
-        if not self._relay_allowed(digest, relay, now):
-            return Decision(False, "token_bound")
+        relays = self._bound_relays(digest, now)
+        if relay not in relays and len(relays) >= MAX_RELAYS_PER_TOKEN:
+            stale = self._stale(relays, now)
+            if stale is not None:
+                self._db.execute("DELETE FROM token_relays WHERE token = ? AND relay = ?", (digest, stale))
         self._db.execute(
             "INSERT INTO token_relays(token, relay, last_used) VALUES(?, ?, ?)"
             " ON CONFLICT(token, relay) DO UPDATE SET last_used = excluded.last_used",
             (digest, relay, now),
         )
-        return Decision(True)
 
-    def _relay_allowed(self, digest: bytes, relay: str, now: int) -> bool:
+    def _bound_relays(self, digest: bytes, now: int) -> dict[str, int]:
         rows = self._db.execute(
-            "SELECT relay FROM token_relays WHERE token = ? AND last_used > ?", (digest, now - RELAY_WINDOW)
+            "SELECT relay, last_used FROM token_relays WHERE token = ? AND last_used > ?", (digest, now - RELAY_WINDOW)
         ).fetchall()
-        relays = {row[0] for row in rows}
-        return relay in relays or len(relays) < MAX_RELAYS_PER_TOKEN
+        return dict(rows)
+
+    @staticmethod
+    def _stale(relays: dict[str, int], now: int) -> str | None:
+        """The least recently used binding if it is older than STALE_BINDING."""
+        if not relays:
+            return None
+        oldest = min(relays, key=relays.__getitem__)
+        return oldest if relays[oldest] <= now - STALE_BINDING else None
 
     def forget(self, token: str) -> None:
         """An invalid token (APNs 410) is dead: drop its binding."""

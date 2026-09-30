@@ -332,12 +332,13 @@ class PushGateway:
         limiters = self.token_limits[kind]
         if token not in limiters[0] and not self.new_token_rate.allow(relay):
             raise Rejected(429, "rate_limited")
-        decision = self.state.check_token(token, relay, now)
+        decision = self.state.token_allowed(token, relay, now)
         if not decision.allowed:
             log.info("relay %s refused: token used by too many relays", short(relay))
             raise Rejected(403, decision.reason)
         if not all(limiter.allow(token) for limiter in limiters):
             raise Rejected(429, "rate_limited")
+        self.state.record_token(token, relay, now)  # only a push that goes out counts as use
         result = await self._send(kind, token, env, fields)
         if result is PushResult.OK:
             self.state.mark_delivered(relay, now)

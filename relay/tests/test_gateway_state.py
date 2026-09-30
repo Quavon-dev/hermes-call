@@ -50,6 +50,35 @@ def test_relay_slots_free_up_after_the_window(tmp_path: Path) -> None:
     assert state.check_token(TOKEN, "late", now=later).allowed
 
 
+async def test_rate_limited_push_records_no_binding(gw) -> None:
+    gateway, client, sent = gw
+    first = Ed25519PrivateKey.generate()
+    assert [(await post(client, first, voip())).status for _ in range(10)] == [200] * 10
+    before = gateway.state._db.execute("SELECT relay, last_used FROM token_relays").fetchall()
+    assert (await post(client, Ed25519PrivateKey.generate(), voip())).status == 429
+    assert (await post(client, first, voip())).status == 429
+    assert gateway.state._db.execute("SELECT relay, last_used FROM token_relays").fetchall() == before
+
+
+def test_a_relay_that_delivered_replaces_the_oldest_stale_binding() -> None:
+    state = GatewayState(None)
+    for n in range(gateway_state.MAX_RELAYS_PER_TOKEN):
+        assert state.check_token(TOKEN, f"relay{n}", now=1000 + n).allowed
+    fresh = 1000 + gateway_state.STALE_BINDING - 10
+    state.mark_delivered("moved", now=fresh)
+    assert not state.token_allowed(TOKEN, "moved", now=fresh).allowed  # nothing stale yet
+    later = 1000 + gateway_state.STALE_BINDING + 1
+    assert not state.token_allowed(TOKEN, "unproven", now=later).allowed
+    state.mark_delivered("moved", now=later)
+    assert state.token_allowed(TOKEN, "moved", now=later).allowed
+    state.record_token(TOKEN, "moved", now=later)
+    relays = {row[0] for row in state._db.execute("SELECT relay FROM token_relays")}
+    assert relays == {"relay1", "relay2", "relay3", "relay4", "moved"}  # relay0 was the oldest
+    # A relay whose pushes to this token failed (410) has no delivery to show.
+    state.forget(TOKEN)
+    assert state.counts()["tokens"] == 0
+
+
 async def test_unknown_fields_are_refused(gw) -> None:
     _, client, sent = gw
     relay = Ed25519PrivateKey.generate()

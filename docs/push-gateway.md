@@ -103,9 +103,15 @@ proves nothing by signing, but a delivery needs a real device token of the app.
 A push token is a secret only as long as the relays that saw it keep it. The gateway binds each
 token softly to the relays that use it (trust on first use): at most **5 relay keys per token
 within 30 days**; a sixth gets `403 token_bound`, the others keep working, and a relay that stops
-using a token frees its place after 30 days. That allows the normal cases — moving to a new relay,
-reinstalling one, rotating its key — and stops a leaked token from being used by any number of
-relay keys (which, combined with the 10 new keys per IP per hour, bounds what one party can do).
+using a token frees its place after 30 days. Only a push that passes the per-token rate limits
+counts as use: a relay that is answered `429` neither takes a place nor keeps one alive. When all
+five places are taken and the least recently used one has not been used for **7 days**, a relay
+that had a push accepted by Apple within the last 30 days (for any token: it serves a real app
+installation) takes that place over. That allows the normal cases — moving to a new relay,
+reinstalling one, rotating its key, also after several moves — and stops a leaked token from being
+used by any number of relay keys (which, combined with the 10 new keys per IP per hour, bounds what
+one party can do). Someone who wants to keep a leaked token's places has to push to it at least
+weekly, which the phone shows.
 
 A hard binding ("only the relay this phone chose") needs proof from the app that the gateway can
 check. A relay cannot give it: it registers its devices itself, so it could sign anything it likes
