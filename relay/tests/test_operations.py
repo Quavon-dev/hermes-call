@@ -304,3 +304,12 @@ def test_doctor_turn_answers_stun(tmp_path: Path) -> None:
     result = doctor.check_turn(config)
     server.close()
     assert result.status == "ok", result
+
+
+def test_local_config_overrides_the_installer_file(tmp_path: Path) -> None:
+    path = _write_config(tmp_path, '[turn]\nurls = ["turn:a:3478"]\nttl = 600\n[limits]\nmax_connections = 300\n')
+    config_mod.local_path(path).write_text('log_format = "json"\n[turn]\nttl = 7200\n[limits]\nmax_devices_per_bridge = 2\n')
+    config = config_mod.load(path)
+    assert config.turn_ttl == 7200 and config.turn_urls == ("turn:a:3478",)
+    assert config.limits.max_connections == 300 and config.limits.max_devices_per_bridge == 2
+    assert config.log_format == "json"

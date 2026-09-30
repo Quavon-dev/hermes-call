@@ -1,0 +1,9 @@
+[Unit]
+Description=Hermes Call: check the TURNS certificate after Caddy renewals
+
+[Timer]
+OnActiveSec=2min
+OnUnitActiveSec=12h
+
+[Install]
+WantedBy=timers.target

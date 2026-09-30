@@ -4,7 +4,9 @@
 #
 #   push-gateway-install.sh install --domain hermes-push.quavon.de --apns-key AuthKey_X.p8 --apns-key-id X --team-id T
 #   push-gateway-install.sh update      redeploy code from this checkout, keep key and settings
-#   push-gateway-install.sh block RELAY_ID
+#   push-gateway-install.sh block RELAY_ID      takes effect at once (no restart)
+#   push-gateway-install.sh unblock RELAY_ID
+#   push-gateway-install.sh rotate-apns-key --apns-key AuthKey_Y.p8 --apns-key-id Y
 #   push-gateway-install.sh status
 #
 # Use a dedicated host: it writes /etc/caddy/Caddyfile and needs port 443.
@@ -14,6 +16,7 @@ readonly PREFIX=/opt/hermescall-push
 readonly ETC=/etc/hermescall-push
 readonly SERVICE_USER=hermescall-push
 readonly LISTEN_PORT=8744
+readonly STATE=/var/lib/hermescall-push
 SRC_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly SRC_ROOT
 
@@ -105,20 +108,22 @@ deploy() {
     log "APNs key stored in $ETC/apns_key; delete your copy at $KEY_FILE or keep it offline"
   fi
   touch "$ETC/blocked_relays"
+  chown root:"$SERVICE_USER" "$ETC/blocked_relays" && chmod 0640 "$ETC/blocked_relays"
   write_config
   (umask 077; printf 'DOMAIN=%s\nKEY_ID=%s\nTEAM_ID=%s\nBUNDLE_ID=%s\nACME_EMAIL=%s\n' \
     "$DOMAIN" "$KEY_ID" "$TEAM_ID" "$BUNDLE_ID" "$ACME_EMAIL" >"$ETC/install.env")
 }
 
 write_config() {
-  local blocked
-  blocked=$(grep -E '^[A-Za-z0-9_-]{43}$' "$ETC/blocked_relays" | sed 's/.*/"&"/' | paste -sd, - || true)
+  # The blocklist file is re-read by the running gateway when it changes (and on SIGHUP).
   cat >"$ETC/gateway.toml" <<EOF
 listen_host = "127.0.0.1"
 listen_port = $LISTEN_PORT
 trust_proxy = true
 secrets_dir = "$ETC"
-blocked_relays = [$blocked]
+blocklist_path = "$ETC/blocked_relays"
+# Replay cache and token bindings survive restarts (systemd StateDirectory).
+state_path = "$STATE/gateway.db"
 
 [apns]
 key_id = "$KEY_ID"
@@ -196,10 +201,33 @@ cmd_block() {
   need_root
   [[ ${1:-} =~ ^[A-Za-z0-9_-]{43}$ ]] || die "usage: block RELAY_ID (43 characters, from the relay's 'hermescall-relay push-id')"
   grep -qxF "$1" "$ETC/blocked_relays" || printf '%s\n' "$1" >>"$ETC/blocked_relays"
-  load_settings
-  write_config
-  systemctl restart hermescall-push.service
+  systemctl kill -s HUP hermescall-push.service
   log "Blocked relay ${1:0:6}…"
+}
+
+cmd_unblock() {
+  need_root
+  [[ ${1:-} =~ ^[A-Za-z0-9_-]{43}$ ]] || die "usage: unblock RELAY_ID"
+  local kept
+  kept=$(grep -vxF "$1" "$ETC/blocked_relays" || true)
+  printf '%s\n' "$kept" | sed '/^$/d' >"$ETC/blocked_relays"
+  systemctl kill -s HUP hermescall-push.service
+  log "Unblocked relay ${1:0:6}…"
+}
+
+# A new .p8 (e.g. the old one leaked or is being retired): swap it without losing pushes.
+cmd_rotate_apns_key() {
+  need_root
+  load_settings
+  [[ -n $KEY_FILE ]] || die "usage: rotate-apns-key --apns-key FILE --apns-key-id ID"
+  validate
+  openssl pkey -in "$KEY_FILE" -noout -text 2>/dev/null | grep -q 'prime256v1\|P-256' || die "$KEY_FILE is not an APNs .p8 key"
+  install -m 0600 -o "$SERVICE_USER" -g "$SERVICE_USER" "$KEY_FILE" "$ETC/apns_key"
+  write_config
+  (umask 077; printf 'DOMAIN=%s\nKEY_ID=%s\nTEAM_ID=%s\nBUNDLE_ID=%s\nACME_EMAIL=%s\n' \
+    "$DOMAIN" "$KEY_ID" "$TEAM_ID" "$BUNDLE_ID" "$ACME_EMAIL" >"$ETC/install.env")
+  systemctl restart hermescall-push.service
+  log "APNs key $KEY_ID in use. Revoke the old key at developer.apple.com once pushes arrive."
 }
 
 cmd_uninstall() {
@@ -212,7 +240,7 @@ cmd_uninstall() {
     mv /etc/caddy/Caddyfile.hermescall-backup /etc/caddy/Caddyfile
     systemctl restart caddy.service 2>/dev/null || true
   fi
-  log "Removed the push gateway. Kept $ETC (APNs key, settings, blocked relays): delete it yourself when done."
+  log "Removed the push gateway. Kept $ETC (APNs key, settings, blocked relays) and $STATE: delete them yourself when done."
 }
 
 main() {
@@ -221,9 +249,11 @@ main() {
   case "$command" in
     install | update) parse_flags "$@"; cmd_install ;;
     block) cmd_block "$@" ;;
+    unblock) cmd_unblock "$@" ;;
+    rotate-apns-key) parse_flags "$@"; cmd_rotate_apns_key ;;
     status) systemctl --no-pager status hermescall-push.service caddy.service ;;
     uninstall) cmd_uninstall ;;
-    *) die "usage: push-gateway-install.sh install|update|block RELAY_ID|status|uninstall [options]" ;;
+    *) die "usage: push-gateway-install.sh install|update|block RELAY_ID|unblock RELAY_ID|rotate-apns-key|status|uninstall [options]" ;;
   esac
 }
 

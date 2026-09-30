@@ -110,9 +110,29 @@ def _port(value: object) -> int:
     return port
 
 
+def local_path(path: Path) -> Path:
+    """relay.toml -> relay.local.toml: your own settings, which the installer never rewrites."""
+    return path.with_name(f"{path.stem}.local{path.suffix}")
+
+
+def _merged(path: Path) -> dict:
+    raw = tomllib.loads(path.read_text())
+    local = local_path(path)
+    if not local.is_file():
+        return raw
+    overlay = tomllib.loads(local.read_text())
+    merged = dict(raw)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(raw.get(key), dict):
+            merged[key] = {**raw[key], **value}
+        else:
+            merged[key] = value
+    return merged
+
+
 def load(path: Path = DEFAULT_CONFIG) -> Config:
     try:
-        raw = tomllib.loads(path.read_text())
+        raw = _merged(path)
         host, port = parse_authority(str(raw["authority"]))
         turn = raw.get("turn", {})
         apns = _apns(raw.get("apns"))

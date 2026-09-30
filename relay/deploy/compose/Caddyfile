@@ -1,0 +1,24 @@
+# Caddy in front of the relay (docker-compose.yml). TLS-ALPN on 443; port 80 stays closed.
+{
+	auto_https disable_redirects
+	servers {
+		protocols h1 h2
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+}
+
+https://{$RELAY_DOMAIN} {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+	header -Server
+	request_body {
+		max_size 11MB
+	}
+	reverse_proxy relay:8743
+}

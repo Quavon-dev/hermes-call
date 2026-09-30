@@ -1,8 +1,9 @@
 """Relay database schema, versioned with `PRAGMA user_version`.
 
-Each migration runs once, in its own transaction, and only adds (tables, columns, indexes), so the
-previous relay version still runs on a migrated database after `install.sh rollback`. A database
-from a newer relay is refused rather than guessed at.
+Each migration runs once, in its own transaction. Migrations so far only add (tables, columns,
+indexes), so the previous relay still runs on a migrated database after `install.sh rollback`.
+The database records the oldest schema that can still use it (`meta.min_reader`): a relay older
+than that refuses to start instead of guessing.
 """
 
 import logging
@@ -69,13 +70,17 @@ def _v1(db: sqlite3.Connection) -> None:
 
 
 def _v2(db: sqlite3.Connection) -> None:
-    """Indexes for the background expiry sweep (mail and blobs by age)."""
+    """Indexes for the background expiry sweep (mail and blobs by age), and the meta table."""
     db.execute("CREATE INDEX IF NOT EXISTS mail_created ON mail(created)")
     db.execute("CREATE INDEX IF NOT EXISTS blobs_created ON blobs(created)")
+    db.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value INTEGER NOT NULL)")
 
 
 MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (_v1, _v2)
 LATEST = len(MIGRATIONS)
+# The oldest schema whose code can still use a database at LATEST. Additive migrations keep it;
+# one that changes or drops something raises it to its own number, so older code refuses.
+MIN_READER = 1
 
 
 class SchemaError(Exception):
@@ -89,8 +94,11 @@ def version(db: sqlite3.Connection) -> int:
 def migrate(db: sqlite3.Connection) -> int:
     """Brings the database to LATEST; returns the version it started at."""
     start = version(db)
+    if start > LATEST and min_reader(db) > LATEST:
+        raise SchemaError(f"database schema {start} needs a newer relay (this one reads up to {LATEST})")
     if start > LATEST:
-        raise SchemaError(f"database schema {start} is newer than this relay ({LATEST}); update the relay")
+        log.info("database schema %s is newer than this relay (%s) but compatible", start, LATEST)
+        return start
     if start == 0 and not db.execute("SELECT 1 FROM sqlite_master WHERE name = 'bridges'").fetchone():
         # Only takes effect on an empty file (before WAL mode writes the header); older files are
         # converted later by Store.vacuum_step or `hermescall-relay compact`.
@@ -100,6 +108,8 @@ def migrate(db: sqlite3.Connection) -> int:
         db.execute("BEGIN IMMEDIATE")
         try:
             MIGRATIONS[number - 1](db)
+            if number >= 2:
+                db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('min_reader', ?)", (MIN_READER,))
             db.execute(f"PRAGMA user_version = {number}")
         except BaseException:
             db.execute("ROLLBACK")
@@ -108,6 +118,14 @@ def migrate(db: sqlite3.Connection) -> int:
         if start:
             log.info("database migrated to schema %s", number)
     return start
+
+
+def min_reader(db: sqlite3.Connection) -> int:
+    try:
+        row = db.execute("SELECT value FROM meta WHERE key = 'min_reader'").fetchone()
+    except sqlite3.OperationalError:
+        return 1
+    return int(row[0]) if row else 1
 
 
 def auto_vacuum_mode(db: sqlite3.Connection) -> int:

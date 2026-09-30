@@ -1,0 +1,30 @@
+# Relay settings for docker-compose.yml. All options are listed in docs/relay.md.
+authority = "relay.example.com"
+tls_pin = ""
+listen_host = "0.0.0.0"
+listen_port = 8743
+db_path = "/var/lib/hermescall-relay/relay.db"
+secrets_dir = "/etc/hermescall-relay"
+trust_proxy = true
+# Caddy's network in docker-compose.yml: only its X-Forwarded-For is believed.
+trusted_proxies = ["172.30.87.0/24"]
+log_format = "text"
+
+[turn]
+urls = ["turn:relay.example.com:3478?transport=udp", "turn:relay.example.com:3478?transport=tcp"]
+ttl = 5400
+
+[apns]
+enabled = false
+
+[push_gateway]
+enabled = true
+url = "https://hermes-push.quavon.de"
+
+# [limits]                       # every limit is optional; defaults in docs/relay.md
+# max_devices_per_bridge = 20
+# storage_max_bytes = 2147483648
+
+# [metrics]                      # Prometheus /metrics, off by default; never publish this port
+# listen_host = "0.0.0.0"
+# port = 9743

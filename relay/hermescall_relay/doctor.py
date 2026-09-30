@@ -204,11 +204,18 @@ def _clock(date_header: str | None, gateway: str) -> Result:
 
 
 def _reach(name: str, url: str, detail: str) -> Result:
+    """A TLS handshake with a verified certificate (APNs speaks only HTTP/2, so no request)."""
+    host = urlsplit(url).hostname or url
     try:
-        httpx.get(url, timeout=TIMEOUT)
-    except httpx.HTTPError as exc:
-        return _fail(name, f"{detail}, but {url} unreachable ({exc.__class__.__name__})")
-    return _ok(name, f"{detail}, {urlsplit(url).hostname} reachable")
+        context = ssl.create_default_context()
+        with (
+            socket.create_connection((host, 443), timeout=TIMEOUT) as raw,
+            context.wrap_socket(raw, server_hostname=host),
+        ):
+            pass
+    except OSError as exc:
+        return _fail(name, f"{detail}, but {host} unreachable ({exc.__class__.__name__})")
+    return _ok(name, f"{detail}, {host} reachable")
 
 
 CHECKS: tuple[Callable[[Config], Result], ...] = (

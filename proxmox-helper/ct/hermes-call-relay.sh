@@ -130,8 +130,8 @@ function update_script() {
 
     msg_info "Updating Hermes Call Relay"
     $STD /opt/hermes-call/relay/install.sh update
-    msg_ok "Updated Hermes Call Relay"
-    msg_ok "Updated successfully!"
+    msg_ok "Updated Hermes Call Relay to $(sed -n 's/^version=//p' /opt/hermescall-relay/VERSION 2>/dev/null || echo "the latest release")"
+    msg_ok "Updated successfully! If something broke: /opt/hermescall-relay/relay/install.sh rollback"
   fi
   exit
 }

@@ -11,6 +11,12 @@ Group=hermescall-push
 ExecStart=/usr/bin/python3 -m hermescall_relay.gateway serve
 Environment=PYTHONPATH=/opt/hermescall-push/common:/opt/hermescall-push/relay
 Environment=PYTHONDONTWRITEBYTECODE=1
+# Replay cache and token bindings (gateway.toml state_path).
+StateDirectory=hermescall-push
+StateDirectoryMode=0700
+# SIGHUP re-reads the blocklist (push-gateway-install.sh block).
+ExecReload=/bin/kill -HUP $MAINPID
+TimeoutStopSec=20
 Restart=on-failure
 RestartSec=3
 

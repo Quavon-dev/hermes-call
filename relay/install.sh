@@ -3,6 +3,10 @@
 #
 #   install.sh [install]        install or reconfigure (idempotent)
 #   install.sh update           redeploy code from this checkout, keep settings and data
+#   install.sh rollback         go back to the code before the last update
+#   install.sh backup [FILE]    archive database, config and keys (mode 600)
+#   install.sh restore FILE     restore such an archive (also on a fresh host)
+#   install.sh rotate turn-secret|push-key|apns-key
 #   install.sh uninstall [--purge]
 #   install.sh pair             print a new one-time bridge pairing code
 #   install.sh status
@@ -22,11 +26,13 @@ readonly OLD_WRAPPER=/usr/local/sbin/hermescall-relay
 readonly SERVICE_USER=hermescall-relay
 readonly LISTEN_PORT=8743
 readonly TURN_PORT=3478
-readonly TURN_MIN_PORT=49160
-readonly TURN_MAX_PORT=49200
+readonly TURNS_PORT=5349
+readonly DATA=/var/lib/hermescall-relay
+# TURN credentials outlive the longest call (60 min) plus ringing and ICE restarts.
+readonly TURN_TTL=5400
 readonly UNITS=(hermescall-relay.service hermescall-turn.service)
 readonly DEFAULT_PUSH_GATEWAY=https://hermes-push.quavon.de
-readonly SETTING_KEYS=(HC_DOMAIN HC_IP HC_TLS HC_ACME_EMAIL HC_APNS HC_APNS_KEY_ID HC_TEAM_ID HC_BUNDLE_ID HC_PUSH_GATEWAY HC_PROXY_FROM HC_EXTERNAL_IP HC_FIREWALL HC_HARDEN_SSH)
+readonly SETTING_KEYS=(HC_DOMAIN HC_IP HC_TLS HC_ACME_EMAIL HC_APNS HC_APNS_KEY_ID HC_TEAM_ID HC_BUNDLE_ID HC_PUSH_GATEWAY HC_PROXY_FROM HC_EXTERNAL_IP HC_FIREWALL HC_HARDEN_SSH HC_TURN_PORTS HC_TURN_QUOTA HC_TURNS)
 SRC_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly SRC_ROOT
 
@@ -44,8 +50,14 @@ HC_PUSH_GATEWAY=${HC_PUSH_GATEWAY:-}
 HC_EXTERNAL_IP=${HC_EXTERNAL_IP:-}
 HC_FIREWALL=${HC_FIREWALL:-}
 HC_HARDEN_SSH=${HC_HARDEN_SSH:-}
+HC_TURN_PORTS=${HC_TURN_PORTS:-}
+HC_TURN_QUOTA=${HC_TURN_QUOTA:-}
+HC_TURNS=${HC_TURNS:-}
 INTERACTIVE=1
 PURGE=0
+RESTORE_DB=0
+TURN_MIN_PORT=49160
+TURN_MAX_PORT=49200
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
@@ -53,7 +65,7 @@ die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [install|update|uninstall|pair|status] [options]
+Usage: install.sh [install|update|rollback|backup|restore|rotate|uninstall|pair|status] [options]
 
   --domain NAME          public DNS name of the relay (Let's Encrypt via TLS-ALPN on 443)
   --ip ADDRESS           public IP instead of a domain (self-signed certificate + pin)
@@ -70,13 +82,20 @@ Usage: install.sh [install|update|uninstall|pair|status] [options]
   --team-id ID           10-character Apple Team ID
   --bundle-id ID         iOS app bundle ID (default de.quavon.hermescall)
   --no-apns              no own APNs key: pushes go through the push gateway (default)
-  --push-gateway URL     push gateway for relays without an own key (default $DEFAULT_PUSH_GATEWAY)
+  --push-gateway URL     push gateway for relays without an own key ("default" = $DEFAULT_PUSH_GATEWAY;
+                         new installs use it; relays installed before it existed keep pushes off
+                         until you pass this flag)
   --no-push-gateway      no pushes at all: incoming calls ring only while the app is open
   --external-ip ADDRESS  public IP when the relay sits behind NAT (auto-detected)
+  --turn-ports MIN-MAX   UDP ports for relayed media (default 49160-49200, 2 per call)
+  --turn-quota N         concurrent TURN allocations in total (default 100)
+  --turns                also offer TURN over TLS on 5349/tcp (needs --tls acme): gets calls
+                         through networks that allow only TLS; --no-turns turns it off again
   --no-firewall          do not manage nftables (e.g. Proxmox firewall does it)
   --harden-ssh           disable SSH password logins (requires an authorized key)
   --non-interactive      never prompt; fail on missing settings
   --purge                with uninstall: also delete keys, config and database
+  --restore-db           with rollback: also restore the database snapshot taken before the update
 EOF
 }
 
@@ -105,9 +124,14 @@ parse_flags() {
       --team-id) HC_TEAM_ID=${2:?}; shift ;;
       --bundle-id) HC_BUNDLE_ID=${2:?}; shift ;;
       --no-apns) HC_APNS=no ;;
-      --push-gateway) HC_PUSH_GATEWAY=${2:?}; shift ;;
+      --push-gateway) HC_PUSH_GATEWAY=${2:?}; [[ $HC_PUSH_GATEWAY != default ]] || HC_PUSH_GATEWAY=$DEFAULT_PUSH_GATEWAY; shift ;;
       --no-push-gateway) HC_PUSH_GATEWAY=no ;;
       --external-ip) HC_EXTERNAL_IP=${2:?}; shift ;;
+      --turn-ports) HC_TURN_PORTS=${2:?}; shift ;;
+      --turn-quota) HC_TURN_QUOTA=${2:?}; shift ;;
+      --turns) HC_TURNS=yes ;;
+      --no-turns) HC_TURNS=no ;;
+      --restore-db) RESTORE_DB=1 ;;
       --no-firewall) HC_FIREWALL=no ;;
       --harden-ssh) HC_HARDEN_SSH=yes ;;
       --non-interactive) INTERACTIVE=0 ;;
@@ -201,14 +225,35 @@ collect_settings() {
     die "answer yes or no for APNs"
   fi
   if [[ -z $HC_PUSH_GATEWAY ]]; then
-    HC_PUSH_GATEWAY=$DEFAULT_PUSH_GATEWAY
-    [[ $HC_APNS == yes || ! -f $SETTINGS ]] ||
-      warn "pushes now go through $HC_PUSH_GATEWAY (it sees push tokens and timing, never content; docs/push-gateway.md). Opt out: install.sh update --no-push-gateway"
+    if [[ ! -f $SETTINGS || $HC_APNS == yes ]]; then
+      HC_PUSH_GATEWAY=$DEFAULT_PUSH_GATEWAY
+    else
+      # Installed before the push gateway existed: that relay sent no pushes. Keep it that way
+      # unless the owner opts in; the gateway sees push tokens and timing (docs/push-gateway.md).
+      ask HC_PUSH_GATEWAY "Send pushes through the Hermes Call push gateway ($DEFAULT_PUSH_GATEWAY)? It sees push tokens and timing, never content (yes/no)" no
+      case "$HC_PUSH_GATEWAY" in
+        yes) HC_PUSH_GATEWAY=$DEFAULT_PUSH_GATEWAY ;;
+        no) log "Pushes stay off. To use the push gateway: install.sh update --push-gateway default" ;;
+      esac
+    fi
   fi
   [[ $HC_PUSH_GATEWAY == no || $HC_PUSH_GATEWAY =~ ^https://[A-Za-z0-9.:/_-]{1,190}$ ]] || die "--push-gateway must be an https URL"
   [[ -z $HC_EXTERNAL_IP ]] || is_ipv4 "$HC_EXTERNAL_IP" || die "invalid --external-ip"
+  collect_turn_settings
   [[ -n $HC_FIREWALL ]] || HC_FIREWALL=yes
   [[ -n $HC_HARDEN_SSH ]] || HC_HARDEN_SSH=no
+}
+
+collect_turn_settings() {
+  [[ -n $HC_TURN_PORTS ]] || HC_TURN_PORTS=49160-49200
+  [[ $HC_TURN_PORTS =~ ^([0-9]{4,5})-([0-9]{4,5})$ ]] || die "--turn-ports must look like 49160-49200"
+  TURN_MIN_PORT=${BASH_REMATCH[1]} TURN_MAX_PORT=${BASH_REMATCH[2]}
+  ((TURN_MIN_PORT >= 1024 && TURN_MAX_PORT <= 65535 && TURN_MAX_PORT - TURN_MIN_PORT >= 1)) ||
+    die "--turn-ports: two or more ports between 1024 and 65535"
+  [[ -n $HC_TURN_QUOTA ]] || HC_TURN_QUOTA=100
+  [[ $HC_TURN_QUOTA =~ ^[1-9][0-9]{0,4}$ ]] || die "--turn-quota must be a number"
+  [[ -n $HC_TURNS ]] || HC_TURNS=no
+  [[ $HC_TURNS == no || $HC_TLS == acme ]] || die "--turns needs --tls acme (a certificate that phones trust)"
 }
 
 host() { printf '%s' "${HC_DOMAIN:-$HC_IP}"; }
@@ -245,10 +290,25 @@ deploy_code() {
   chown -R root:root "$staging"
   find "$staging" -type d -exec chmod 0755 {} + && find "$staging" -type f -exec chmod 0644 {} +
   chmod 0755 "$staging/relay/install.sh"
-  rm -rf "${PREFIX}.old"
-  [[ -d $PREFIX ]] && mv "$PREFIX" "${PREFIX}.old"
+  write_version_file "$staging/VERSION"
+  # The previous code stays as ${PREFIX}.old for `install.sh rollback`.
+  if [[ -d $PREFIX ]]; then
+    rm -rf "${PREFIX}.old"
+    mv "$PREFIX" "${PREFIX}.old"
+  fi
   mv "$staging" "$PREFIX"
-  rm -rf "${PREFIX}.old"
+  write_wrapper
+}
+
+write_version_file() {
+  local version commit
+  version=$(sed -n 's/^VERSION = "\(.*\)"$/\1/p' "$SRC_ROOT/relay/hermescall_relay/version.py")
+  commit=$(git -C "$SRC_ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+  printf 'version=%s\ncommit=%s\ninstalled=%s\n' "${version:-unknown}" "$commit" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$1"
+  chmod 0644 "$1"
+}
+
+write_wrapper() {
   cat >"$WRAPPER" <<EOF
 #!/bin/sh
 set -eu
@@ -262,6 +322,11 @@ exec runuser -u $SERVICE_USER -- env PYTHONPATH=$PREFIX/common:$PREFIX/relay PYT
 EOF
   chmod 0755 "$WRAPPER"
   ln -sfn "$WRAPPER" "$OLD_WRAPPER"
+}
+
+# Runs the relay CLI as root (backup/restore need the root-owned config and the TLS key).
+relay_cli_as_root() {
+  env PYTHONPATH="$PREFIX/common:$PREFIX/relay" PYTHONDONTWRITEBYTECODE=1 python3 -m hermescall_relay.cli "$@"
 }
 
 write_secret() (
@@ -326,8 +391,8 @@ trust_proxy = true
 trusted_proxies = [$(proxy_list)]
 
 [turn]
-urls = ["turn:$(url_host):$TURN_PORT?transport=udp", "turn:$(url_host):$TURN_PORT?transport=tcp"]
-ttl = 600
+urls = [$(turn_urls)]
+ttl = $TURN_TTL
 
 [apns]
 enabled = $apns_enabled
@@ -341,6 +406,12 @@ url = "$([[ $HC_PUSH_GATEWAY == no ]] && echo "$DEFAULT_PUSH_GATEWAY" || echo "$
 EOF
   chmod 0644 "$ETC/relay.toml.tmp"
   mv "$ETC/relay.toml.tmp" "$ETC/relay.toml"
+  [[ ! -f $ETC/relay.local.toml ]] || log "Your own settings in $ETC/relay.local.toml apply on top (kept on updates)"
+}
+
+turn_urls() {
+  printf '"turn:%s:%s?transport=udp", "turn:%s:%s?transport=tcp"' "$(url_host)" "$TURN_PORT" "$(url_host)" "$TURN_PORT"
+  [[ $HC_TURNS != yes ]] || printf ', "turns:%s:%s?transport=tcp"' "$(url_host)" "$TURNS_PORT"
 }
 
 public_ipv4() {
@@ -370,7 +441,7 @@ realm=$(host)
 use-auth-secret
 static-auth-secret=$(cat "$ETC/turn_secret")
 fingerprint
-no-tls
+$(turn_tls_lines)
 no-dtls
 no-tcp-relay
 no-cli
@@ -382,7 +453,7 @@ no-stun-backward-compatibility
 response-origin-only-with-rfc5780
 min-port=$TURN_MIN_PORT
 max-port=$TURN_MAX_PORT
-total-quota=100
+total-quota=$HC_TURN_QUOTA
 user-quota=12
 max-bps=64000
 stale-nonce=600
@@ -413,6 +484,50 @@ EOF
   } | write_secret "$ETC/turnserver.conf" turnserver
   if [[ -n $mapping ]]; then
     log "Relay is behind NAT; TURN advertises ${mapping%%/*}"
+  fi
+}
+
+readonly TURN_TLS=$ETC/turn-tls
+
+turn_tls_lines() {
+  if [[ $HC_TURNS != yes || ! -s $TURN_TLS/cert.pem ]]; then
+    echo no-tls
+    return
+  fi
+  cat <<EOF
+tls-listening-port=$TURNS_PORT
+cert=$TURN_TLS/cert.pem
+pkey=$TURN_TLS/key.pem
+no-tlsv1
+no-tlsv1_1
+EOF
+}
+
+# The ACME certificate Caddy keeps for the domain (any issuer directory).
+caddy_cert() {
+  find /var/lib/caddy/.local/share/caddy/certificates -type f -name "$HC_DOMAIN.$1" 2>/dev/null | head -n 1
+}
+
+# TURNS uses Caddy's certificate; coturn gets its own copy (it runs as another user). Run before
+# coturn starts and daily by a timer: a renewed certificate is copied and coturn restarted.
+cmd_turn_cert() {
+  need_root
+  load_settings
+  [[ ${HC_TURNS:-no} == yes ]] || return 0
+  local cert key
+  cert=$(caddy_cert crt) key=$(caddy_cert key)
+  if [[ -z $cert || -z $key ]]; then
+    warn "no certificate for $HC_DOMAIN from Caddy yet; TURNS starts once Caddy has one"
+    return 0
+  fi
+  install -d -m 0750 -o root -g turnserver "$TURN_TLS"
+  if ! cmp -s "$cert" "$TURN_TLS/cert.pem" || ! cmp -s "$key" "$TURN_TLS/key.pem"; then
+    install -m 0644 -o root -g turnserver "$cert" "$TURN_TLS/cert.pem"
+    install -m 0640 -o root -g turnserver "$key" "$TURN_TLS/key.pem"
+    collect_turn_settings
+    write_turn_config
+    systemctl try-restart hermescall-turn.service
+    log "TURNS certificate updated"
   fi
 }
 
@@ -473,6 +588,15 @@ install_units() {
   for unit in "${UNITS[@]}"; do
     install -m 0644 "$PREFIX/relay/deploy/$unit" "/etc/systemd/system/$unit"
   done
+  if [[ $HC_TURNS == yes ]]; then
+    install -m 0644 "$PREFIX/relay/deploy/hermescall-turn-cert.service" /etc/systemd/system/
+    install -m 0644 "$PREFIX/relay/deploy/hermescall-turn-cert.timer" /etc/systemd/system/
+    systemctl daemon-reload
+    systemctl enable --now hermescall-turn-cert.timer >/dev/null
+  else
+    systemctl disable --now hermescall-turn-cert.timer >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/hermescall-turn-cert.{service,timer}
+  fi
   if [[ -n $(nat_mapping) && -n $HC_DOMAIN && -z $HC_EXTERNAL_IP ]]; then
     install -m 0644 "$PREFIX/relay/deploy/hermescall-ip-refresh.service" /etc/systemd/system/
     install -m 0644 "$PREFIX/relay/deploy/hermescall-ip-refresh.timer" /etc/systemd/system/
@@ -499,6 +623,7 @@ setup_firewall() {
     fi
     ufw allow "$TURN_PORT" >/dev/null
     ufw allow "$TURN_MIN_PORT:$TURN_MAX_PORT/udp" >/dev/null
+    [[ $HC_TURNS != yes ]] || ufw allow "$TURNS_PORT/tcp" >/dev/null
     return 0
   fi
   log "Configuring nftables (default deny inbound)"
@@ -508,7 +633,8 @@ setup_firewall() {
     [[ -n $ports ]] || die "could not determine the SSH port (sshd -T failed); refusing to enable a firewall that could lock you out"
   fi
   [[ -z $ports ]] || ssh_rule="tcp dport { $ports } ct state new limit rate 30/minute accept"
-  local signaling_rule="tcp dport 443 accept" v4="" v6="" net
+  local signaling_rule="tcp dport 443 accept" turns_rule="" v4="" v6="" net
+  [[ $HC_TURNS != yes ]] || turns_rule="tcp dport $TURNS_PORT accept"
   if [[ $HC_TLS == proxy ]]; then
     # Only the reverse proxy reaches the relay's plain-HTTP port.
     for net in ${HC_PROXY_FROM//,/ }; do
@@ -538,6 +664,7 @@ table inet hermescall {
 		$ssh_rule
 		$signaling_rule
 		meta l4proto { tcp, udp } th dport $TURN_PORT accept
+		$turns_rule
 		udp dport $TURN_MIN_PORT-$TURN_MAX_PORT accept
 	}
 	chain forward {
@@ -635,7 +762,7 @@ print_summary() {
   cat <<EOF
 
 Hermes Call relay is running for $(url_host).
-Open ports: $(signaling_summary), $TURN_PORT/udp+tcp (TURN), $TURN_MIN_PORT-$TURN_MAX_PORT/udp (TURN media relay)$(if has_sshd; then printf ', SSH'; fi)
+Open ports: $(signaling_summary), $TURN_PORT/udp+tcp (TURN)$([[ $HC_TURNS != yes ]] || printf ', %s/tcp (TURNS)' "$TURNS_PORT"), $TURN_MIN_PORT-$TURN_MAX_PORT/udp (TURN media relay)$(if has_sshd; then printf ', SSH'; fi)
 Push: $(push_summary)
 EOF
   if [[ $HC_TLS == proxy ]]; then
@@ -675,16 +802,144 @@ cmd_install() {
   [[ ${1:-} == quiet ]] || print_summary
 }
 
+snapshot_db() {
+  local db=$DATA/relay.db
+  [[ -f $db ]] || return 0
+  log "Snapshot of the database before the update: $db.pre-update"
+  runuser -u "$SERVICE_USER" -- python3 -c \
+    'import sqlite3, sys; s = sqlite3.connect(sys.argv[1]); d = sqlite3.connect(sys.argv[2]); s.backup(d); d.close()' \
+    "$db" "$db.pre-update.tmp" || { warn "database snapshot failed"; return 0; }
+  chmod 0600 "$db.pre-update.tmp"
+  mv "$db.pre-update.tmp" "$db.pre-update"
+}
+
 cmd_update() {
   [[ -f $SETTINGS ]] || die "not installed; run install first"
   INTERACTIVE=0
+  need_root
+  snapshot_db
   cmd_install quiet
-  log "Updated. Settings, keys and paired devices were kept."
+  log "Updated to $(installed_version). Settings, keys and paired devices were kept; 'install.sh rollback' goes back."
+}
+
+installed_version() {
+  local dir=${1:-$PREFIX}
+  if [[ -f $dir/VERSION ]]; then
+    sed -n 's/^version=//p; s/^commit=/commit /p' "$dir/VERSION" | paste -sd' ' -
+  else
+    echo "unknown (installed before 0.7)"
+  fi
+}
+
+cmd_rollback() {
+  need_root
+  [[ -d ${PREFIX}.old ]] || die "nothing to roll back to (no ${PREFIX}.old)"
+  log "Rolling back from $(installed_version) to $(installed_version "${PREFIX}.old")"
+  systemctl stop hermescall-relay.service
+  rm -rf "${PREFIX}.rollback"
+  mv "$PREFIX" "${PREFIX}.rollback"
+  mv "${PREFIX}.old" "$PREFIX"
+  mv "${PREFIX}.rollback" "${PREFIX}.old"
+  local unit
+  for unit in "${UNITS[@]}"; do
+    [[ ! -f $PREFIX/relay/deploy/$unit ]] || install -m 0644 "$PREFIX/relay/deploy/$unit" "/etc/systemd/system/$unit"
+  done
+  systemctl daemon-reload
+  if [[ $RESTORE_DB -eq 1 ]]; then
+    [[ -f $DATA/relay.db.pre-update ]] || die "no database snapshot at $DATA/relay.db.pre-update"
+    rm -f "$DATA/relay.db-wal" "$DATA/relay.db-shm"
+    install -m 0600 -o "$SERVICE_USER" -g "$SERVICE_USER" "$DATA/relay.db.pre-update" "$DATA/relay.db"
+    log "Database restored from the snapshot taken before the update"
+  fi
+  systemctl restart hermescall-turn.service hermescall-relay.service
+  log "Rolled back. 'install.sh rollback' again returns to the newer code."
+}
+
+cmd_backup() {
+  need_root
+  local target=${1:-/root/hermescall-relay-backup-$(date +%Y%m%d-%H%M%S).tar.gz}
+  local include=()
+  [[ ! -d $CADDY_TLS ]] || include=(--include "$CADDY_TLS")
+  (umask 077; relay_cli_as_root backup "$target" "${include[@]}")
+  log "Keep $target offline and private: it holds the relay's keys. Restore: install.sh restore $target"
+}
+
+# Restores an archive from `install.sh backup` (or `hermescall-relay backup`), also on a fresh
+# host: put the files back, then run the normal install, which keeps them.
+cmd_restore() {
+  need_root
+  local archive=${1:-}
+  [[ -f $archive ]] || die "usage: install.sh restore FILE"
+  local work
+  work=$(mktemp -d)
+  RESTORE_WORK=$work
+  trap 'rm -rf "$RESTORE_WORK"' EXIT
+  tar --no-same-owner --no-same-permissions -xzf "$archive" -C "$work" manifest.json relay.db files ||
+    die "not a relay backup: $archive"
+  [[ -f $work/relay.db && -d $work/files$ETC ]] || die "backup lacks the database or $ETC"
+  systemctl stop hermescall-relay.service hermescall-turn.service 2>/dev/null || true
+  create_user
+  install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$DATA"
+  local file
+  for file in "$work/files$ETC"/*; do
+    [[ -f $file && ! -L $file ]] || continue
+    install -m 0600 -o root -g root "$file" "$ETC/$(basename "$file")"
+  done
+  chmod 0644 "$ETC"/*.toml 2>/dev/null || true
+  if [[ -d $work/files$CADDY_TLS ]]; then
+    install -d -m 0750 "$CADDY_TLS"
+    for file in "$work/files$CADDY_TLS"/*; do
+      [[ -f $file && ! -L $file ]] && install -m 0600 "$file" "$CADDY_TLS/$(basename "$file")"
+    done
+  fi
+  rm -f "$DATA/relay.db-wal" "$DATA/relay.db-shm"
+  install -m 0600 -o "$SERVICE_USER" -g "$SERVICE_USER" "$work/relay.db" "$DATA/relay.db"
+  log "Restored $ETC and the database; reinstalling with the restored settings"
+  INTERACTIVE=0
+  cmd_install quiet
+  log "Restore complete. Bridges and phones reconnect by themselves if the address and TLS key are unchanged."
+}
+
+cmd_rotate() {
+  need_root
+  load_settings
+  collect_turn_settings
+  case "${1:-}" in
+    turn-secret)
+      openssl rand -hex 32 | write_secret "$ETC/turn_secret" "$SERVICE_USER"
+      write_turn_config
+      systemctl restart hermescall-turn.service hermescall-relay.service
+      log "TURN secret rotated. Calls in progress may drop; new calls get new credentials."
+      ;;
+    push-key)
+      openssl genpkey -algorithm ed25519 | write_secret "$ETC/push_gateway_key" "$SERVICE_USER"
+      systemctl restart hermescall-relay.service
+      log "Push gateway key rotated; new relay id: $("$WRAPPER" push-id)"
+      ;;
+    apns-key)
+      [[ -n $HC_APNS_KEY_FILE ]] || die "usage: install.sh rotate apns-key --apns-key FILE [--apns-key-id ID]"
+      HC_APNS=yes
+      collect_settings
+      write_secrets
+      write_relay_config
+      save_settings
+      systemctl restart hermescall-relay.service
+      log "APNs key replaced (key id $HC_APNS_KEY_ID). Revoke the old key at developer.apple.com once pushes work."
+      ;;
+    *) die "usage: install.sh rotate turn-secret|push-key|apns-key [--apns-key FILE --apns-key-id ID]" ;;
+  esac
+}
+
+cmd_status() {
+  printf 'Hermes Call relay %s\n' "$(installed_version)"
+  [[ ! -d ${PREFIX}.old ]] || printf 'rollback available to %s\n' "$(installed_version "${PREFIX}.old")"
+  systemctl --no-pager status "${UNITS[@]}" caddy.service || true
 }
 
 cmd_refresh_ip() {
   need_root
   load_settings
+  collect_turn_settings
   local before after
   before=$(grep '^external-ip=' "$ETC/turnserver.conf" 2>/dev/null || true)
   after=$(nat_mapping)
@@ -693,36 +948,49 @@ cmd_refresh_ip() {
   systemctl restart hermescall-turn.service
 }
 
-cmd_uninstall() {
-  need_root
-  log "Stopping and removing Hermes Call relay"
-  local unit
-  for unit in "${UNITS[@]}" hermescall-ip-refresh.timer; do
-    systemctl disable --now "$unit" >/dev/null 2>&1 || true
-  done
-  rm -f /etc/systemd/system/hermescall-{relay,turn,ip-refresh}.{service,timer} /etc/systemd/system/caddy.service.d/hermescall.conf
-  systemctl daemon-reload
-  systemctl unmask coturn.service >/dev/null 2>&1 || true
-  rm -rf "$PREFIX" "$WRAPPER" "$OLD_WRAPPER" /etc/fail2ban/jail.d/hermescall.local
+remove_firewall() {
   if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
     ufw delete allow 443/tcp >/dev/null 2>&1 || true
     ufw delete allow "$TURN_PORT" >/dev/null 2>&1 || true
     ufw delete allow "$TURN_MIN_PORT:$TURN_MAX_PORT/udp" >/dev/null 2>&1 || true
+    ufw delete allow "$TURNS_PORT/tcp" >/dev/null 2>&1 || true
   fi
+  # Our table goes in any case; the rules that were loaded before the relay are still loaded (the
+  # relay only ever replaced its own table). The previous nftables.conf is put back for the next
+  # boot, not loaded now: Debian's default one starts with "flush ruleset" (Docker, Proxmox).
+  nft delete table inet hermescall 2>/dev/null || true
+  if [[ -f /etc/nftables.conf.hermescall-backup ]]; then
+    mv /etc/nftables.conf.hermescall-backup /etc/nftables.conf
+  elif grep -q 'Managed by hermes-call relay/install.sh' /etc/nftables.conf 2>/dev/null; then
+    printf '#!/usr/sbin/nft -f\n# The Hermes Call relay was removed; there was no nftables.conf before it.\n' >/etc/nftables.conf
+  fi
+}
+
+cmd_uninstall() {
+  need_root
+  load_settings
+  HC_TLS=${HC_TLS:-self-signed} HC_TURNS=${HC_TURNS:-no}
+  collect_turn_settings
+  log "Stopping and removing Hermes Call relay"
+  local unit
+  for unit in "${UNITS[@]}" hermescall-ip-refresh.timer hermescall-turn-cert.timer; do
+    systemctl disable --now "$unit" >/dev/null 2>&1 || true
+  done
+  rm -f /etc/systemd/system/hermescall-{relay,turn,ip-refresh,turn-cert}.{service,timer} /etc/systemd/system/caddy.service.d/hermescall.conf
+  systemctl daemon-reload
+  systemctl unmask coturn.service >/dev/null 2>&1 || true
+  rm -rf "$PREFIX" "${PREFIX}.old" "$WRAPPER" "$OLD_WRAPPER" /etc/fail2ban/jail.d/hermescall.local
   if [[ -f /etc/caddy/Caddyfile.hermescall-backup ]]; then
     mv /etc/caddy/Caddyfile.hermescall-backup /etc/caddy/Caddyfile
     systemctl restart caddy.service 2>/dev/null || true
   fi
-  if [[ -f /etc/nftables.conf.hermescall-backup ]]; then
-    mv /etc/nftables.conf.hermescall-backup /etc/nftables.conf
-    nft -f /etc/nftables.conf 2>/dev/null || true
-  fi
+  remove_firewall
   if [[ $PURGE -eq 1 ]]; then
-    rm -rf "$ETC" /var/lib/hermescall-relay "$CADDY_TLS"
+    rm -rf "$ETC" "$DATA" "$CADDY_TLS"
     userdel "$SERVICE_USER" 2>/dev/null || true
     log "Purged keys, configuration and database."
   else
-    log "Kept $ETC and /var/lib/hermescall-relay (use --purge to delete)."
+    log "Kept $ETC and $DATA (use --purge to delete)."
   fi
   [[ ! -f /etc/ssh/sshd_config.d/00-hermescall.conf ]] ||
     log "SSH key-only drop-in kept: /etc/ssh/sshd_config.d/00-hermescall.conf"
@@ -730,16 +998,24 @@ cmd_uninstall() {
 }
 
 main() {
-  local command=install
+  local command=install argument=""
   if [[ $# -gt 0 && $1 != -* ]]; then command=$1; shift; fi
+  case "$command" in
+    backup | restore | rotate) if [[ $# -gt 0 && $1 != -* ]]; then argument=$1; shift; fi ;;
+  esac
   parse_flags "$@"
   case "$command" in
     install) cmd_install ;;
     update) cmd_update ;;
+    rollback) cmd_rollback ;;
+    backup) cmd_backup "$argument" ;;
+    restore) cmd_restore "$argument" ;;
+    rotate) cmd_rotate "$argument" ;;
     uninstall) cmd_uninstall ;;
     refresh-ip) cmd_refresh_ip ;;
+    turn-cert) cmd_turn_cert ;;
     pair) need_root; exec "$WRAPPER" pair ;;
-    status) systemctl --no-pager status "${UNITS[@]}" caddy.service ;;
+    status) cmd_status ;;
     *) usage; exit 2 ;;
   esac
 }

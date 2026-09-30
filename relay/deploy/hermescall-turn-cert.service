@@ -1,0 +1,12 @@
+[Unit]
+Description=Hermes Call: copy the renewed TLS certificate for TURNS to coturn
+After=caddy.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/hermescall-relay/relay/install.sh turn-cert
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/hermescall-relay

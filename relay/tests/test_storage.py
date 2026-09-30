@@ -83,11 +83,17 @@ def test_new_database_uses_incremental_vacuum(tmp_path: Path) -> None:
     assert store.schema_version == schema.LATEST
 
 
-def test_refuses_a_database_from_a_newer_relay(tmp_path: Path) -> None:
+def test_newer_database_runs_when_compatible_and_is_refused_when_not(tmp_path: Path) -> None:
     path = tmp_path / "relay.db"
     Store(path).close()
     db = sqlite3.connect(str(path))
     db.execute(f"PRAGMA user_version = {schema.LATEST + 1}")
+    db.commit()
+    db.close()
+    assert Store(path).schema_version == schema.LATEST + 1  # e.g. after install.sh rollback
+    db = sqlite3.connect(str(path))
+    db.execute("UPDATE meta SET value = ? WHERE key = 'min_reader'", (schema.LATEST + 1,))
+    db.commit()
     db.close()
     with pytest.raises(schema.SchemaError):
         Store(path)
