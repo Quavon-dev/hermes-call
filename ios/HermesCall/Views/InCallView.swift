@@ -150,6 +150,7 @@ private struct AudioOutputButton: View {
     var body: some View {
         VStack(spacing: 6) {
             RoutePicker()
+                .frame(width: size * 0.45, height: size * 0.45)
                 .frame(width: size, height: size)
                 .background(Circle().fill(Color.secondary.opacity(0.2)))
             Text("Audio").font(.caption).lineLimit(1)

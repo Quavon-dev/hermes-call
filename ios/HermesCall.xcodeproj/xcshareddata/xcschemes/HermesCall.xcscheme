@@ -50,6 +50,17 @@
                ReferencedContainer = "container:HermesCall.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "60EFD6094AEA80874145910B"
+               BuildableName = "HermesCallUITests.xctest"
+               BlueprintName = "HermesCallUITests"
+               ReferencedContainer = "container:HermesCall.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>

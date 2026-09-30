@@ -164,7 +164,7 @@ struct RootView: View {
         .sheet(item: Binding(get: { callScreen ? nil : chat.pendingApproval }, set: { if $0 == nil { chat.pendingApproval = nil } })) {
             ChatApprovalSheet(approval: $0).interactiveDismissDisabled()
         }
-        .sheet(item: $app.route) { route in routeView(route) }
+        .sheet(item: $app.route) { route in routeView(route).hudStyle(app.preferences.appearance == .hud) }
         .hudStyle(app.preferences.appearance == .hud)
         .onChange(of: calls.inCall) { _, live in if live { chat.player.stop() } }
         .onChange(of: watchKey, initial: true) { WatchBridge.shared.publish() }

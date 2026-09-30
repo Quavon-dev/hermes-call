@@ -60,6 +60,7 @@ struct SettingsView: View {
         Section {
             ForEach(app.profiles) { profile in
                 NavigationLink { ProfileDetailView(profile: profile) } label: { AgentRow(profile: profile) }
+                    .accessibilityIdentifier("agent.\(profile.bridgeName)")
             }
             Button { addingAgent = true } label: { Label("Add an agent", systemImage: "plus") }
         } header: {

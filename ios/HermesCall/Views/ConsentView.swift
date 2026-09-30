@@ -53,7 +53,7 @@ struct ConsentView: View {
             .padding(24)
         }
         .safeAreaInset(edge: .bottom) { buttons }
-        .accessibilityIdentifier("consent")
+        .hudStyle(app.preferences.appearance == .hud)
     }
 
     private var buttons: some View {

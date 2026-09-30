@@ -310,6 +310,7 @@ struct ChatView: View {
 
     private var subtitle: String {
         if chat.agentTyping { return "typing…" }
+        if app.activeProfile?.isDemo == true { return "demo · stays on this iPhone" }
         switch app.relayStatus {
         case .connected: return "end-to-end encrypted"
         case .connecting: return "connecting…"

@@ -22,7 +22,10 @@ struct DiagnosticsView: View {
             }
             ForEach(app.realProfiles) { profile in agentSection(profile) }
             if app.realProfiles.isEmpty {
-                Section { Text("No paired agents.").foregroundStyle(.secondary) }
+                Section {
+                    Text(app.profiles.isEmpty ? "No paired agents." : "No paired agents. The demo agent runs on this iPhone and has no connection to check.")
+                        .foregroundStyle(.secondary)
+                }
             }
             Section {
                 Button(collecting ? "Collecting…" : "Collect the last hour's log") { Task { await collect() } }

@@ -69,8 +69,9 @@ private struct Point: View {
     let text: String
 
     var body: some View {
-        Label { Text(text).fixedSize(horizontal: false, vertical: true) } icon: {
-            Image(systemName: symbol).foregroundStyle(.tint)
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: symbol).foregroundStyle(.tint).frame(width: 28).accessibilityHidden(true)
+            Text(text).fixedSize(horizontal: false, vertical: true)
         }
     }
 }

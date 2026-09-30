@@ -1,0 +1,114 @@
+import XCTest
+
+/// End-to-end flows on the offline demo agent (no relay needed): onboarding → demo → consent → chat →
+/// call → settings. Launch arguments make every run start like a fresh install.
+/// `SCREENSHOT_DIR` (environment of the test run, e.g. `TEST_RUNNER_SCREENSHOT_DIR`) saves a PNG per step.
+@MainActor
+final class HermesCallUITests: XCTestCase {
+    private var app: XCUIApplication!
+
+    override func setUp() async throws {
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchArguments = ["-UITestReset", "YES", "-appearance", "standard"]
+    }
+
+    func testOnboardingDemoChatAndCall() throws {
+        app.launch()
+        for _ in 0..<3 { tap("onboarding.continue") }
+        tap("onboarding.demo")
+        XCTAssertTrue(app.buttons["consent.allow"].waitForExistence(timeout: 5))
+        snap("consent")
+        tap("consent.allow")
+
+        app.tabBars.buttons["Chat"].tap()
+        let field = app.textFields["Message"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("Plan my day")
+        app.buttons["Send"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Your day"].waitForExistence(timeout: 10), "the demo agent answers")
+        snap("demo-chat")
+
+        // The chat's call button (the keyboard covers the tab bar).
+        app.navigationBars.buttons["Call"].firstMatch.tap()
+        let hangUp = app.buttons["call.hangUp"]
+        XCTAssertTrue(hangUp.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Atlas"].exists)
+        sleep(7)
+        snap("demo-call")
+        hangUp.tap()
+        XCTAssertFalse(hangUp.waitForExistence(timeout: 3), "the call screen closes")
+        XCTAssertTrue(app.staticTexts["Outgoing call"].firstMatch.waitForExistence(timeout: 5) || app.textFields["Message"].exists)
+    }
+
+    func testPresenceTapStartsTheDemoCall() throws {
+        app.launchArguments = ["-UITestReset", "YES", "-UITestConsent", "YES", "-appearance", "hud"]
+        app.launch()
+        for _ in 0..<3 { tap("onboarding.continue") }
+        tap("onboarding.demo")
+        let presence = app.buttons["presence"].firstMatch.exists ? app.buttons["presence"].firstMatch : app.otherElements["presence"].firstMatch
+        XCTAssertTrue(presence.waitForExistence(timeout: 8))
+        sleep(2)
+        snap("presence-home")
+        presence.tap()
+        let end = app.buttons["End call"].firstMatch
+        XCTAssertTrue(end.waitForExistence(timeout: 5))
+        sleep(8)
+        snap("presence-call")
+        end.tap()
+        XCTAssertFalse(end.waitForExistence(timeout: 2))
+    }
+
+    func testSettingsAndDiagnostics() throws {
+        app.launchArguments += ["-UITestConsent", "YES"]
+        app.launch()
+        for _ in 0..<3 { tap("onboarding.continue") }
+        tap("onboarding.demo")
+        tap("home.settings")
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        snap("settings")
+        XCTAssertTrue(app.switches["settings.consent"].exists || app.swipeUpUntil("settings.consent"))
+        app.swipeUpUntil("settings.diagnostics")
+        tap("settings.diagnostics")
+        XCTAssertTrue(app.navigationBars["Diagnostics"].waitForExistence(timeout: 5))
+        snap("diagnostics")
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.collectionViews.firstMatch.swipeDown()
+        app.collectionViews.firstMatch.swipeDown()
+        tap("agent.Atlas")
+        tap("demo.remove")
+        XCTAssertTrue(app.buttons["onboarding.continue"].waitForExistence(timeout: 8), "removing the demo returns to onboarding")
+    }
+
+    // MARK: helpers
+
+    private func tap(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
+        let element = app.descendants(matching: .any)[identifier].firstMatch
+        XCTAssertTrue(element.waitForExistence(timeout: 8), "\(identifier) missing", file: file, line: line)
+        element.tap()
+    }
+
+    private func snap(_ name: String) {
+        let shot = XCUIScreen.main.screenshot()
+        let attachment = XCTAttachment(screenshot: shot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        if let dir = ProcessInfo.processInfo.environment["SCREENSHOT_DIR"] {
+            try? shot.pngRepresentation.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name).png"))
+        }
+    }
+}
+
+extension XCUIApplication {
+    /// Scrolls the first list up until the element with `identifier` is on screen.
+    @discardableResult
+    func swipeUpUntil(_ identifier: String, attempts: Int = 5) -> Bool {
+        let element = descendants(matching: .any)[identifier].firstMatch
+        for _ in 0..<attempts where !(element.exists && element.isHittable) {
+            collectionViews.firstMatch.swipeUp()
+        }
+        return element.exists
+    }
+}

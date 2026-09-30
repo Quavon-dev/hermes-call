@@ -54,6 +54,57 @@ Pushes for the published app go through the Hermes Call [push gateway](push-gate
 (`hermes-push.quavon.de`) unless the relay has its own APNs key; nobody needs an Apple developer
 account to get incoming calls.
 
+## App Store readiness (0.7)
+
+- **Consent** (guideline 5.1.2(i)): right after the first agent (or the demo) is added, one screen says
+  what is shared (voice, messages, files and camera pictures, phone data the owner allows), that it goes
+  end-to-end encrypted to the owner's bridge, and that the owner's agent may pass it to a third-party AI
+  service. Without it calls, chat sends, the outbox (also the share sheet's) and phone-context answers stay
+  off (`SharedContainer.aiConsentKey`, versioned). Settings › Privacy › *Share with my agent* withdraws it.
+- **Try a demo**: an offline agent (*Atlas*, `ios/HermesCall/Demo/`) for people without a relay and for App
+  Review. Its profile exists only in memory (fresh keys each launch, relay `demo.invalid`), is never written
+  to the Keychain or connected; its chat answers a few keywords (Markdown plan, place cards, help) and its
+  calls are simulated by `PresenceDemo` (no CallKit, no audio). Labelled Demo everywhere; *Remove demo agent*
+  deletes it and its chat. Review notes and privacy answers: `ios/appstore/`.
+- **Onboarding**: four pages (what agent, bridge and relay are; microphone and notification priming before
+  iOS asks; pair or try the demo; setup guide link). `hermescall://pair?…` links opened on the phone open the
+  pairing sheet, which still shows the relay and asks before pairing.
+- **Pairing errors**: unreachable, TLS key mismatch, rate limited (relay HTTP 429), relay busy (503), wrong
+  or expired code, invalid input (`PairingFailure`); a denied camera shows an explanation and Open Settings.
+- **Approvals**: one panel for call and chat approvals; a cancelled Face ID keeps the request open (*Try
+  again* / *Deny*) instead of denying it; without a passcode only *Deny* remains.
+- **Calls**: interruptions and route changes are followed (`CallAudioRoute`), *Speaker* shows the real
+  route, the call screen has iOS' audio route picker and captions, CallKit shows a template icon, and push
+  rings with several agents show "Atlas or Nova" until the bridge confirms which one rang.
+- **Settings**: agents first (each with its own page), then calls, appearance, chat and tasks, privacy;
+  **Diagnostics** shows network, push tokens and registrations per agent, relay connection and round trip
+  (WebSocket ping), and exports the last hour of this app's log with tokens, ids, addresses and e-mail
+  addresses replaced.
+- **Network**: an offline banner (*No internet connection* / *Can't reach your relay*); a returning or
+  changed network reconnects at once (`RelaySession.reconnectNow`) instead of after the backoff.
+- **Presence**: paused under full-screen sheets and in the background; 30 fps in Low Power Mode, with Reduce
+  Motion or a serious thermal state, 20 fps when critical; voice levels are read per frame instead of
+  polling. HUD labels follow Dynamic Type (up to twice their size), hairlines get stronger with Increase
+  Contrast, surfaces opaque with Reduce Transparency.
+- **App Intents**: *Call Agent*, *Ask Agent*, *Open Chat* take an agent ("Call Atlas with Hermes Call");
+  Focus › Hermes Call chooses which agents may notify (notifications carry the agent id as
+  `filterCriteria`).
+- **Phone access**: *Add reminders* (`reminder_create`: `title`, `due?`, `notes?`) and *Add calendar events*
+  (`calendar_create`: `title`, `start`, `end`, `location?`, `notes?`), No by default; with Ask the item is shown
+  exactly before it is created; the answer's `data` is `{ok: true, id}`.
+- Errors are typed (`AppError`) with a recovery action (Open Settings, Review consent, Relays).
+
+UI tests (`HermesCallUITests`, part of the scheme's tests) run on the demo agent: onboarding → demo →
+consent → chat → call → hang up, the presence tap-to-call, Settings and Diagnostics. Debug launch arguments:
+`-UITestReset YES` (fresh install state), `-UITestConsent YES`, `-appearance hud|standard`.
+App Store screenshots (6.9", iPhone 17 Pro Max simulator):
+
+```bash
+cd ios && TEST_RUNNER_APPSTORE_SHOTS=$PWD/appstore/screenshots xcodebuild test -project HermesCall.xcodeproj \
+  -scheme HermesCall -destination 'platform=iOS Simulator,name=iPhone 17 Pro Max' \
+  -only-testing:HermesCallUITests/AppStoreScreenshots CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
+```
+
 ## Build and run on your iPhone (Xcode)
 
 1. Generate the project (only needed after changing `project.yml`):

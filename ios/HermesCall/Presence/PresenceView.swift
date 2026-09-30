@@ -144,8 +144,8 @@ struct PresenceView: View {
                 }
                 .font(.caption2.monospaced().weight(.medium))
                 .foregroundStyle(HUD.glow.opacity(0.85))
-                if mood != .idle { HUD.label(moodLabel, size: 9).transition(.opacity) }
-                if calls.isDemoCall { HUD.label("demo", size: 8).opacity(0.7) }
+                if mood != .idle { HUD.label(moodLabel, size: 9).padding(.leading, 2).transition(.opacity) }
+                if calls.isDemoCall { HUD.label("· demo", size: 8).opacity(0.7) }
                 if calls.isMuted { Image(systemName: "mic.slash").font(.caption2).foregroundStyle(HUD.alert) }
             } else {
                 Circle().fill(statusColor).frame(width: 5, height: 5)

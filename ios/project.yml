@@ -102,8 +102,8 @@ targets:
         NSLocationWhenInUseUsageDescription: When you allow it, your agent can ask where you are (about 1 km unless you allow precise). It is sent end-to-end encrypted to your own bridge only.
         NSLocationAlwaysAndWhenInUseUsageDescription: Place reminders your agent sets for you ("when I'm at the supermarket") are watched by this iPhone itself, also while the app is closed. Your location is never sent to your agent for this; searching a place by name asks Apple Maps with only an area of about 5 km around you.
         NSSupportsLiveActivities: true
-        NSCalendarsFullAccessUsageDescription: When you allow it, your agent can read your upcoming events. They are sent end-to-end encrypted to your own bridge only.
-        NSRemindersFullAccessUsageDescription: When you allow it, your agent can read your open reminders. They are sent end-to-end encrypted to your own bridge only.
+        NSCalendarsFullAccessUsageDescription: When you allow it, your agent can read your upcoming events, or add an event you see first. Events are sent end-to-end encrypted to your own bridge only.
+        NSRemindersFullAccessUsageDescription: When you allow it, your agent can read your open reminders, or add a reminder you see first. Reminders are sent end-to-end encrypted to your own bridge only.
         NSContactsUsageDescription: When you allow it, your agent can look up a contact by name (up to 5 matches). Results are sent end-to-end encrypted to your own bridge only.
         NSMotionUsageDescription: When you allow it, your agent can ask whether you are walking or driving and for today's steps. Sent end-to-end encrypted to your own bridge only.
         NSAppleMusicUsageDescription: When you allow it, your agent can ask which song is playing in the Music app. Sent end-to-end encrypted to your own bridge only.
@@ -294,10 +294,22 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(HC_BUNDLE_ID).tests
         GENERATE_INFOPLIST_FILE: YES
+  # UI flows on the offline demo agent (onboarding, demo chat and call, presence, settings).
+  HermesCallUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [HermesCallUITests]
+    dependencies:
+      - target: HermesCall
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(HC_BUNDLE_ID).uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: HermesCall
 schemes:
   HermesCall:
     build:
       targets:
         HermesCall: all
     test:
-      targets: [HermesCallTests]
+      targets: [HermesCallTests, HermesCallUITests]
