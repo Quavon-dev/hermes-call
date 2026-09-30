@@ -1,11 +1,11 @@
 """Mailbox, alert pushes and encrypted attachments (M6 chat)."""
 
 import asyncio
+import dataclasses
 
 import pytest
 
 from hermescall_common import sodium, wire
-from hermescall_relay import server as relay_server
 from hermescall_relay.push import MAX_ALERT_CIPHERTEXT, alert_payload
 from hermescall_relay.store import MAIL_MAX_MESSAGES
 
@@ -19,8 +19,8 @@ def mid() -> str:
 
 
 @pytest.fixture(autouse=True)
-def fast_grace(monkeypatch) -> None:
-    monkeypatch.setattr(relay_server, "MAIL_ACK_GRACE", 0.05)
+def fast_grace(relay) -> None:
+    relay.limits = dataclasses.replace(relay.limits, mail_ack_grace=0.05)
 
 
 async def setup_pair(client, relay):

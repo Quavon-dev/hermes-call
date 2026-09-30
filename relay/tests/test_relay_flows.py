@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 
 import pytest
 from aiohttp import WSMsgType
@@ -183,7 +184,7 @@ async def test_new_connection_replaces_old(client, relay) -> None:
 
 
 async def test_per_ip_connection_cap(client, relay, monkeypatch) -> None:
-    monkeypatch.setattr("hermescall_relay.server.MAX_CONNECTIONS_PER_IP", 2)
+    relay.limits = dataclasses.replace(relay.limits, max_connections_per_ip=2)
     first = await client.ws_connect("/v1/ws")
     second = await client.ws_connect("/v1/ws")
     response = await client.get("/v1/ws")

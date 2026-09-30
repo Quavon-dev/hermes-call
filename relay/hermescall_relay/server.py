@@ -1,64 +1,43 @@
 """Relay: authenticated routing of opaque E2E messages, pairing rendezvous,
 TURN credentials, VoIP push fan-out, a ciphertext mailbox for chat messages
-and a store for encrypted attachments. It never sees plaintext."""
+and a store for encrypted attachments. It never sees plaintext.
+
+One process, one SQLite database: the relay is single-writer by design and does not scale out
+horizontally (docs/relay.md, "Limits and scaling")."""
 
 import asyncio
-import contextlib
-import ipaddress
 import logging
-import os
 import re
-import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
-from aiohttp import WSMsgType, web
+from aiohttp import WSCloseCode, WSMsgType, web
 
 from hermescall_common import auth, codes, pairing, sodium, wire
 from hermescall_common.errors import CryptoError, ProtocolError
 
-from . import turn
+from . import netutil, observability, turn
+from .attachments import AttachmentsMixin, BlobTicket, _refuse_upload  # noqa: F401 - re-exported
 from .config import Config
-from .push import LIVE_EVENTS, PushResult, PushSender
+from .mailbox import MAX_E2E_BLOB, MailboxMixin
+from .metrics import CONTENT_TYPE
+from .push import LIVE_EVENTS, GatewayPush, PushResult, PushSender
 from .ratelimit import FailureLimiter, RateLimiter
-from .store import BLOB_MAX_BYTES, LIVE_KINDS, PUSH_ENVS, Store, new_id
+from .store import LIVE_KINDS, PUSH_ENVS, Store, new_id
+from .version import CAPABILITIES, VERSION
 
 log = logging.getLogger(__name__)
 
-HANDSHAKE_TIMEOUT = 15.0
-PAIR_SESSION_TIMEOUT = 90.0
-SLOT_TTL = 600.0
-MAX_SLOTS_PER_BRIDGE = 5
-MAX_SLOT_ATTEMPTS = 3
 MAX_PAIR_BLOB = 4096
-MAX_E2E_BLOB = 48 * 1024
-MAX_CONNECTIONS = 500
-# Unauthenticated sockets (pairing, handshakes) may use at most this share, so a flood from many
-# addresses cannot lock out paired bridges and phones.
-MAX_UNAUTHENTICATED = 200
-MAX_CONNECTIONS_PER_IP = 16
 MAX_PAIR_MESSAGES = 4
-TURN_REQUESTS_PER_MINUTE = 6
-MESSAGES_PER_WINDOW = 200
-MESSAGE_WINDOW_SECONDS = 10.0
-REVOCATION_SWEEP_SECONDS = 15.0
-BLOB_SWEEP_EVERY = 40  # revocation sweeps (10 minutes)
-# A phone that is online but does not ack a mail this fast is probably suspended: push it.
-MAIL_ACK_GRACE = 3.0
-MAIL_BATCH = 100
-MAILS_PER_MINUTE = 120
-ALERTS_PER_WINDOW = 20
-ALERT_WINDOW_SECONDS = 600.0
-BLOB_TICKET_SECONDS = 300.0
-BLOB_UPLOADS_PER_HOUR = 60
-BLOB_TICKETS_PER_HOUR = 240
-MAX_BLOB_TRANSFERS = 20
-BLOB_CHUNK = 64 * 1024
+# On SIGTERM: how long pending chat alerts may take before the process exits.
+SHUTDOWN_PUSH_SECONDS = 5.0
 _ID = re.compile(r"^[A-Za-z0-9_-]{22}\Z")
 _PUSH_TOKEN = re.compile(r"^[0-9a-f]{64,200}\Z")
+_CAP = re.compile(r"^[a-z0-9_]{1,32}\Z")
+MAX_CAPS = 32
 PUSH_KINDS = ("voip", "alert", "liveactivity", "liveactivity_start")
 # Live Activity pushes per device: routine updates at most every 3 s; a new activity (start) at most
 # every 30 s and 20 per hour; ends 30 per hour. A compromised bridge token cannot spam Apple pushes.
@@ -69,21 +48,11 @@ MAX_LIVE_LABEL = 60
 MAX_LIVE_STEP = 999
 LIVE_STATES = ("running", "done", "failed")
 
+client_key = netutil.key
+
 
 def short(identity: str) -> str:
     return identity[:6]
-
-
-def client_key(ip: str, prefix: int = 64) -> str:
-    try:
-        address = ipaddress.ip_address(ip)
-    except ValueError:
-        return ip
-    if address.version == 6 and address.ipv4_mapped is not None:
-        address = address.ipv4_mapped
-    if address.version == 6:
-        return str(ipaddress.ip_network(f"{address}/{prefix}", strict=False))
-    return str(address)
 
 
 def _live_int(value: object, allow_none: bool = False) -> bool:
@@ -109,18 +78,21 @@ def valid_content_state(state: object) -> bool:
     )
 
 
-def _refuse_upload(status: int) -> web.Response:
-    """The body was not (fully) read: close the connection, or the unread rest would be parsed as the
-    next request on it (older aiohttp does not drain it; behind Caddy that request may be someone else's)."""
-    response = web.Response(status=status)
-    response.force_close()
-    return response
-
-
 def valid_id(value: object) -> str:
     if not isinstance(value, str) or not _ID.match(value):
         raise ProtocolError("invalid id")
     return value
+
+
+def client_caps(message: dict) -> tuple[int, frozenset[str]]:
+    """Optional `v` and `caps` of an `auth` (hello): recorded, never required; junk is ignored."""
+    version = message.get("v")
+    caps = message.get("caps")
+    if not isinstance(version, int) or isinstance(version, bool) or not 0 < version < 1000:
+        version = 1
+    if not isinstance(caps, list):
+        return version, frozenset()
+    return version, frozenset(c for c in caps[:MAX_CAPS] if isinstance(c, str) and _CAP.match(c))
 
 
 @dataclass
@@ -128,13 +100,6 @@ class Slot:
     bridge_id: str
     expires: float
     attempts: int = 0
-
-
-@dataclass(frozen=True)
-class BlobTicket:
-    blob_id: str
-    method: str
-    expires: float
 
 
 @dataclass
@@ -148,17 +113,19 @@ class PairSession:
     done: asyncio.Event = field(default_factory=asyncio.Event)
 
 
-class Relay:
+class Relay(AttachmentsMixin, MailboxMixin):
     def __init__(self, config: Config, store: Store, push: PushSender | None, turn_secret: bytes | None) -> None:
         self.config = config
+        self.limits = config.limits
         self.store = store
         self.push = push
         self.turn_secret = turn_secret
+        limits = self.limits
         self.failures = FailureLimiter()
         self.wide_failures = FailureLimiter(max_failures=30)
-        self.turn_rate = RateLimiter(limit=TURN_REQUESTS_PER_MINUTE, window=60)
-        self.pair_rate = RateLimiter(limit=20, window=60)
-        self.ring_rate = RateLimiter(limit=10, window=60)
+        self.turn_rate = RateLimiter(limit=limits.turn_requests_per_minute, window=60)
+        self.pair_rate = RateLimiter(limit=limits.pair_per_minute, window=60)
+        self.ring_rate = RateLimiter(limit=limits.rings_per_minute, window=60)
         self.live_rate = RateLimiter(limit=1, window=LIVE_UPDATE_SECONDS)
         self.live_limits = {
             "update": [self.live_rate],
@@ -167,28 +134,44 @@ class Relay:
         }
         self.bridges: dict[str, web.WebSocketResponse] = {}
         self.devices: dict[str, web.WebSocketResponse] = {}
+        self.client_caps: dict[str, frozenset[str]] = {}
         self.slots: dict[str, Slot] = {}
         self.sessions: dict[str, PairSession] = {}
-        self.message_rate = RateLimiter(limit=MESSAGES_PER_WINDOW, window=MESSAGE_WINDOW_SECONDS)
+        self.message_rate = RateLimiter(limit=limits.messages_per_window, window=limits.message_window_seconds)
         self.connections = 0
         self.unauthenticated = 0
         self.connections_per_ip: dict[str, int] = {}
-        self.mail_rate = RateLimiter(limit=MAILS_PER_MINUTE, window=60)
-        self.alert_rate = RateLimiter(limit=ALERTS_PER_WINDOW, window=ALERT_WINDOW_SECONDS)
-        self.blob_upload_rate = RateLimiter(limit=BLOB_UPLOADS_PER_HOUR, window=3600)
-        self.blob_ticket_rate = RateLimiter(limit=BLOB_TICKETS_PER_HOUR, window=3600)
+        self.mail_rate = RateLimiter(limit=limits.mails_per_minute, window=60)
+        self.alert_rate = RateLimiter(limit=limits.alerts_per_window, window=limits.alert_window_seconds)
+        self.blob_upload_rate = RateLimiter(limit=limits.blob_uploads_per_hour, window=3600)
+        self.blob_ticket_rate = RateLimiter(limit=limits.blob_tickets_per_hour, window=3600)
         self.blob_tickets: dict[str, BlobTicket] = {}
         self.blob_transfers = 0
+        self.blob_downloads = 0
         self._tasks: set[asyncio.Task] = set()
+        self._alert_tasks: set[asyncio.Task] = set()
+        self._stopping = asyncio.Event()
+        self.gateway_probe = observability.GatewayProbe(config.push_gateway) if isinstance(push, GatewayPush) else None
+        self.metrics = observability.relay_metrics(self)
+        self.rate_limited = self.metrics.counter("rate_limited_total", "Requests refused by a limit, by limit name.")
+        self.transfers_total = self.metrics.counter("blob_transfers_total", "Finished attachment transfers.")
+        self.maintenance_total = self.metrics.counter("expired_total", "Expired mailbox messages and attachments removed.")
 
-    @property
-    def blob_dir(self) -> Path:
-        return self.config.db_path.parent / "blobs"
+    _valid_id = staticmethod(valid_id)
 
     def _spawn(self, coro: Awaitable) -> None:
         task = asyncio.ensure_future(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    def _count_limit(self, name: str) -> None:
+        self.rate_limited.inc(limit=name)
+
+    def _allow(self, limiter: RateLimiter, key: str, name: str) -> bool:
+        if limiter.allow(key):
+            return True
+        self._count_limit(name)
+        return False
 
     # ---- HTTP plumbing -------------------------------------------------
 
@@ -200,37 +183,60 @@ class Relay:
         app.router.add_put("/v1/blobs/{blob_id}", self.blob_upload)
         app.router.add_get("/v1/blobs/{blob_id}", self.blob_download)
         app.on_startup.append(self._start_background)
+        app.on_shutdown.append(self._shutdown)
         app.on_cleanup.append(self._cleanup)
+        return app
+
+    def metrics_app(self) -> web.Application:
+        app = web.Application()
+        app.router.add_get("/metrics", self.metrics_endpoint)
         return app
 
     async def _start_background(self, app: web.Application) -> None:
         self.blob_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         app["sweeper"] = asyncio.create_task(self._revocation_sweeper())
+        app["expiry"] = asyncio.create_task(self._expiry_sweeper())
+        app["metrics"] = None
+        if self.config.metrics_port:
+            runner = web.AppRunner(self.metrics_app(), access_log=None)
+            await runner.setup()
+            await web.TCPSite(runner, self.config.metrics_host, self.config.metrics_port).start()
+            app["metrics"] = runner
+
+    async def _shutdown(self, app: web.Application) -> None:
+        """SIGTERM: tell clients to reconnect elsewhere/later, then send the chat alerts still pending."""
+        sockets = list(self.bridges.values()) + list(self.devices.values())
+        sockets += [session.device_ws for session in self.sessions.values()]
+        log.info("shutting down: closing %d connection(s)", len(sockets))
+        await asyncio.gather(
+            *(ws.close(code=WSCloseCode.GOING_AWAY, message=b"relay restarting") for ws in sockets),
+            return_exceptions=True,
+        )
+        await self._flush_alerts(SHUTDOWN_PUSH_SECONDS)
 
     async def _cleanup(self, app: web.Application) -> None:
-        app["sweeper"].cancel()
+        for name in ("sweeper", "expiry"):
+            app[name].cancel()
+        if app["metrics"] is not None:
+            await app["metrics"].cleanup()
         if self.push:
             await self.push.close()
 
     async def healthz(self, request: web.Request) -> web.Response:
-        return web.Response(text="ok")
+        status, body = await observability.health(self)
+        return web.json_response(body, status=status, headers={"Cache-Control": "no-store"})
+
+    async def metrics_endpoint(self, request: web.Request) -> web.Response:
+        return web.Response(body=self.metrics.render().encode(), headers={"Content-Type": CONTENT_TYPE})
 
     def client_ip(self, request: web.Request) -> str:
-        """The address the trusted proxy saw: the last X-Forwarded-For entry is the one it appended."""
-        remote = request.remote or ""
-        forwarded = request.headers.get("X-Forwarded-For", "")
-        if self.config.trust_proxy and forwarded and self._is_trusted_proxy(remote):
-            return forwarded.split(",")[-1].strip()
-        return remote
-
-    def _is_trusted_proxy(self, remote: str) -> bool:
-        try:
-            address = ipaddress.ip_address(remote)
-        except ValueError:
-            return False
-        if address.version == 6 and address.ipv4_mapped is not None:
-            address = address.ipv4_mapped
-        return address.is_loopback or any(address in net for net in self.config.trusted_proxies)
+        """The client's address as the nearest untrusted hop saw it (see netutil.client_ip)."""
+        return netutil.client_ip(
+            request.remote or "",
+            request.headers.get("X-Forwarded-For", ""),
+            self.config.trust_proxy,
+            self.config.trusted_proxies,
+        )
 
     def _locked_out(self, ip: str) -> bool:
         return self.failures.is_locked(client_key(ip)) or self.wide_failures.is_locked(client_key(ip, 48))
@@ -241,11 +247,13 @@ class Relay:
             self.wide_failures.fail(client_key(ip, 48))
 
     def _admit(self, ip_key: str) -> bool:
+        limits = self.limits
         if (
-            self.connections >= MAX_CONNECTIONS
-            or self.unauthenticated >= MAX_UNAUTHENTICATED
-            or self.connections_per_ip.get(ip_key, 0) >= MAX_CONNECTIONS_PER_IP
+            self.connections >= limits.max_connections
+            or self.unauthenticated >= limits.max_unauthenticated
+            or self.connections_per_ip.get(ip_key, 0) >= limits.max_connections_per_ip
         ):
+            self._count_limit("connections")
             return False
         self.connections += 1
         self.unauthenticated += 1
@@ -290,7 +298,7 @@ class Relay:
     async def pair_endpoint(self, request: web.Request) -> web.StreamResponse:
         ip = self.client_ip(request)
         ip_key = client_key(ip)
-        if self._locked_out(ip) or not self.pair_rate.allow(ip_key):
+        if self._locked_out(ip) or not self._allow(self.pair_rate, ip_key, "pairing"):
             return web.Response(status=429, text="try again later")
         if not self._admit(ip_key):
             return web.Response(status=503)
@@ -309,7 +317,7 @@ class Relay:
         return ws
 
     async def _pair(self, ws: web.WebSocketResponse, ip_key: str) -> None:
-        join = await self._receive(ws, HANDSHAKE_TIMEOUT)
+        join = await self._receive(ws, self.limits.handshake_timeout)
         if join["t"] != "join" or not codes.is_valid_slot(join.get("slot")):
             raise ProtocolError("bad join")
         public_data = wire.b64d(join.get("msg"), length=48)
@@ -328,7 +336,7 @@ class Relay:
         ctx = pairing.Context("relay", self.config.host, self.config.port, self.config.tls_pin)
         response, keys = pairing.respond(ctx, secret, public_data)
         await self._send(ws, {"t": "cpace", "msg": wire.b64e(response)})
-        confirm = await self._receive(ws, HANDSHAKE_TIMEOUT)
+        confirm = await self._receive(ws, self.limits.handshake_timeout)
         if confirm["t"] != "confirm":
             raise ProtocolError("bad confirm")
         payload = pairing.open_initiator(keys, wire.b64d(confirm.get("data"), max_length=MAX_PAIR_BLOB))
@@ -346,13 +354,13 @@ class Relay:
             self.slots.pop(slot_id, None)
             raise ProtocolError("slot unavailable")
         slot.attempts += 1
-        if slot.attempts >= MAX_SLOT_ATTEMPTS:
+        if slot.attempts >= self.limits.max_slot_attempts:
             self.slots.pop(slot_id, None)
         session = PairSession(new_id(), slot_id, slot.bridge_id, ip_key, ws)
         self.sessions[session.conn] = session
         try:
             await self._send(bridge_ws, {"t": "pair_join", "slot": slot_id, "conn": session.conn, "msg": wire.b64e(public_data)})
-            await asyncio.wait_for(self._pump_device(session), PAIR_SESSION_TIMEOUT)
+            await asyncio.wait_for(self._pump_device(session), self.limits.pair_session_timeout)
         finally:
             self.sessions.pop(session.conn, None)
             bridge_ws = self.bridges.get(session.bridge_id)
@@ -372,7 +380,7 @@ class Relay:
 
     async def _forward_device_to_bridge(self, session: PairSession) -> None:
         for _ in range(MAX_PAIR_MESSAGES):
-            message = await self._receive(session.device_ws, PAIR_SESSION_TIMEOUT)
+            message = await self._receive(session.device_ws, self.limits.pair_session_timeout)
             if message["t"] != "pair_msg":
                 raise ProtocolError("unexpected message")
             data = wire.b64d(message.get("data"), max_length=MAX_PAIR_BLOB)
@@ -416,7 +424,7 @@ class Relay:
     async def _authenticate(self, ws: web.WebSocketResponse, ip_key: str) -> tuple[str, str]:
         nonce = sodium.random_bytes(auth.NONCE_BYTES)
         await self._send(ws, {"t": "challenge", "nonce": wire.b64e(nonce), "v": 1})
-        message = await self._receive(ws, HANDSHAKE_TIMEOUT)
+        message = await self._receive(ws, self.limits.handshake_timeout)
         role = message.get("role")
         if message["t"] != "auth" or role not in auth.ROLES:
             raise ProtocolError("bad auth")
@@ -426,7 +434,8 @@ class Relay:
         if key is None or not auth.verify_auth(key, self.config.authority, role, identity, nonce, sig):
             raise ProtocolError("authentication failed")
         self._register(role, identity, ws)
-        await self._send(ws, {"t": "ready"})
+        self.client_caps[identity] = client_caps(message)[1]
+        await self._send(ws, {"t": "ready", "v": 1, "relay": VERSION, "caps": list(CAPABILITIES)})
         return role, identity
 
     def _identity_key(self, role: str, identity: str) -> bytes | None:
@@ -448,6 +457,7 @@ class Relay:
         table = self.bridges if role == "bridge" else self.devices
         if identity and table.get(identity) is ws:
             del table[identity]
+            self.client_caps.pop(identity, None)
             if role == "device":
                 self._spawn(self._presence(identity, False))
             else:
@@ -471,24 +481,31 @@ class Relay:
             if msg.type != WSMsgType.TEXT:
                 break
             if not self.message_rate.allow(identity):
+                self._count_limit("messages")
                 raise ProtocolError("message rate exceeded")
             message = wire.decode(msg.data)
             handler = handlers.get(message["t"])
             if handler is None:
-                raise ProtocolError("unknown message type")
-            try:
-                reply = await handler(identity, message)
-            except (TypeError, KeyError, ValueError) as exc:
-                raise ProtocolError("malformed request") from exc
+                # A newer client (or bridge) talking to this relay: say so and keep the session.
+                reply: dict | None = {"t": "error", "code": "unsupported"}
+                if _CAP.match(message["t"]):
+                    reply["type"] = message["t"]
+            else:
+                try:
+                    reply = await handler(identity, message)
+                except (TypeError, KeyError, ValueError) as exc:
+                    raise ProtocolError("malformed request") from exc
             if reply is not None:
                 if "rid" in message and isinstance(message["rid"], (int, str)):
                     reply["rid"] = message["rid"]
                 await self._send(ws, reply)
 
+    # ---- Background maintenance ----------------------------------------
+
     async def _revocation_sweeper(self) -> None:
         rounds = 0
         while True:
-            await asyncio.sleep(REVOCATION_SWEEP_SECONDS)
+            await asyncio.sleep(self.limits.sweep_seconds)
             rounds += 1
             try:
                 await self._sweep(rounds)
@@ -497,14 +514,31 @@ class Relay:
                 log.exception("sweep failed; retrying next round")
 
     async def _sweep(self, rounds: int) -> None:
-        if rounds % BLOB_SWEEP_EVERY == 1:
-            self._sweep_blobs()
         self._drop_expired_slots()
         for role, table in (("bridge", self.bridges), ("device", self.devices)):
             for identity, ws in list(table.items()):
                 if not self.store.identity_exists(role, identity):
                     log.info("closing revoked %s id=%s", role, short(identity))
                     await ws.close()
+
+    async def _expiry_sweeper(self) -> None:
+        """Expired mail and attachments go even when nobody sends new ones; free pages go back to disk."""
+        while True:
+            try:
+                self.expire_now()
+            except Exception:
+                log.exception("expiry sweep failed; retrying next round")
+            await asyncio.sleep(self.limits.expiry_sweep_seconds)
+
+    def expire_now(self) -> tuple[int, int]:
+        mails = self.store.expire()
+        blobs = self._sweep_blobs()
+        self.maintenance_total.inc(mails, kind="mail")
+        self.maintenance_total.inc(blobs, kind="blob")
+        self.store.vacuum_step()
+        if mails or blobs:
+            log.info("expired %d mail(s) and %d attachment(s)", mails, blobs)
+        return mails, blobs
 
     # ---- Bridge messages -----------------------------------------------
 
@@ -534,13 +568,16 @@ class Relay:
 
     async def b_open_slot(self, bridge_id: str, message: dict) -> dict:
         self._drop_expired_slots()
-        if sum(1 for slot in self.slots.values() if slot.bridge_id == bridge_id) >= MAX_SLOTS_PER_BRIDGE:
+        if sum(1 for slot in self.slots.values() if slot.bridge_id == bridge_id) >= self.limits.max_slots_per_bridge:
             return {"t": "error", "code": "too_many_slots"}
+        if self.store.device_count(bridge_id) >= self.limits.max_devices_per_bridge:
+            self._count_limit("devices")
+            return {"t": "error", "code": "too_many_devices"}
         slot_id = codes.new_device_slot()
         while slot_id in self.slots:
             slot_id = codes.new_device_slot()
-        self.slots[slot_id] = Slot(bridge_id, time.monotonic() + SLOT_TTL)
-        return {"t": "slot_opened", "slot": slot_id, "ttl": int(SLOT_TTL)}
+        self.slots[slot_id] = Slot(bridge_id, time.monotonic() + self.limits.slot_ttl)
+        return {"t": "slot_opened", "slot": slot_id, "ttl": int(self.limits.slot_ttl)}
 
     async def b_close_slot(self, bridge_id: str, message: dict) -> dict:
         slot = self.slots.get(message.get("slot"))
@@ -575,6 +612,10 @@ class Relay:
             return {"t": "pair_closed", "conn": session.conn}
         if session.device_id is not None:
             return {"t": "error", "code": "already_registered"}
+        if self.store.device_count(bridge_id) >= self.limits.max_devices_per_bridge:
+            await self._send(session.device_ws, {"t": "error", "code": "too_many_devices"})
+            session.done.set()
+            return {"t": "error", "code": "too_many_devices"}
         sign_pk = wire.b64d(message.get("sign_pk"), length=sodium.SIGN_PKBYTES)
         session.device_id = self.store.add_device(bridge_id, sign_pk)
         self.slots.pop(session.slot, None)
@@ -624,7 +665,7 @@ class Relay:
     async def b_ring(self, bridge_id: str, message: dict) -> dict:
         call_id = message.get("call_id")
         wire.b64d(call_id, length=16)
-        if not self.ring_rate.allow(bridge_id):
+        if not self._allow(self.ring_rate, bridge_id, "rings"):
             return {"t": "error", "code": "rate_limited"}
         targets = self._ring_targets(bridge_id, message.get("devices"))
         if self.push is None:
@@ -653,6 +694,7 @@ class Relay:
         if not token or env not in PUSH_ENVS:
             return {"t": "error", "code": "no_token"}
         if not all(limiter.allow(device.id) for limiter in self.live_limits[event]):
+            self._count_limit("live_activity")
             return {"t": "error", "code": "rate_limited"}
         result = await self.push.send_live_activity(token, env, event, state)
         if result is PushResult.INVALID_TOKEN:
@@ -707,191 +749,9 @@ class Relay:
             return {"t": "error", "code": "offline"}
         return None
 
-    # ---- Mailbox (chat messages to phones) ------------------------------
-
-    async def b_mail(self, bridge_id: str, message: dict) -> dict:
-        device_id = valid_id(message.get("to"))
-        mail_id = valid_id(message.get("id"))
-        data = wire.b64e(wire.b64d(message.get("data"), max_length=MAX_E2E_BLOB))
-        device = self.store.device(device_id)
-        if device is None or device.bridge_id != bridge_id:
-            return {"t": "error", "code": "unknown_device"}
-        if not self.mail_rate.allow(bridge_id):
-            return {"t": "error", "code": "rate_limited"}
-        stored = self.store.add_mail(mail_id, device_id, data)
-        if stored == "full":
-            return {"t": "error", "code": "mailbox_full"}
-        if stored == "ok":
-            ws = self.devices.get(device_id)
-            online = ws is not None and await self._send(ws, {"t": "mail", "id": mail_id, "data": data})
-            if message.get("alert") is True:
-                self._spawn(self._alert_unless_acked(device_id, mail_id, data, MAIL_ACK_GRACE if online else 0.0))
-        return {"t": "mailed", "id": mail_id}
-
-    async def _alert_unless_acked(self, device_id: str, mail_id: str, data: str, grace: float) -> None:
-        if grace:
-            await asyncio.sleep(grace)
-        device = self.store.device(device_id)
-        if (
-            self.push is None
-            or device is None
-            or not device.alert_token
-            or device.alert_env not in PUSH_ENVS
-            or not self.store.has_mail(device_id, mail_id)
-            or not self.alert_rate.allow(device_id)
-        ):
-            return
-        result = await self.push.send_alert(device.alert_token, device.alert_env, data)
-        if result is PushResult.INVALID_TOKEN:
-            self.store.set_alert_token(device_id, None, None)
-
-    async def d_mail_fetch(self, device_id: str, message: dict) -> dict:
-        ws = self.devices.get(device_id)
-        batch = self.store.pending_mail(device_id, MAIL_BATCH + 1)
-        for mail_id, data in batch[:MAIL_BATCH]:
-            if ws is None or not await self._send(ws, {"t": "mail", "id": mail_id, "data": data}):
-                break
-        return {"t": "mail_done", "more": len(batch) > MAIL_BATCH}
-
-    async def d_mail_ack(self, device_id: str, message: dict) -> dict:
-        ids = message.get("ids")
-        if not isinstance(ids, list) or not 0 < len(ids) <= MAIL_BATCH:
-            raise ProtocolError("invalid ack")
-        self.store.ack_mail(device_id, [valid_id(item) for item in ids])
-        return {"t": "mail_acked"}
-
-    # ---- Encrypted attachments -----------------------------------------
-
-    def _peer_of(self, identity: str, message: dict) -> tuple[str, str] | None:
-        """(owner bridge, recipient) for an upload by `identity`; a device always sends to its bridge."""
-        if identity in self.bridges:
-            device = self.store.device(valid_id(message.get("to")))
-            return (identity, device.id) if device and device.bridge_id == identity else None
-        device = self.store.device(identity)
-        return (device.bridge_id, device.bridge_id) if device else None
-
-    def _ticket(self, blob_id: str, method: str) -> dict:
-        now = time.monotonic()
-        self.blob_tickets = {k: t for k, t in self.blob_tickets.items() if t.expires > now}
-        token = wire.b64e(secrets.token_bytes(32))
-        self.blob_tickets[token] = BlobTicket(blob_id, method, now + BLOB_TICKET_SECONDS)
-        return {"t": "blob_ticket", "blob_id": blob_id, "token": token, "ttl": int(BLOB_TICKET_SECONDS)}
-
-    async def x_blob_put(self, identity: str, message: dict) -> dict:
-        size = message.get("size")
-        if not isinstance(size, int) or not 0 < size <= BLOB_MAX_BYTES:
-            raise ProtocolError("invalid blob size")
-        peer = self._peer_of(identity, message)
-        if peer is None:
-            return {"t": "error", "code": "unknown_device"}
-        if not self.blob_upload_rate.allow(identity):
-            return {"t": "error", "code": "rate_limited"}
-        blob_id = new_id()
-        if not self.store.add_blob(blob_id, peer[0], identity, peer[1], size):
-            return {"t": "error", "code": "quota_exceeded"}
-        return self._ticket(blob_id, "PUT")
-
-    async def x_blob_get(self, identity: str, message: dict) -> dict:
-        blob_id = valid_id(message.get("blob_id"))
-        blob = self.store.blob(blob_id)
-        if blob is None or blob[2] != identity or not blob[4]:
-            return {"t": "error", "code": "unknown_blob"}
-        if not self.blob_ticket_rate.allow(identity):
-            return {"t": "error", "code": "rate_limited"}
-        return self._ticket(blob_id, "GET")
-
-    async def x_blob_delete(self, identity: str, message: dict) -> dict:
-        blob_id = valid_id(message.get("blob_id"))
-        blob = self.store.blob(blob_id)
-        if blob is not None and identity in (blob[1], blob[2]):
-            self._remove_blob(blob_id)
-        return {"t": "blob_deleted", "blob_id": blob_id}
-
-    def _blob_path(self, blob_id: str) -> Path:
-        return self.blob_dir / valid_id(blob_id)
-
-    def _remove_blob(self, blob_id: str) -> None:
-        self.store.delete_blob(blob_id)
-        self._blob_path(blob_id).unlink(missing_ok=True)
-
-    def _sweep_blobs(self) -> None:
-        for blob_id in self.store.expired_blobs():
-            self._remove_blob(blob_id)
-        known = self.store.blob_ids()
-        cutoff = time.time() - 3600
-        with contextlib.suppress(OSError):
-            for path in self.blob_dir.iterdir():
-                stale_tmp = path.name.startswith(".") and path.stat().st_mtime < cutoff
-                if stale_tmp or (not path.name.startswith(".") and path.name not in known):
-                    path.unlink(missing_ok=True)
-
-    def _redeem(self, request: web.Request, method: str) -> str | None:
-        token = request.headers.get("Authorization", "").removeprefix("Bearer ")
-        ticket = self.blob_tickets.get(token)
-        if ticket is None or ticket.method != method or ticket.expires <= time.monotonic():
-            return None
-        if ticket.blob_id != request.match_info["blob_id"]:
-            return None
-        if method == "PUT":
-            del self.blob_tickets[token]
-        return ticket.blob_id
-
-    async def blob_upload(self, request: web.Request) -> web.Response:
-        ip = self.client_ip(request)
-        if self._locked_out(ip):
-            return _refuse_upload(429)
-        blob_id = self._redeem(request, "PUT")
-        if blob_id is None:
-            self._fail(ip)
-            return _refuse_upload(403)
-        blob = self.store.blob(blob_id)
-        if blob is None or blob[4] or self.blob_transfers >= MAX_BLOB_TRANSFERS:
-            return _refuse_upload(409 if blob else 404)
-        self.blob_transfers += 1
-        tmp = self.blob_dir / f".{blob_id}.{secrets.token_hex(4)}"
-        try:
-            size = await self._receive_blob(request, tmp, blob[3])
-            if size != blob[3]:
-                raise ProtocolError("size mismatch")
-            os.replace(tmp, self._blob_path(blob_id))
-            self.store.complete_blob(blob_id, size)
-        except (ProtocolError, OSError, ConnectionError, TimeoutError) as exc:
-            tmp.unlink(missing_ok=True)
-            self._remove_blob(blob_id)
-            log.info("blob upload failed: %s", exc.__class__.__name__)
-            return _refuse_upload(400)
-        finally:
-            self.blob_transfers -= 1
-        return web.json_response({"blob_id": blob_id, "size": size})
-
-    @staticmethod
-    async def _receive_blob(request: web.Request, path: Path, limit: int) -> int:
-        size = 0
-        with open(path, "xb") as handle:  # noqa: ASYNC230 - small chunks to local disk
-            os.chmod(path, 0o600)
-            while chunk := await asyncio.wait_for(request.content.read(BLOB_CHUNK), 60):
-                size += len(chunk)
-                if size > limit:
-                    raise ProtocolError("blob too large")
-                handle.write(chunk)
-        return size
-
-    async def blob_download(self, request: web.Request) -> web.StreamResponse:
-        ip = self.client_ip(request)
-        if self._locked_out(ip):
-            return web.Response(status=429)
-        blob_id = self._redeem(request, "GET")
-        if blob_id is None:
-            self._fail(ip)
-            return web.Response(status=403)
-        path = self._blob_path(blob_id)
-        if not path.exists():
-            return web.Response(status=404)
-        return web.FileResponse(path, headers={"Content-Type": "application/octet-stream", "Cache-Control": "no-store"})
-
     async def x_turn(self, identity: str, message: dict) -> dict:
         if not self.turn_secret or not self.config.turn_urls:
             return {"t": "error", "code": "turn_disabled"}
-        if not self.turn_rate.allow(identity):
+        if not self._allow(self.turn_rate, identity, "turn"):
             return {"t": "error", "code": "rate_limited"}
         return {"t": "turn", **turn.credentials(self.turn_secret, self.config.turn_urls, self.config.turn_ttl)}

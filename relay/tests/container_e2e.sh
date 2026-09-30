@@ -72,8 +72,15 @@ check "re-run install is idempotent (keeps pin + secret)" "
   [[ \$(grep tls_pin /etc/hermescall-relay/relay.toml) == \"\$PIN\" && \$(cat /etc/hermescall-relay/turn_secret) == \"\$SEC\" ]] &&
   hermescall-relay bridges | grep -q 'devices=0'"
 check "update keeps data" "/opt/hermescall-relay/relay/install.sh update >/root/update.log 2>&1 && hermescall-relay bridges | grep -q paired"
+# A host that had no /etc/nftables.conf before the relay: nothing to restore, and the relay's
+# default-drop table must still go (it would otherwise keep blocking every other service).
+check "uninstall without an earlier nftables.conf removes the firewall table" "
+  rm -f /etc/nftables.conf.hermescall-backup &&
+  /opt/hermescall-relay/relay/install.sh uninstall >/root/uninstall1.log 2>&1 &&
+  ! nft list table inet hermescall >/dev/null 2>&1 && ! grep -q 'table inet hermescall' /etc/nftables.conf &&
+  [[ -s /var/lib/hermescall-relay/relay.db ]]"
 check "uninstall --purge removes everything" "
-  /opt/hermescall-relay/relay/install.sh uninstall --purge >/root/uninstall.log 2>&1 &&
+  /root/hc/relay/install.sh uninstall --purge >/root/uninstall.log 2>&1 &&
   [[ ! -e /opt/hermescall-relay && ! -e /etc/hermescall-relay && ! -e /etc/systemd/system/hermescall-relay.service ]] &&
   ! systemctl is-active -q hermescall-turn"
 

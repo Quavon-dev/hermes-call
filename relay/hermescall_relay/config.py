@@ -1,4 +1,3 @@
-import ipaddress
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -6,9 +5,17 @@ from pathlib import Path
 from hermescall_common.codes import parse_authority, validate_pin
 from hermescall_common.errors import ProtocolError
 
+from . import limits as limits_mod
+from . import logs
+from .limits import Limits
+from .netutil import Network, parse_networks
+
 DEFAULT_CONFIG = Path("/etc/hermescall-relay/relay.toml")
 # Push gateway run by the app's publisher; used when the relay has no APNs key of its own.
 DEFAULT_PUSH_GATEWAY = "https://hermes-push.quavon.de"
+# TURN credentials must outlive the longest call (the bridge ends calls after 60 minutes) plus
+# ringing and ICE restarts: a client that re-allocates mid-call reuses the credentials it has.
+DEFAULT_TURN_TTL = 5400
 
 
 class ConfigError(Exception):
@@ -37,8 +44,14 @@ class Config:
     push_gateway: str | None = None
     # A reverse proxy in front (NPM, Traefik, ...): whose X-Forwarded-For is believed. Loopback (the
     # installer's own Caddy) is always trusted when trust_proxy is on.
-    trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = ()
+    trusted_proxies: tuple[Network, ...] = ()
     secrets_dir: Path = field(default=Path("/etc/hermescall-relay"))
+    limits: Limits = field(default_factory=Limits)
+    # Prometheus /metrics on its own listener (0 = off); never on the public port.
+    metrics_host: str = "127.0.0.1"
+    metrics_port: int = 0
+    log_level: str = "info"
+    log_format: str = "text"
 
     @property
     def authority(self) -> str:
@@ -75,12 +88,36 @@ def _push_gateway(section: dict | None, apns: ApnsConfig | None) -> str | None:
     return url
 
 
+def _turn_urls(values: object) -> tuple[str, ...]:
+    if not isinstance(values, list) or not all(isinstance(url, str) for url in values):
+        raise ValueError("turn.urls must be a list of strings")
+    if any(not url.startswith(("turn:", "turns:", "stun:")) for url in values):
+        raise ValueError("turn.urls must be turn:, turns: or stun: URLs")
+    return tuple(values)
+
+
+def _turn_ttl(value: object) -> int:
+    ttl = int(value)  # type: ignore[call-overload]
+    if not 60 <= ttl <= 86_400:
+        raise ValueError("turn.ttl must be between 60 and 86400 seconds")
+    return ttl
+
+
+def _port(value: object) -> int:
+    port = int(value)  # type: ignore[call-overload]
+    if not 0 <= port <= 65535:
+        raise ValueError("port out of range")
+    return port
+
+
 def load(path: Path = DEFAULT_CONFIG) -> Config:
     try:
         raw = tomllib.loads(path.read_text())
         host, port = parse_authority(str(raw["authority"]))
         turn = raw.get("turn", {})
         apns = _apns(raw.get("apns"))
+        log_level, log_format = logs.validate(raw.get("log_level", "info"), raw.get("log_format", "text"))
+        metrics = raw.get("metrics", {})
         return Config(
             host=host,
             port=port,
@@ -89,12 +126,17 @@ def load(path: Path = DEFAULT_CONFIG) -> Config:
             listen_port=int(raw.get("listen_port", 8743)),
             db_path=Path(raw.get("db_path", "/var/lib/hermescall-relay/relay.db")),
             trust_proxy=bool(raw.get("trust_proxy", True)),
-            turn_urls=tuple(str(url) for url in turn.get("urls", [])),
-            turn_ttl=int(turn.get("ttl", 600)),
+            turn_urls=_turn_urls(turn.get("urls", [])),
+            turn_ttl=_turn_ttl(turn.get("ttl", DEFAULT_TURN_TTL)),
             apns=apns,
             push_gateway=_push_gateway(raw.get("push_gateway"), apns),
-            trusted_proxies=tuple(ipaddress.ip_network(str(net)) for net in raw.get("trusted_proxies", [])),
+            trusted_proxies=parse_networks(raw.get("trusted_proxies", [])),
             secrets_dir=Path(raw.get("secrets_dir", "/etc/hermescall-relay")),
+            limits=limits_mod.parse(raw.get("limits")),
+            metrics_host=str(metrics.get("listen_host", "127.0.0.1")),
+            metrics_port=_port(metrics.get("port", 0)),
+            log_level=log_level,
+            log_format=log_format,
         )
-    except (OSError, KeyError, ValueError, ProtocolError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, AttributeError, KeyError, TypeError, ValueError, ProtocolError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"invalid config {path}: {exc}") from exc

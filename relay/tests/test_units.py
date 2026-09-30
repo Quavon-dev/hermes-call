@@ -196,13 +196,18 @@ def test_failure_limiter_prune_keeps_recent_lockouts() -> None:
     assert limiter.is_locked("victim", now=50)
 
 
-def test_unauthenticated_connections_leave_room_for_paired_clients() -> None:
+def test_unauthenticated_connections_leave_room_for_paired_clients(tmp_path) -> None:
     from hermescall_relay import server
+    from hermescall_relay.store import Store
 
-    relay = server.Relay(None, None, None, None)  # type: ignore[arg-type]
-    admitted = sum(relay._admit(f"10.0.{n // 250}.{n % 250}") for n in range(server.MAX_UNAUTHENTICATED + 50))
-    assert admitted == server.MAX_UNAUTHENTICATED
-    assert relay.connections < server.MAX_CONNECTIONS
+    from .conftest import make_config
+
+    config = make_config(tmp_path)
+    relay = server.Relay(config, Store(config.db_path), None, None)
+    limits = config.limits
+    admitted = sum(relay._admit(f"10.0.{n // 250}.{n % 250}") for n in range(limits.max_unauthenticated + 50))
+    assert admitted == limits.max_unauthenticated
+    assert relay.connections < limits.max_connections
 
 
 def test_client_ip_behind_an_external_proxy(tmp_path) -> None:

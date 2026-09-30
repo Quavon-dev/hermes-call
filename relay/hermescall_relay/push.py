@@ -132,6 +132,13 @@ def live_activity_payload(event: str, content_state: dict, now: int | None = Non
     return json.dumps({"aps": aps}, separators=(",", ":"), ensure_ascii=False).encode()
 
 
+def load_apns_key(pem: bytes) -> ec.EllipticCurvePrivateKey:
+    key = serialization.load_pem_private_key(pem, password=None)
+    if not isinstance(key, ec.EllipticCurvePrivateKey) or key.curve.name != "secp256r1":
+        raise ValueError("APNs key must be an ES256 (.p8) key")
+    return key
+
+
 class DirectApns(_Retrying):
     def __init__(
         self,
@@ -141,11 +148,8 @@ class DirectApns(_Retrying):
         retry_delays: tuple[float, ...] = RETRY_DELAYS,
     ) -> None:
         super().__init__(retry_delays)
-        key = serialization.load_pem_private_key(key_pem, password=None)
-        if not isinstance(key, ec.EllipticCurvePrivateKey) or key.curve.name != "secp256r1":
-            raise ValueError("APNs key must be an ES256 (.p8) key")
         self._config = config
-        self._key = key
+        self._key = load_apns_key(key_pem)
         self._client = client or httpx.AsyncClient(http2=True, timeout=10.0)
         self._jwt = ""
         self._jwt_issued = 0.0
