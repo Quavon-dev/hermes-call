@@ -1,0 +1,48 @@
+name: Bridge end-to-end
+
+# bridge/tests/container_e2e.sh: a relay container (Debian 12) and an Ubuntu 24.04 container with
+# the real bridge install (faster-whisper, WebRTC), a fake Hermes and a Kokoro-FastAPI container for
+# speech; the test client calls the agent and the agent calls the phone, both transcribed back.
+# Heavy (model downloads, several GB of images), so: weekly, by hand, and on pull requests that touch
+# the bridge installer or its pinned dependencies.
+on:
+  pull_request:
+    paths:
+      - "bridge/install.sh"
+      - "bridge/deploy/**"
+      - "bridge/requirements.lock"
+      - "bridge/tests/container_e2e.sh"
+      - ".github/workflows/bridge-e2e.yml"
+  schedule:
+    - cron: "37 3 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Kokoro-FastAPI (Apache-2.0), CPU build, pinned by digest (tag v0.9.0).
+  KOKORO_IMAGE: ghcr.io/remsky/kokoro-fastapi-cpu@sha256:ee3111d6a2c903ed62f3b4fa19543c6901205ed39fce3c177e895b34a8386b9c
+
+jobs:
+  e2e:
+    name: Relay + bridge + Kokoro in systemd containers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Free disk space for the images and models
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - name: Start Kokoro
+        run: |
+          docker run -d --name kokoro -p 127.0.0.1:8880:8880 "$KOKORO_IMAGE"
+          for _ in $(seq 90); do
+            curl -fsS -m 3 http://127.0.0.1:8880/health >/dev/null 2>&1 && exit 0
+            sleep 5
+          done
+          docker logs --tail 50 kokoro
+          exit 1
+      - run: ./bridge/tests/container_e2e.sh
+      - name: Kokoro log
+        if: failure()
+        run: docker logs --tail 100 kokoro

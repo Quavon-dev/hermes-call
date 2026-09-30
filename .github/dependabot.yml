@@ -1,0 +1,41 @@
+# Weekly update proposals. Security updates come as soon as an advisory is published (enable
+# "Dependabot security updates" in Settings > Code security). Not covered here, update by hand:
+# bridge/requirements.lock (uv pip compile, see bridge/requirements.in), the WebRTC package pinned in
+# ios/project.yml, and the Hermes Agent / Kokoro pins in .github/workflows.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      python-dev:
+        dependency-type: development
+      python:
+        dependency-type: production
+    commit-message:
+      prefix: chore
+
+  - package-ecosystem: swift
+    directory: /ios/HermesCallKit
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+
+  - package-ecosystem: docker
+    directory: /relay
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore

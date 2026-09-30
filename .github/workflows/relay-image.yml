@@ -1,24 +1,33 @@
 name: Relay image
 
 # Builds ghcr.io/quavon-dev/hermes-call-relay (push gateway by default, relay with another
-# command; relay/Dockerfile) when the relay or common code changes. On the main repository it then
-# pins the new digest in Quavon's cluster repository, which rolls out hermes-push.quavon.de.
+# command; relay/Dockerfile):
+#   push to main    :latest and :sha-<commit>
+#   tag v1.2.3      :1.2.3, :1.2 and :sha-<commit> (:latest stays with main)
+# Every image is scanned with Trivy before it is pushed (a CRITICAL finding that has a fix fails the
+# run), signed keylessly with cosign (Sigstore, this workflow's GitHub identity) and carries SBOM and
+# provenance attestations. Deployments pin the digest from the job summary; this workflow holds no
+# credentials for any deployment repository (docs/releasing.md, "Container image").
 on:
   push:
     branches: [main]
+    tags: ["v*"]
     paths:
       - "relay/hermescall_relay/**"
       - "common/hermescall_common/**"
       - "relay/Dockerfile"
       - ".dockerignore"
       - ".github/workflows/relay-image.yml"
+  schedule:
+    # Weekly rebuild: picks up Debian security updates of the python3-* packages.
+    - cron: "41 4 * * 2"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: relay-image
+  group: relay-image-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -31,7 +40,7 @@ jobs:
     timeout-minutes: 15
     container: debian:13
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Distribution packages (the image's versions)
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -42,53 +51,112 @@ jobs:
       - run: PYTHONPATH=common:relay python3 -m pytest -q -p no:cacheprovider relay/tests
 
   image:
-    name: Build and push
+    name: Build, scan, push and sign
     needs: test
     if: github.repository == 'quavon-dev/hermes-call'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: read
       packages: write
+      id-token: write # cosign keyless signing
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Tag must match the relay version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(sed -n 's/^VERSION = "\(.*\)"$/\1/p' relay/hermescall_relay/version.py)
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME but relay version $version"; exit 1; }
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - name: Tags and labels
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+          labels: |
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.description=Hermes Call push gateway and relay
+
+      - name: Build for the scan (amd64, not pushed)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: relay/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: hermes-call-relay:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trivy (fail on CRITICAL with a fix)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: hermes-call-relay:scan
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+      - name: Trivy report (HIGH and CRITICAL, informational)
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: hermes-call-relay:scan
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+          format: table
+          skip-setup-trivy: true
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: relay/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          provenance: true
+          provenance: mode=max
           sbom: true
-          tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:sha-${{ github.sha }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.licenses=MIT
-            org.opencontainers.image.description=Hermes Call push gateway and relay
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
 
-      - name: Pin the digest in the cluster repository
-        # GHCR_TOKEN: a token with write access to Quavon-dev/k8s, as in Quavon's other app
-        # repositories (see that repository's README, "Digests aus der Pipeline"). Without it the
-        # image is still published and the cluster keeps its current digest.
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - name: Sign the image (keyless)
         env:
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "$IMAGE@$DIGEST"
+
+      - name: Digest for deployments
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
         run: |
-          if [ -z "$GHCR_TOKEN" ]; then
-            echo "::warning::GHCR_TOKEN not set: $IMAGE@$DIGEST published but not pinned in Quavon-dev/k8s"
-            exit 0
-          fi
-          git clone -q --depth 20 "https://x-access-token:${GHCR_TOKEN}@github.com/Quavon-dev/k8s.git" "$RUNNER_TEMP/k8s"
-          "$RUNNER_TEMP/k8s/tools/pin-digest.sh" hermes-call "$IMAGE@$DIGEST"
+          {
+            echo "### $IMAGE"
+            echo
+            echo "Pin this digest in your deployment:"
+            echo
+            echo '```'
+            echo "$IMAGE@$DIGEST"
+            echo '```'
+            echo
+            echo "Tags: $(echo "$TAGS" | tr '\n' ' ')"
+            echo
+            echo "Verify the signature before you deploy it:"
+            echo
+            echo '```'
+            echo "cosign verify $IMAGE@$DIGEST \\"
+            echo "  --certificate-identity-regexp '(?i)^https://github\.com/quavon-dev/hermes-call/\.github/workflows/relay-image\.yml@refs/(heads/main|tags/v.*)$' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"

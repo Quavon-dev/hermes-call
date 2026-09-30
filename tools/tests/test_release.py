@@ -91,12 +91,9 @@ def test_build_signs_sums_and_manifest(repo: Path, tmp_path: Path) -> None:
     signers = tmp_path / "allowed"
     signers.write_text(f"release@quavon {public}\n")
     for name, namespace in (("SHA256SUMS", "hermes-call-release"), ("MANIFEST", "hermes-call-manifest")):
+        command = ["ssh-keygen", "-Y", "verify", "-f", str(signers), "-I", "release@quavon", "-n", namespace]
         with open(dist / name) as data:
-            verified = subprocess.run(
-                ["ssh-keygen", "-Y", "verify", "-f", str(signers), "-I", "release@quavon", "-n", namespace,
-                 "-s", str(dist / f"{name}.sig")],
-                stdin=data, capture_output=True,
-            )
+            verified = subprocess.run([*command, "-s", str(dist / f"{name}.sig")], stdin=data, capture_output=True)
         assert verified.returncode == 0, verified.stderr
 
 

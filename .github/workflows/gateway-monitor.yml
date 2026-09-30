@@ -1,0 +1,31 @@
+name: Push gateway monitor
+
+# External smoke check of the published push gateway (tools/gateway_smoke.py): /healthz, an
+# unsigned push must be refused with 401, and the TLS certificate must be valid for 14 more days.
+# A failed scheduled run makes GitHub e-mail the maintainers (Settings > Notifications > Actions).
+# GitHub pauses schedules after 60 days without repository activity; re-enable it then.
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gateway-monitor
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: hermes-push.quavon.de
+    if: github.repository == 'quavon-dev/hermes-call'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          sparse-checkout: tools/gateway_smoke.py
+          sparse-checkout-cone-mode: false
+      # One retry after a minute, so a single dropped connection does not page anyone.
+      - run: python3 tools/gateway_smoke.py https://hermes-push.quavon.de || { sleep 60; python3 tools/gateway_smoke.py https://hermes-push.quavon.de; }

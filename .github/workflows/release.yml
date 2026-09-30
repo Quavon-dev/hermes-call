@@ -1,0 +1,87 @@
+name: Release (relay and bridge)
+
+# On a v* tag (e.g. v0.7.0): test, build the release with tools/release.sh, attest its provenance
+# and create a DRAFT GitHub release. Nothing is published by this workflow: the owner signs
+# SHA256SUMS and MANIFEST with the offline release key (tools/release.sh --sign), uploads the two
+# .sig files and publishes the draft (docs/releasing.md). If the repository secret
+# RELEASE_SSH_SIGNING_KEY is set, this workflow signs instead (weaker: the key then lives in GitHub).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Tests
+    if: github.repository == 'quavon-dev/hermes-call'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libsodium-dev shellcheck
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: git ls-files -z '*.sh' | xargs -0 shellcheck -e SC1090,SC1091
+      - run: uv run pytest -q bridge/tests common/tests relay/tests tools/tests
+
+  draft:
+    name: Build and draft the GitHub release
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: write # the draft release
+      id-token: write # provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0 # tags, and the changelog between them
+      - name: Build (tools/release.sh checks tag format and versions)
+        run: tools/release.sh "$GITHUB_REF_NAME"
+      - name: Sign with the key from the secret, if there is one
+        env:
+          RELEASE_SSH_SIGNING_KEY: ${{ secrets.RELEASE_SSH_SIGNING_KEY }}
+        run: |
+          if [ -z "$RELEASE_SSH_SIGNING_KEY" ]; then
+            echo "::notice::no RELEASE_SSH_SIGNING_KEY: the draft is unsigned; sign it offline (docs/releasing.md)"
+            exit 0
+          fi
+          umask 077
+          printf '%s\n' "$RELEASE_SSH_SIGNING_KEY" >"$RUNNER_TEMP/release-key"
+          tools/release.sh --sign dist "$RUNNER_TEMP/release-key"
+          rm -f "$RUNNER_TEMP/release-key"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: dist/hermes-call.tar.gz
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous=$(git tag --list 'v*' --sort=-v:refname | grep -vx "$GITHUB_REF_NAME" | head -1)
+          {
+            echo "Relay, bridge and Hermes plugin ${GITHUB_REF_NAME#v}."
+            echo
+            echo "Install and update with the signed installers (they verify MANIFEST.sig against the pinned"
+            echo "release key and refuse older versions): see README.md. Provenance of the tarball:"
+            echo
+            echo '```'
+            echo "gh attestation verify hermes-call.tar.gz --repo $GITHUB_REPOSITORY"
+            echo '```'
+            echo
+            echo "Changes:"
+            git log --format='- %s' ${previous:+$previous..}"$GITHUB_REF_NAME" -- relay bridge common hermes-integration proxmox-helper | head -80
+          } >"$RUNNER_TEMP/notes.md"
+          files=(dist/hermes-call.tar.gz dist/SHA256SUMS dist/MANIFEST)
+          [ ! -f dist/MANIFEST.sig ] || files+=(dist/SHA256SUMS.sig dist/MANIFEST.sig)
+          gh release create "$GITHUB_REF_NAME" "${files[@]}" --draft --verify-tag \
+            --title "Hermes Call ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md"

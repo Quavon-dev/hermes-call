@@ -1,10 +1,15 @@
 name: CI
 
+# Third-party actions are pinned by commit SHA (the tag in the comment); Dependabot proposes updates.
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Weekly: the distribution packages (relay-distro) and the installer containers change under us
+    # even when this repository does not. Only the Linux jobs run on the schedule.
+    - cron: "17 5 * * 1"
 
 permissions:
   contents: read
@@ -19,20 +24,47 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0 # the SPDX check compares with the pull request's base
       - name: Install libsodium and shellcheck
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libsodium-dev shellcheck
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - name: shellcheck installers and tools
         # SC1090/SC1091: the Proxmox helper sources the community-scripts framework at run time.
         run: git ls-files -z '*.sh' | xargs -0 shellcheck -e SC1090,SC1091
-      # Skips cleanly here: bridge/tests/test_chat.py's Hermes adapter smoke test (needs a local
-      # Hermes checkout in ~/.hermes/hermes-agent). Kokoro, Whisper models and Docker are only used by
-      # bridge/tests/container_e2e.sh and relay/tests/container_e2e.sh, which CI does not run.
-      - run: uv run pytest -q bridge/tests common/tests relay/tests tools/tests
+      - name: SPDX header on new source files
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: uv run python tools/check_spdx.py --added-since "$BASE_SHA"
+      # The Hermes adapter smoke test in bridge/tests/test_chat.py skips here (no Hermes checkout);
+      # the hermes-adapter job runs it against a pinned Hermes. Docker installer tests: container-e2e.
+      # Coverage floor: measured 88.7 % on 2026-09-30 without the Hermes smoke test; the goal is 80 %+
+      # for every package, raise the floor when coverage grows.
+      - name: pytest with coverage
+        run: >
+          uv run pytest -q bridge/tests common/tests relay/tests tools/tests
+          --cov=hermescall_common --cov=hermescall_relay --cov=hermescall_bridge
+          --cov-report=term --cov-fail-under=88
+
+  dependency-audit:
+    name: Dependency audit (pip-audit, OSV)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - name: Development lock (uv.lock)
+        run: |
+          uv export --locked --all-groups --no-emit-workspace --format requirements-txt -o "$RUNNER_TEMP/dev-requirements.txt"
+          uvx pip-audit==2.10.1 --vulnerability-service osv --disable-pip --require-hashes \
+            -r "$RUNNER_TEMP/dev-requirements.txt"
+      - name: Bridge install lock (bridge/requirements.lock, what bridge/install.sh installs)
+        run: uvx pip-audit==2.10.1 --vulnerability-service osv --disable-pip --require-hashes -r bridge/requirements.lock
 
   relay-distro:
     name: Relay on ${{ matrix.image }} packages
@@ -46,7 +78,7 @@ jobs:
       matrix:
         image: ["debian:12", "debian:13", "ubuntu:24.04"]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Distribution packages
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -56,30 +88,47 @@ jobs:
           python3-pytest python3-pytest-asyncio python3-pytest-aiohttp
       - run: PYTHONPATH=common:relay python3 -m pytest -q -p no:cacheprovider relay/tests
 
+  container-e2e:
+    name: Relay installer in a systemd container (${{ matrix.image }})
+    # relay/tests/container_e2e.sh: the real install.sh in a privileged systemd container (Caddy,
+    # coturn, nftables, update, rollback, backup/restore), then smoke_deployed.py through TLS.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:12", "ubuntu:24.04"]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - run: docker version --format '{{.Server.Version}}' && stat -fc %T /sys/fs/cgroup
+      - run: ./relay/tests/container_e2e.sh "${{ matrix.image }}"
+
   swift-core:
     name: Swift core (HermesCallKit)
+    if: github.event_name != 'schedule'
     runs-on: macos-26
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - run: xcodebuild -version
       # InteropTests start the real Python relay + bridge from .venv (they silently pass without it),
       # so install the Python side too.
       - run: brew install libsodium
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
       - run: uv sync --locked
       - name: swift test
         working-directory: ios/HermesCallKit
         run: swift test
 
-  ios-build:
-    name: iOS app build (simulator, unsigned)
+  ios-app:
+    name: iOS app unit tests (simulator, unsigned)
     # Needs Xcode 26+ (iOS/watchOS 26 SDK, Liquid Glass APIs); macos-26 ships it as the default Xcode.
+    # Builds the whole scheme (app, extensions, watch app) for testing, then runs HermesCallTests.
+    if: github.event_name != 'schedule'
     runs-on: macos-26
-    continue-on-error: false
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Check Xcode version
         run: |
           xcodebuild -version
@@ -91,10 +140,56 @@ jobs:
       - name: Generate project
         working-directory: ios
         run: xcodegen generate
-      - name: Build
+      - name: Pick a simulator
+        run: python3 tools/pick_simulator.py >>"$GITHUB_ENV"
+      - name: Unit tests
         working-directory: ios
         run: >
-          xcodebuild -project HermesCall.xcodeproj -scheme HermesCall
-          -destination 'generic/platform=iOS Simulator'
+          xcodebuild test -project HermesCall.xcodeproj -scheme HermesCall
+          -destination "platform=iOS Simulator,id=$SIMULATOR_ID"
+          -only-testing:HermesCallTests -resultBundlePath "$RUNNER_TEMP/unit.xcresult"
           CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
-          build
+      - name: Keep the result bundle
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unit-tests-xcresult
+          path: ${{ runner.temp }}/unit.xcresult
+          retention-days: 7
+
+  ios-ui:
+    name: iOS UI tests (demo agent, simulator)
+    # HermesCallUITests drive the offline demo agent (onboarding, consent, chat, call, settings);
+    # slower than the unit tests, so a separate job. AppStoreScreenshots skip without APPSTORE_SHOTS.
+    if: github.event_name != 'schedule'
+    runs-on: macos-26
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - run: brew install xcodegen
+      - name: Metal toolchain (Presence.metal)
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate project
+        working-directory: ios
+        run: xcodegen generate
+      - name: Pick a simulator
+        run: python3 tools/pick_simulator.py >>"$GITHUB_ENV"
+      - name: UI tests
+        working-directory: ios
+        env:
+          TEST_RUNNER_SCREENSHOT_DIR: ${{ runner.temp }}/ui-screens
+        run: >
+          xcodebuild test -project HermesCall.xcodeproj -scheme HermesCall
+          -destination "platform=iOS Simulator,id=$SIMULATOR_ID"
+          -only-testing:HermesCallUITests -resultBundlePath "$RUNNER_TEMP/ui.xcresult"
+          CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
+      - name: Keep screenshots and the result bundle
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ui-tests
+          path: |
+            ${{ runner.temp }}/ui-screens
+            ${{ runner.temp }}/ui.xcresult
+          retention-days: 7
+          if-no-files-found: ignore
