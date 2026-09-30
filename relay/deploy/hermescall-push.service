@@ -1,0 +1,48 @@
+[Unit]
+Description=Hermes Call push gateway (APNs for relays without their own key)
+Documentation=https://github.com/quavon-dev/hermes-call
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermescall-push
+Group=hermescall-push
+ExecStart=/usr/bin/python3 -m hermescall_relay.gateway serve
+Environment=PYTHONPATH=/opt/hermescall-push/common:/opt/hermescall-push/relay
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=on-failure
+RestartSec=3
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateUsers=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+UMask=0077
+MemoryMax=384M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

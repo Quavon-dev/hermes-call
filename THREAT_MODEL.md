@@ -1,0 +1,82 @@
+# Threat model
+
+Status: relay and pairing (M1), bridge and call signaling (M2), iOS app (M3).
+The push flow is added with M4; the full review is M5. Chat is M6; phone context
+queries and presentations (result cards) are M7. Task progress with Live Activity pushes,
+place reminders, "look at this" call images and spoken chat replies are M9.
+
+## Assets
+
+1. Call audio and conversation content.
+2. Device and bridge private keys; the APNs key (push gateway or own relay), the relay's push
+   gateway key and TURN secret.
+3. The ability to talk to (and so steer) the agent (Hermes).
+4. The home network behind the bridge.
+5. Metadata: who calls when, for how long, from where.
+6. Personal data on the phone the agent may ask for (M7): location, calendar,
+   reminders, contacts, health summary, Home accessories, clipboard, picked photos/files.
+
+## Trust boundaries
+
+```
+iPhone ──TLS── Relay (untrusted for content) ──TLS── hermes-call-bridge (trusted, home)
+   └──── E2E: CPace pairing → long-term keys → encrypted signaling → DTLS-SRTP ────┘
+Relay ──HTTP/2 TLS── Apple APNs (sees token + timing)          own APNs key
+Relay ──TLS── push gateway (hermes-push.quavon.de) ── Apple APNs   default; sees token + timing
+```
+
+The relay is treated as **honest-but-curious or compromised**: all security
+properties that matter must hold even if it is fully controlled by an attacker.
+
+## Adversaries and mitigations
+
+| Adversary | Goal | Mitigation | Residual |
+|---|---|---|---|
+| Network attacker (Wi-Fi, ISP) | read/alter traffic | TLS to relay; E2E encryption above it; DTLS-SRTP for media | traffic analysis of timing/volume |
+| Relay operator / compromised relay | read calls, impersonate a side, pair its own device | relay only forwards CPace messages and ciphertext; device keys are authorized by the bridge; media keys are authenticated in E2E signaling; CPace gives the relay one online guess per attempt, 3 attempts per code | sees IPs, times, durations, packet sizes, number of devices, push tokens; can deny service; can make a phone ring briefly (call is ended at once when E2E auth fails) |
+| TLS man-in-the-middle on first contact (self-signed relay, typed code) | pair with bridge/device | observed SPKI pin is bound into CPace associated data → key agreement fails | none beyond DoS |
+| Online code guessing | pair an attacker device | 25-bit typed secret, 3 attempts per code (enforced by the relay **and** by the bridge, so a malicious relay gets no extra guesses), one handshake per code at a time, self-signed relays never trusted silently (explicit key confirmation), 10-min expiry, per-IP (/64) lockout | ≈ 3/2^25 success per issued code |
+| Offline code cracking from captured traffic | recover code/keys | CPace (balanced PAKE): transcripts do not allow offline guessing | none |
+| TURN abuse | free relay, scan/reach LAN | ephemeral HMAC credentials only for paired identities; private/loopback/CGNAT peer ranges denied (incl. IPv4-mapped IPv6 and 6to4); no TCP relay; quota + bandwidth cap; coturn refuses to start without its config | bandwidth abuse by a paired but malicious device (revocable; credentials are not identity-bound, so issued ones stay valid up to their 10-minute TTL); credentials rate-limited to 6 per minute per identity |
+| Push spam | ring the phone | only the relay holding the .p8 key, or the push gateway, can push; the gateway accepts only requests signed by a relay key, only the three fixed payload shapes, and limits each push token to 10 rings/min across all relays (plus per-relay and per-IP limits, 10 new relay keys per IP per hour); ring rate-limited (10/min per bridge); the app shows the ring (iOS requires it) but ends it unless a paired bridge confirms the call id over E2E within 15 s | a compromised relay can cause short rings |
+| Apple / APNs | learn content | payload is a random 128-bit call id only | Apple sees token, bundle, timing |
+| Push gateway operator / compromised gateway | learn content, ring phones, track users | receives only what Apple would get (token, env, call id, E2E-encrypted chat alert, checked Live Activity fields) plus the relay's public key and IP; stores nothing, no access logs; a ring is ended unless the bridge confirms it over E2E; not in the call, chat or pairing path | sees which relay pushes to which token and when; can drop pushes (calls then ring only while the app is open); owners who object run their own build with their own key or `--no-push-gateway` |
+| Local attacker on relay host | steal secrets | secrets 600, owned by the consuming service user; services unprivileged with systemd sandboxing; relay listens on loopback; Caddy admin API off | root on relay host = relay compromise (see above) |
+| Log exposure | tokens/keys/content in logs | logs carry event names, 6-char id prefixes, APNs status only; Caddy access log off | coturn logs peer IPs and ephemeral TURN usernames (metadata) |
+| Relay forging call signaling | inject offers, fake rings, hang up calls, approve commands | every call message is crypto_box-authenticated between the bridge and one paired device, binds sender, recipient and a strictly increasing timestamp (the newest one per peer is persisted, so restarts do not reopen a replay window); relay-supplied sender ids are only routing hints | relay can drop or delay messages |
+| Another paired device | take over or listen to someone else's call | calls, hangups, push-to-talk and approvals are accepted only from the device of the active call/ring | – |
+| Voice prompt injection (TV, bystander, recording) | make the agent run dangerous tools | Hermes' own approval policy stays active; approvals travel only as explicit E2E messages from the calling device (once/deny, never "always"); default deny after 60 s or on hang-up | anyone holding the unlocked (or lock-screen-answered) phone can talk to the agent |
+| Local process in the Hermes container | ring the phone, pair devices | control API bound to 127.0.0.1 with a 256-bit bearer token in a 0600 file; no CORS, JSON-only | root in the container; the Hermes user can ring the phone: its `.env` holds a separate ring-only token (`POST /v1/calls`; everything else 403), never the admin token |
+| Prompt injection into Hermes (web page, e-mail, file) | make the agent phone the owner, put misleading text in the call | `call_owner` can only ring the owner's own paired phones and speak text; rings are rate-limited by the relay (10/min) and the bridge (one ring or call at a time); nothing on the call bypasses approvals | nuisance calls and spoken misinformation until the owner hangs up or disables the plugin (`hermes plugins disable hermes-call`) |
+| Home IP exposure | learn where the agent lives | bridge uses TURN relay candidates only (enforced in code, tested), never STUN; phone sees only the relay | relay operator sees the home IP (it is the TURN client) |
+| Stolen or lost iPhone | use the pairing | device keys only in the Keychain (after first unlock, this device only, not in backups); approvals need Face ID/passcode; revoke per device on the bridge (`hermes-call-bridge device revoke`), which also ends an active call | anyone with the unlocked phone (or answering on the lock screen) can talk to the agent |
+| App-side network attacker | redirect the app to a fake relay | the relay's TLS key is pinned per profile (or WebPKI), a wrong key shows the relay as offline; pairing binds the key into CPace | – |
+| Connection flood (many addresses) | lock paired clients out of the relay | unauthenticated sockets capped at 200 of 500, per-/64 and per-/48 lockouts, Caddy header timeout, per-session pairing message cap | a large botnet can still slow down pairing |
+| Prompt injection into Hermes → phone context (M7) | exfiltrate the owner's location, calendar, contacts, clipboard … via the agent | every capability is **No** until the owner changes it on the phone; *Ask* shows the capability, what it shares and the agent's stated reason, deny after 60 s; clipboard, photos and files can never be *Yes*; contacts only by a name (≤ 5 matches, never a dump); location is ≈ 1 km unless the agent asks for precise; the phone answers only the listed fields; bridge limits 20 queries / 10 min, 100 / day, 2 open; every request is logged on the phone | with a rule set to *Yes*, an injected agent can read that data and pass it on through its own tools (web, e-mail) — *Yes* means trusting the agent with it; the stated reason may be a lie |
+| Relay or network against phone context | read or forge answers/queries | queries and answers are E2E (mailbox envelope, replay ids); the bridge accepts an answer only from a phone it asked, once, before expiry, and checks it per capability (listed keys, ≤ 16 KiB) | relay sees that a query happened (size, timing) and can drop it |
+| Malicious presentation (M7) | phishing links, tracking the owner's IP, script injection | cards are plain text; links https only (plus `tel:` and Apple Maps for coordinates); the phone never fetches `image_url`: the bridge downloads images (https, public addresses only — checked on every resolved address, no redirects, no proxies, ≤ 5 MiB, 8 s), re-encodes them (JPEG ≤ 512 px, no metadata, decompression-bomb guard) and sends them as encrypted blobs | a card can still show a misleading link the owner chooses to open; the image host sees the **bridge's** IP; place maps load Apple Maps tiles for the shown area |
+| Bridge as SSRF proxy (M7 image fetch) | make the bridge reach the LAN or cloud metadata | resolver drops private, loopback, link-local, CGNAT, multicast and reserved addresses (IPv4-mapped IPv6 unwrapped), IP-literal hosts checked too, `trust_env` off, no redirects | an attacker-chosen public host sees the request |
+| Apple / APNs and Live Activity pushes (M9) | learn what the agent is doing | Live Activity push payloads are **plaintext to Apple** (no notification extension can decrypt them), so they carry only `step`, `total`, `state`, `startedAt` and the generic label "Working…"; the relay rejects any other key and labels over 60 chars; real tool labels ("Searching the web") only if the owner turns on "Show task details on the Lock Screen" (`task_prefs.details`, default off, per phone); tool arguments/previews travel only E2E (`task`); pushes go only to phones that are offline, online phones update locally; the Hermes token can post progress, so the bridge lets only one new turn per 2 s (30 per hour) push at all, and the relay limits each phone to 1 `start` per 30 s (20/hour), 1 `update` per 3 s and 30 `end` per hour | Apple sees that and when the agent works, for how long and how many steps; with details on, which kind of tool |
+| Prompt injection into Hermes → place reminders (M9) | track the owner, plant misleading reminders | `geofence` is No/Ask/Yes like every capability (default No); the phone monitors the region itself and fires a **local** notification; the answer is only `{id, resolved_name}` / `{removed}` / the reminder list, never the phone's location (the bridge rejects any other key); a `{query}` place is resolved on the phone with MapKit near the owner; at most 20 reminders; the agent learns that a reminder fired only if the owner allows it | with *Yes*, an injected agent can add reminders (visible and deletable in Settings); MapKit (Apple) sees the place search and an approximate location; a region event reveals presence at a place to the agent only when allowed |
+| Relay or another device against "look at this" (M9) | see or inject call images | images are E2E blobs (random key inside the E2E message), accepted only from the device of the active call (1/s, 30 per call; at most 40 messages per minute per device are even looked at), deleted at the relay right after download, re-encoded (JPEG ≤ 1280 px, no metadata) and passed to Hermes in memory; nothing is written to disk on the bridge | the relay sees blob sizes and timing; Hermes and its model provider see the image like any other input |
+| Apple Watch (M9) | read messages or act as the owner from the watch | the watch app holds no relay keys and talks only to the paired iPhone over WatchConnectivity (Apple-encrypted between the paired devices); it can ask the iPhone to start a call or send a message; message text reaches it only when "Show message text in notifications" is on | anyone wearing the owner's unlocked watch can start a call or send a message, as on the phone |
+| CarPlay (M9) | read messages in the car | calls appear through CallKit (no extra data); the optional CarPlay app (behind an Apple entitlement, off by default) shows only short titles and reads messages aloud on tap | passengers hear what is read aloud |
+| Spoken chat replies (M9) | – | the reply audio is synthesized by the bridge's own TTS, sent as an E2E blob like any attachment; no third party involved | none beyond the existing chat |
+| Supply chain | malicious dependency | relay uses only Debian/Ubuntu packages (security-patched via unattended-upgrades), no PyPI at runtime; crypto from libsodium; CPace vendored at a pinned commit | Proxmox helper installs only a release whose SHA256SUMS carries a valid signature from the pinned release key | trust in distribution and upstream libsodium/coturn/Caddy; the bridge additionally installs hash-pinned PyPI wheels (aiortc, faster-whisper, onnxruntime, …) and a revision-pinned Whisper model |
+
+## Out of scope / accepted
+
+- Denial of service by the relay operator or the network.
+- A compromised bridge host or Hermes itself (they are the trust anchor).
+- Forward secrecy of signaling (static crypto_box keys): whoever later steals a
+  device or bridge key and recorded the relay traffic can read SDP/ICE, control
+  messages and approval prompts (command text), never the conversation; media
+  has forward secrecy via ephemeral DTLS keys.
+- Conversation text is stored by Hermes in its session store (accepted: it is
+  what gives calls full agent context). No audio is stored anywhere.
+- Phone data answered with a *Yes* rule is handed to Hermes like anything else the
+  owner tells it (stored in its session, usable by its tools). The phone keeps only
+  a local log (last 200 requests, no data), wiped by "Delete all data".
+- Phone context needs the app running: the Notification Service Extension cannot
+  read iOS data, so with the app suspended a query only shows a notification and
+  times out unless the owner opens the app.

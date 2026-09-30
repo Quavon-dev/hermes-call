@@ -1,0 +1,282 @@
+# iOS app (Hermes Call)
+
+SwiftUI, iOS 26+, Swift 6 strict concurrency, warnings are errors. Two
+dependencies only: **stasel/WebRTC** (unmodified Google libwebrtc builds —
+Google ships no official iOS binaries; the LiveKit fork carries its own patches)
+and **swift-sodium's Clibsodium** (libsodium, the same crypto the bridge uses;
+CPace is compiled from `third_party/cpace`). No analytics, no crash reporting.
+
+| Piece | Where |
+|---|---|
+| Protocol core (pairing, CPace, E2E, TLS pinning, relay session) | `ios/HermesCallKit` (Swift package, also builds on macOS) |
+| App (CallKit, WebRTC, UI, Keychain) | `ios/HermesCall` |
+| Project spec | `ios/project.yml` (XcodeGen) |
+
+Features: onboarding, add relay by code or QR (the app always shows which
+relay it is about to pair with, and asks before trusting a self-signed
+certificate), several relay profiles (switch = swipe right in *Relays*),
+**Call <agent>** through CallKit with a ringback tone (shows in the Phone app's
+Recents unless disabled), hands-free and push-to-talk, mute, speaker, approval
+requests (Face ID/passcode to approve, never voice; over-long commands are
+denied, never shown cut off), paired device info, unpair, delete all data.
+
+Settings:
+
+- **Speech recognition**: *On bridge (Whisper)* (default) or *On iPhone*
+  (Apple's on-device English model, downloaded once): the phone recognizes your
+  words and sends only the text; call audio still reaches the bridge so you can
+  interrupt the agent. Falls back to the bridge if it cannot start.
+- **Appearance**: *Standard* or *HUD* (dark visor, audio-reactive core, live
+  link gauges, voice waveform).
+- **Assistant name** per relay (*Relays → relay → Assistant*); the default comes
+  from the bridge (`--agent-name`, "Hermes").
+
+**Incoming calls**: the agent rings the phone like a normal call, also when the
+app is closed or the phone is locked.
+
+1. The app registers its VoIP push token with every paired relay
+   (`sandbox` for Xcode builds, `production` for TestFlight/App Store — read
+   from the embedded provisioning profile).
+2. The relay's push carries only a random call id. The app shows the CallKit
+   ring **at once** (iOS requires it), then asks its bridge(s) over the E2E
+   channel whether that ring is real (`invite_query`). Unknown, cancelled or
+   unconfirmed (15 s) rings end immediately, so a relay cannot make the phone
+   ring with a fake call.
+3. The confirmed ring shows the bridge's name; the reason is shown in the app.
+   Answer → the phone sends its WebRTC offer for that call id; Decline → the
+   bridge learns it at once. Answered on another phone / timed out → the ring
+   stops.
+4. While the app is open and connected, the bridge's E2E `invite` rings
+   directly, so incoming calls also work with a relay that sends no pushes
+   (`--no-push-gateway`; then only while the app is in the foreground).
+
+Pushes for the published app go through the Hermes Call [push gateway](push-gateway.md)
+(`hermes-push.quavon.de`) unless the relay has its own APNs key; nobody needs an Apple developer
+account to get incoming calls.
+
+## Build and run on your iPhone (Xcode)
+
+1. Generate the project (only needed after changing `project.yml`):
+
+   ```bash
+   cd ios && xcodegen generate
+   ```
+
+2. Open it:
+
+   ```bash
+   open ios/HermesCall.xcodeproj
+   ```
+
+3. Xcode → *Settings → Accounts*: sign in with the Apple ID of **Quavon UG
+   (CFV35FGSHF)**. The project uses that team and `de.quavon.hermescall` with automatic
+   signing (`ios/Config/Identity.xcconfig`); Xcode creates the App IDs and capabilities on the
+   first device build. Not in the Quavon team? See [Build your own copy](#build-your-own-copy).
+4. Connect the iPhone by cable, trust the Mac, and enable
+   *Settings → Privacy & Security → Developer Mode* on the phone (restart).
+5. Select your iPhone as run destination and press **Run** (⌘R).
+6. On the bridge: `hermes-call-bridge device add --name "iPhone"`; in the app:
+   *Add your relay* → scan the QR or type relay address + code.
+
+Command-line alternative (same signing):
+
+```bash
+cd ios && xcodebuild -project HermesCall.xcodeproj -scheme HermesCall -destination 'generic/platform=iOS' -allowProvisioningUpdates build
+```
+
+## Build your own copy
+
+The project's Apple identity lives in `ios/Config/Identity.xcconfig`: Quavon UG (`CFV35FGSHF`),
+`de.quavon.hermescall`, `group.de.quavon.hermescall`. To build under your own developer account, copy
+`ios/Config/Identity.local.xcconfig.example` to `ios/Config/Identity.local.xcconfig` (git-ignored)
+and set:
+
+| Setting | Example | Used for |
+|---|---|---|
+| `HC_TEAM` | `ABCDE12345` | signing (your team ID, Membership page of the developer account) |
+| `HC_BUNDLE_ID` | `com.example.hermescall` | the app; extensions and the watch app append `.notifications`, `.share`, `.widget`, `.watchkitapp`, … |
+| `HC_APP_GROUP` | `group.com.example.hermescall` | data shared with the extensions and the watch complication |
+
+Then `cd ios && xcodegen generate` and build with `-allowProvisioningUpdates` (or Run in Xcode).
+Automatic signing registers the App IDs with the capabilities the project asks for: Push
+Notifications, App Groups, Keychain Sharing, HealthKit, HomeKit, Communication Notifications and
+Time Sensitive notifications. The [push gateway](push-gateway.md) can only push to the published
+app, so give your relay your own team's APNs key and bundle ID (`install.sh --apns-key …
+--bundle-id … --team-id …`, see below); otherwise incoming calls reach your build only while it is
+open.
+The Metal shaders need Xcode's Metal toolchain: `xcodebuild -downloadComponent MetalToolchain`.
+
+CarPlay needs an entitlement from Apple (see [CarPlay](#carplay)); everything else works with a
+standard (paid) developer account.
+
+## TestFlight (optional, for installing without the cable)
+
+1. App Store Connect → *Apps* → **+** → New App: iOS, name "Hermes Call",
+   bundle ID `de.quavon.hermescall` (your own `HC_BUNDLE_ID` for your own copy), SKU e.g.
+   `hermescall`.
+2. Xcode → *Product → Archive* (destination "Any iOS Device") → *Distribute
+   App* → *App Store Connect* → Upload.
+3. Export compliance question: the app uses standard encryption (TLS,
+   libsodium) for its own communication; answer according to your
+   distribution (for internal TestFlight testing the standard exemption for
+   standard algorithms usually applies — check Apple's current guidance).
+4. App Store Connect → TestFlight → add yourself as internal tester → install
+   the TestFlight app on the iPhone.
+
+TestFlight/App Store builds receive **production** VoIP pushes; builds run from
+Xcode receive **sandbox** pushes. The app tells the relay which one; the relay
+and the push gateway support both.
+
+## Automatic TestFlight releases
+
+`.github/workflows/ios-release.yml` runs on every push to `main` that changes the app (`ios/`,
+not its tests or docs), or by hand (*Actions → iOS release → Run workflow*). It runs the Swift
+core tests, archives the app with build number = workflow run number (+ the repository variable
+`IOS_BUILD_OFFSET`, default 0), uploads it to TestFlight and creates a GitHub release
+`ios-v<version>-<build>` with the IPA. The IPA is signed for App Store distribution, so it
+installs only through TestFlight or the App Store; relay/bridge releases (`v*`) stay the
+"latest" release. The version comes from `MARKETING_VERSION` in `ios/project.yml`.
+
+One-time setup (repository *Settings → Secrets and variables → Actions*):
+
+| Secret | What |
+|---|---|
+| `ASC_KEY_ID`, `ASC_ISSUER_ID` | App Store Connect → *Users and Access → Integrations → App Store Connect API* → **+**, role **Admin** (needed for cloud-managed distribution signing); Key ID and Issuer ID from that page |
+| `ASC_KEY_P8` | the downloaded `AuthKey_XXXXXXXXXX.p8`, base64: `base64 -i AuthKey_XXXXXXXXXX.p8 \| pbcopy` |
+| `BUILD_CERT_P12` | an **Apple Development** certificate with its private key for team `CFV35FGSHF`: Keychain Access → *My Certificates* → right-click → Export → `.p12` with a password; then `base64 -i cert.p12 \| pbcopy` |
+| `BUILD_CERT_PASSWORD` | the `.p12` password |
+
+The job runs in the `app-store` environment: add required reviewers there if every upload should
+wait for approval. Distribution signing happens in Apple's cloud during export, so no
+distribution certificate leaves Apple. The first TestFlight build of a new version may still need
+the export compliance answer in App Store Connect (see above).
+
+
+
+For the published app this key belongs on the [push gateway](push-gateway.md#running-the-gateway-publisher)
+(Quavon, team `CFV35FGSHF`); relays then need no key. For your own build of the app it goes on
+your relay.
+
+1. <https://developer.apple.com/account> → *Certificates, Identifiers &
+   Profiles* → **Keys** → **+**.
+2. Name "Hermes Call relay", tick **Apple Push Notifications service (APNs)**,
+   *Configure* → environment **Sandbox & Production**, key restriction **Team
+   Scoped (All Topics)** → Save → Continue → Register.
+3. **Download** the `AuthKey_XXXXXXXXXX.p8` — Apple lets you download it
+   only once. Note the **Key ID** (10 characters) shown on the page. Team ID:
+   `CFV35FGSHF` for the published app, otherwise your `HC_TEAM`.
+4. Published app: install the push gateway with it (see [push gateway](push-gateway.md#running-the-gateway-publisher)).
+   Your own build: give it to your relay (never to the app or the bridge):
+
+   ```bash
+   /opt/hermescall-relay/relay/install.sh install --apns-key /root/AuthKey_XXXXXXXXXX.p8 --apns-key-id XXXXXXXXXX --team-id <HC_TEAM> --bundle-id <HC_BUNDLE_ID>
+   ```
+
+   The relay stores it as `/etc/hermescall-relay/apns_key` (0600,
+   `hermescall-relay` user). Delete your other copies or keep one offline.
+
+## Try it locally (Simulator or phone on the same Wi-Fi)
+
+`tools/dev_stack.py` runs a relay (self-signed TLS), a bridge with real
+Whisper/Kokoro and a fake Hermes that repeats your question (or your real
+Hermes with `--hermes-url/--hermes-key`). Needs Docker for Kokoro and coturn;
+the exact commands are in the script's header. Then paste the printed
+`hermescall://` link into the app's address field (or scan the QR).
+
+Simulator limitations (verified): the Simulator's CallKit never activates the
+audio session (a Simulator-only workaround starts audio), and its microphone
+delivers silence here, so speech can only be tested on a real iPhone. The
+Simulator also has no in-call screen: CallKit logs "there wont be a UI to host
+the call" and ends every call (outgoing or incoming) right after it starts, and
+the app correctly follows CallKit. It never receives VoIP pushes either
+(`xcrun simctl push` goes to user notifications, not PushKit). With a local,
+uncommitted patch that ignores that system end, both directions were verified
+in the Simulator (pairing, ring → answer → offer for the ring's call id,
+relay-only WebRTC, reason shown, hang-up); ringing, answering and audio need a
+real iPhone.
+
+## Tests
+
+```bash
+cd ios/HermesCallKit && swift test
+```
+
+```bash
+cd ios && xcodebuild test -project HermesCall.xcodeproj -scheme HermesCall -destination 'platform=iOS Simulator,name=iPhone 17 Pro' CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
+```
+
+`swift test` starts the real Python relay and bridge (needs `uv sync` at the
+repo root) and pairs, authenticates and exchanges E2E messages with them.
+
+## M9 additions
+
+### App icons
+
+The icons are Icon Composer documents (`.icon`: `icon.json` + SVG layers), so iOS 26/27 render
+them with Liquid Glass and generate the dark, clear and tinted looks themselves.
+`tools/make_icons.py` builds them from code (original artwork, no external assets):
+`ios/HermesCall/Resources/AppIcon.icon` (Standard: glass handset in an orbit on amber),
+`AppIconPresence.icon` (the gold orrery with a glass heart) and the watch icon, plus the
+Settings tile previews. `python3 tools/make_icons.py --preview` also renders every appearance
+with Xcode's `ictool` (design generation 27) into `/tmp/icon-previews`.
+
+Settings › App icon: *Standard*, *Presence* or *Match appearance*; iOS confirms each switch.
+The alternate `.icon` works on iOS 27; the iOS 26.2 simulator answers "Resource temporarily
+unavailable" (the app retries and re-applies at launch).
+
+Settings › *<agent>'s colour* sets the active agent's colour (also per relay in Relays). The HUD
+uses it for the presence; the Standard appearance uses its deeper tone as the tint.
+
+### Audio and the voice spectrum
+
+Every call now runs WebRTC audio through `EngineAudioDevice` (AVAudioEngine with
+voice processing). Its playout and microphone paths feed `SpectrumAnalyzer`
+(HermesCallCore: 1024-point FFT at 48 kHz, 8 log bands 80 Hz–8 kHz), which the
+presence reads every frame. Fallback to WebRTC's own audio unit for one launch:
+launch argument `-legacyAudioDevice YES` (then the bands are shaped from the level
+as before). Voice replies in the chat play through an engine too, so the presence
+speaks them.
+
+### Live Activity
+
+`HermesTaskAttributes` (ios/Shared) + `TaskLiveActivity` (widget extension). While the
+app runs it starts/updates the activity itself; it registers the activity push token
+(`register_push kind: liveactivity`) and the push-to-start token (`liveactivity_start`)
+with every relay. Debug: `-TaskDemo YES` plays a fake five-step task.
+
+### Place reminders
+
+`PlaceMonitor` (CLMonitor, max 20 regions). Needs "Always" location for reminders
+while the app is closed; asked when the first reminder is added. Settings › Phone
+access › Place reminders lists them (swipe to delete).
+
+### Apple Watch
+
+Targets `HermesCallWatch` (`<HC_BUNDLE_ID>.watchkitapp`) and
+`HermesCallWatchWidget` (complications). There is no WebRTC for watchOS, so the
+watch is a remote: tap the presence to start the call **on the iPhone** (audio on the
+iPhone or AirPods), dictate a message, read the latest messages. It holds no keys;
+everything goes through WatchConnectivity to the iPhone (`WatchBridge`). Message
+text reaches the watch only when "Show message text in notifications" is on.
+
+### CarPlay
+
+- Without anything extra: CallKit shows incoming and active Hermes calls in the car,
+  and Siri ("Call Hermes", the App Intent) works there.
+- A CarPlay app ("Call Atlas" + latest messages read aloud) is in
+  `ios/HermesCall/CarPlay/CarPlaySceneDelegate.swift`, compiled only with the
+  `CARPLAY_APP` condition, because it needs a CarPlay entitlement from Apple
+  (request it at developer.apple.com/carplay; pick the communication or
+  voice-based conversational category the form offers). Once granted:
+  1. add the granted entitlement key to `project.yml` (app entitlements),
+  2. add `CARPLAY_APP` to `SWIFT_ACTIVE_COMPILATION_CONDITIONS`,
+  3. add to the app's Info.plist:
+     ```yaml
+     UIApplicationSceneManifest:
+       UIApplicationSupportsMultipleScenes: true
+       UISceneConfigurations:
+         CPTemplateApplicationSceneSessionRoleApplication:
+           - UISceneConfigurationName: CarPlay
+             UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
+     ```
+  Check it in Xcode › Open Developer Tool › Simulator › I/O › External Displays › CarPlay.

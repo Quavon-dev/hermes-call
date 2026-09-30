@@ -1,0 +1,50 @@
+[Unit]
+Description=Hermes Call hermes-call-bridge (voice calls for Hermes Agent, outbound connections only)
+Documentation=https://github.com/quavon-dev/hermes-call
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermes-call-bridge
+Group=hermes-call-bridge
+ExecStart=/opt/hermes-call-bridge/venv/bin/python -m hermescall_bridge.cli serve
+Environment=PYTHONPATH=/opt/hermes-call-bridge/common:/opt/hermes-call-bridge/bridge
+Environment=PYTHONDONTWRITEBYTECODE=1 HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1
+StateDirectory=hermes-call-bridge
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# MemoryDenyWriteExecute stays off: aiortc DTLS uses pyOpenSSL, whose cffi callbacks need W+X pages.
+RemoveIPC=yes
+PrivateIPC=yes
+TasksMax=64
+LimitNOFILE=1024
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+UMask=0077
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

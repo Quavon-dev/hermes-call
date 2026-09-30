@@ -1,0 +1,138 @@
+import Foundation
+import HermesCallCore
+import WidgetKit
+
+enum SpeechRecognition: String, CaseIterable, Identifiable, Sendable {
+    case bridge, iPhone
+    var id: String { rawValue }
+    var title: String { self == .bridge ? "On bridge (Whisper)" : "On iPhone" }
+}
+
+enum TalkMode: String, CaseIterable, Identifiable, Sendable {
+    case handsFree, pushToTalk
+    var id: String { rawValue }
+    var title: String { self == .handsFree ? "Hands-free" : "Push to talk" }
+}
+
+/// Which home-screen icon to show (Settings › App icon).
+enum AppIconChoice: String, CaseIterable, Identifiable, Sendable {
+    case automatic, standard, presence
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .automatic: "Match appearance"
+        case .standard: "Standard"
+        case .presence: "Presence"
+        }
+    }
+
+    /// The alternate icon name for an appearance (nil = the primary icon).
+    func iconName(for appearance: Appearance) -> String? {
+        switch self {
+        case .automatic: appearance == .hud ? AppIconChoice.presenceIcon : nil
+        case .standard: nil
+        case .presence: AppIconChoice.presenceIcon
+        }
+    }
+
+    static let presenceIcon = "AppIconPresence"
+}
+
+/// Non-secret UI preferences.
+@MainActor @Observable
+final class Preferences {
+    private let defaults: UserDefaults
+
+    var talkMode: TalkMode { didSet { defaults.set(talkMode.rawValue, forKey: "talkMode") } }
+    var includeInRecents: Bool { didSet { defaults.set(includeInRecents, forKey: "includeInRecents") } }
+    var activeProfileID: UUID? { didSet { defaults.set(activeProfileID?.uuidString, forKey: "activeProfile") } }
+    var speechRecognition: SpeechRecognition { didSet { defaults.set(speechRecognition.rawValue, forKey: "speechRecognition") } }
+    var appearance: Appearance {
+        didSet {
+            defaults.set(appearance.rawValue, forKey: "appearance")
+            Self.shareAppearance(appearance)
+        }
+    }
+    var onboardingDone: Bool { didSet { defaults.set(onboardingDone, forKey: "onboardingDone") } }
+    /// HUD calls: a soft vibration follows the agent's voice.
+    var voiceHaptics: Bool { didSet { defaults.set(voiceHaptics, forKey: "voiceHaptics") } }
+    /// HUD calls: the spoken lines appear under the presence.
+    var showCaptions: Bool { didSet { defaults.set(showCaptions, forKey: "showCaptions") } }
+    var appIcon: AppIconChoice { didSet { defaults.set(appIcon.rawValue, forKey: "appIcon") } }
+    /// Voice notes ask the agent to answer by voice too (sent with each voice note).
+    var voiceReplies: Bool { didSet { defaults.set(voiceReplies, forKey: "voiceReplies") } }
+    /// Voice replies play by themselves while the app is open (never during a call).
+    var autoPlayVoiceReplies: Bool { didSet { defaults.set(autoPlayVoiceReplies, forKey: "autoPlayVoiceReplies") } }
+    /// Live Activity pushes (plaintext to Apple) may name the current step instead of "Working…".
+    var taskDetailsOnLockScreen: Bool {
+        didSet { defaults.set(taskDetailsOnLockScreen, forKey: "taskDetailsOnLockScreen") }
+    }
+    /// Relay profile id → "environment:token" last registered there.
+    var pushRegistrations: [String: String] { didSet { defaults.set(pushRegistrations, forKey: "pushRegistrations") } }
+    /// Same for the chat (alert) push token.
+    var alertRegistrations: [String: String] { didSet { defaults.set(alertRegistrations, forKey: "alertRegistrations") } }
+    /// Lock-screen notifications show the decrypted message text (decrypted on this phone only).
+    var showMessageText: Bool {
+        didSet { SharedContainer.defaults.set(showMessageText, forKey: SharedContainer.showMessageTextKey) }
+    }
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        talkMode = TalkMode(rawValue: defaults.string(forKey: "talkMode") ?? "") ?? .handsFree
+        includeInRecents = defaults.object(forKey: "includeInRecents") as? Bool ?? true
+        activeProfileID = defaults.string(forKey: "activeProfile").flatMap(UUID.init(uuidString:))
+        onboardingDone = defaults.bool(forKey: "onboardingDone")
+        voiceHaptics = defaults.object(forKey: "voiceHaptics") as? Bool ?? true
+        showCaptions = defaults.object(forKey: "showCaptions") as? Bool ?? true
+        speechRecognition = SpeechRecognition(rawValue: defaults.string(forKey: "speechRecognition") ?? "") ?? .bridge
+        appIcon = AppIconChoice(rawValue: defaults.string(forKey: "appIcon") ?? "") ?? .automatic
+        voiceReplies = defaults.object(forKey: "voiceReplies") as? Bool ?? true
+        autoPlayVoiceReplies = defaults.bool(forKey: "autoPlayVoiceReplies")
+        taskDetailsOnLockScreen = defaults.bool(forKey: "taskDetailsOnLockScreen")
+        let appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .standard
+        self.appearance = appearance
+        Self.shareAppearance(appearance)
+        pushRegistrations = defaults.dictionary(forKey: "pushRegistrations") as? [String: String] ?? [:]
+        alertRegistrations = defaults.dictionary(forKey: "alertRegistrations") as? [String: String] ?? [:]
+        showMessageText = SharedContainer.showMessageText
+    }
+
+    /// The widget reads the appearance from the app group.
+    private static func shareAppearance(_ appearance: Appearance) {
+        guard SharedContainer.defaults.string(forKey: SharedContainer.appearanceKey) != appearance.rawValue else { return }
+        SharedContainer.defaults.set(appearance.rawValue, forKey: SharedContainer.appearanceKey)
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    func reset() {
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(E2EChannel.seenKeyPrefix) {
+            defaults.removeObject(forKey: key)
+        }
+        for key in ["talkMode", "includeInRecents", "activeProfile", "onboardingDone", "pushRegistrations", "appearance",
+                    "speechRecognition", "alertRegistrations", "voiceHaptics", "showCaptions", "presenceHints",
+                    "appIcon", "voiceReplies", "autoPlayVoiceReplies", "taskDetailsOnLockScreen"] {
+            defaults.removeObject(forKey: key)
+        }
+        let shared = SharedContainer.defaults
+        for key in shared.dictionaryRepresentation().keys
+        where key.hasPrefix(E2EChannel.mailKeyPrefix) || key == SharedContainer.showMessageTextKey
+            || key == SharedContainer.appearanceKey {
+            shared.removeObject(forKey: key)
+        }
+        alertRegistrations = [:]
+        showMessageText = true
+        talkMode = .handsFree
+        includeInRecents = true
+        activeProfileID = nil
+        onboardingDone = false
+        voiceHaptics = true
+        showCaptions = true
+        pushRegistrations = [:]
+        appearance = .standard
+        speechRecognition = .bridge
+        appIcon = .automatic
+        voiceReplies = true
+        autoPlayVoiceReplies = false
+        taskDetailsOnLockScreen = false
+    }
+}

@@ -1,0 +1,44 @@
+[Unit]
+Description=Hermes Call TURN server (coturn, ciphertext relay only)
+Documentation=https://github.com/quavon-dev/hermes-call
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=turnserver
+Group=turnserver
+ExecStartPre=/usr/bin/test -r /etc/hermescall-relay/turnserver.conf
+ExecStart=/usr/bin/turnserver -c /etc/hermescall-relay/turnserver.conf
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65536
+RuntimeDirectory=hermescall-turn
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,4 @@
+// Copy to Identity.local.xcconfig (git-ignored) and fill in your own values.
+HC_TEAM = ABCDE12345
+HC_BUNDLE_ID = com.example.hermescall
+HC_APP_GROUP = group.com.example.hermescall

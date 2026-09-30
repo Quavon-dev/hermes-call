@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python (relay, bridge, common)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install libsodium and shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsodium-dev shellcheck
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - name: shellcheck installers and tools
+        # SC1090/SC1091: the Proxmox helper sources the community-scripts framework at run time.
+        run: git ls-files -z '*.sh' | xargs -0 shellcheck -e SC1090,SC1091
+      # Skips cleanly here: bridge/tests/test_chat.py's Hermes adapter smoke test (needs a local
+      # Hermes checkout in ~/.hermes/hermes-agent). Kokoro, Whisper models and Docker are only used by
+      # bridge/tests/container_e2e.sh and relay/tests/container_e2e.sh, which CI does not run.
+      - run: uv run pytest -q bridge/tests common/tests relay/tests
+
+  relay-distro:
+    name: Relay on ${{ matrix.image }} packages
+    # Installed relays and the push gateway run on the distribution's python3-* packages (older
+    # than uv.lock), so test exactly those.
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:12", "debian:13", "ubuntu:24.04"]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Distribution packages
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: >
+          apt-get update -qq && apt-get install -y -qq --no-install-recommends
+          python3 python3-aiohttp python3-httpx python3-h2 python3-cryptography libsodium23
+          python3-pytest python3-pytest-asyncio python3-pytest-aiohttp
+      - run: PYTHONPATH=common:relay python3 -m pytest -q -p no:cacheprovider relay/tests
+
+  swift-core:
+    name: Swift core (HermesCallKit)
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - run: xcodebuild -version
+      # InteropTests start the real Python relay + bridge from .venv (they silently pass without it),
+      # so install the Python side too.
+      - run: brew install libsodium
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+      - name: swift test
+        working-directory: ios/HermesCallKit
+        run: swift test
+
+  ios-build:
+    name: iOS app build (simulator, unsigned)
+    # Needs Xcode 26+ (iOS/watchOS 26 SDK, Liquid Glass APIs); macos-26 ships it as the default Xcode.
+    runs-on: macos-26
+    continue-on-error: false
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check Xcode version
+        run: |
+          xcodebuild -version
+          major=$(xcodebuild -version | awk 'NR==1 { split($2, v, "."); print v[1] }')
+          [ "$major" -ge 26 ] || { echo "::error::Xcode 26 or newer is required (found $major)"; exit 1; }
+      - run: brew install xcodegen
+      - name: Metal toolchain (Presence.metal)
+        run: xcodebuild -downloadComponent MetalToolchain
+      - name: Generate project
+        working-directory: ios
+        run: xcodegen generate
+      - name: Build
+        working-directory: ios
+        run: >
+          xcodebuild -project HermesCall.xcodeproj -scheme HermesCall
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
+          build

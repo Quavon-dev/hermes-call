@@ -1,0 +1,28 @@
+[project]
+name = "hermescall-bridge"
+version = "0.6.0"
+description = "hermes-call-bridge: voice calls between Hermes Agent and the Hermes Call app"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "hermescall-common",
+    "aiohttp>=3.10,<4",
+    "aiortc>=1.14,<1.16",
+    "av>=14",
+    "numpy>=1.26",
+    "httpx>=0.27,<1",
+    "cryptography>=43",
+    "faster-whisper>=1.1,<2",
+    "onnxruntime>=1.20",
+    "pillow>=10",
+]
+
+[project.scripts]
+hermes-call-bridge = "hermescall_bridge.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hermescall_bridge"]

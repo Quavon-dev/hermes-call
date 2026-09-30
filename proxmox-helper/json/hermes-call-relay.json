@@ -1,0 +1,57 @@
+{
+  "name": "Hermes Call Relay",
+  "slug": "hermes-call-relay",
+  "categories": [
+    4
+  ],
+  "date_created": "2026-09-28",
+  "type": "ct",
+  "updateable": true,
+  "privileged": false,
+  "architectures": ["amd64", "arm64"],
+  "interface_port": 443,
+  "documentation": "https://github.com/quavon-dev/hermes-call/tree/main/docs",
+  "website": "https://github.com/quavon-dev/hermes-call",
+  "repository": "https://github.com/quavon-dev/hermes-call",
+  "logo": null,
+  "description": "Self-hosted relay for Hermes Call: end-to-end encrypted signaling rendezvous, TURN media relay (ciphertext only) and Apple VoIP push, so a home Hermes Agent can call an iPhone without any inbound port at home.",
+  "app_vars": [
+    {
+      "name": "var_relay_address",
+      "label": "Public domain name or IP",
+      "required": true
+    }
+  ],
+  "install_methods": [
+    {
+      "type": "default",
+      "script": "ct/hermes-call-relay.sh",
+      "config_path": "/etc/hermescall-relay/relay.toml",
+      "resources": {
+        "cpu": 1,
+        "ram": 512,
+        "hdd": 4,
+        "os": "Debian",
+        "version": "13"
+      }
+    }
+  ],
+  "default_credentials": {
+    "username": null,
+    "password": null
+  },
+  "notes": [
+    {
+      "text": "Forward only TCP 443, TCP/UDP 3478 and UDP 49160-49200 from your router to this container. Never forward anything to the Hermes container.",
+      "type": "warning"
+    },
+    {
+      "text": "Apple VoIP push is configured after install: copy your .p8 key in with `pct push` and run `/opt/hermes-call/relay/install.sh install --apns-key ...` (see docs).",
+      "type": "info"
+    },
+    {
+      "text": "Create a one-time bridge pairing code with `hermescall-relay pair`.",
+      "type": "info"
+    }
+  ]
+}

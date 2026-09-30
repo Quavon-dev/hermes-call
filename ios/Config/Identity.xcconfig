@@ -1,0 +1,7 @@
+// Apple identity of the app. To build your own copy, create Config/Identity.local.xcconfig
+// (git-ignored) and override these three values; see docs/ios.md, "Build your own copy".
+HC_TEAM = CFV35FGSHF
+HC_BUNDLE_ID = de.quavon.hermescall
+HC_APP_GROUP = group.de.quavon.hermescall
+
+#include? "Identity.local.xcconfig"

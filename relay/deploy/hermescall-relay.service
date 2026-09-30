@@ -1,0 +1,50 @@
+[Unit]
+Description=Hermes Call relay (signaling rendezvous and VoIP push)
+Documentation=https://github.com/quavon-dev/hermes-call
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermescall-relay
+Group=hermescall-relay
+ExecStart=/usr/bin/python3 -m hermescall_relay.cli serve
+Environment=PYTHONPATH=/opt/hermescall-relay/common:/opt/hermescall-relay/relay
+Environment=PYTHONDONTWRITEBYTECODE=1
+StateDirectory=hermescall-relay
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=3
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateUsers=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+UMask=0077
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
