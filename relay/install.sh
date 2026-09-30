@@ -572,7 +572,7 @@ print_summary() {
   cat <<EOF
 
 Hermes Call relay is running for $(url_host).
-Open ports: 443/tcp (TLS signaling), $TURN_PORT/udp+tcp (TURN), $TURN_MIN_PORT-$TURN_MAX_PORT/udp (TURN media relay)$(has_sshd && printf ', SSH' || true)
+Open ports: 443/tcp (TLS signaling), $TURN_PORT/udp+tcp (TURN), $TURN_MIN_PORT-$TURN_MAX_PORT/udp (TURN media relay)$(if has_sshd; then printf ', SSH'; fi)
 Push: $(push_summary)
 EOF
   [[ -z $TLS_PIN ]] || printf 'TLS public-key pin: %s\n' "$TLS_PIN"

@@ -162,18 +162,29 @@ final class PhoneTranscriber: @unchecked Sendable {
               let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(
                   Double(buffer.frameLength) * format.sampleRate / buffer.format.sampleRate) + 32)
         else { return nil }
-        var consumed = false
+        let input = OneShotInput(buffer)
         var error: NSError?
-        converter.convert(to: out, error: &error) { _, status in
-            if consumed {
-                status.pointee = .noDataNow
-                return nil
-            }
-            consumed = true
-            status.pointee = .haveData
-            return buffer
-        }
+        converter.convert(to: out, error: &error) { _, status in input.next(status) }
         return error == nil ? out : nil
+    }
+}
+
+/// Hands one buffer to AVAudioConverter, then reports "no data now". The converter calls its input
+/// block synchronously inside `convert(to:error:)`, but newer SDKs type the block `@Sendable`, so
+/// the state lives here instead of in captured variables.
+private final class OneShotInput: @unchecked Sendable {
+    private var buffer: AVAudioPCMBuffer?
+
+    init(_ buffer: AVAudioPCMBuffer) { self.buffer = buffer }
+
+    func next(_ status: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer? {
+        guard let buffer else {
+            status.pointee = .noDataNow
+            return nil
+        }
+        self.buffer = nil
+        status.pointee = .haveData
+        return buffer
     }
 }
 
