@@ -151,6 +151,7 @@ class Relay(AttachmentsMixin, MailboxMixin):
         self._tasks: set[asyncio.Task] = set()
         self._alert_tasks: set[asyncio.Task] = set()
         self._stopping = asyncio.Event()
+        self._shutting_down = False
         self.gateway_probe = observability.GatewayProbe(config.push_gateway) if isinstance(push, GatewayPush) else None
         self.metrics = observability.relay_metrics(self)
         self.rate_limited = self.metrics.counter("rate_limited_total", "Requests refused by a limit, by limit name.")
@@ -205,6 +206,7 @@ class Relay(AttachmentsMixin, MailboxMixin):
 
     async def _shutdown(self, app: web.Application) -> None:
         """SIGTERM: tell clients to reconnect elsewhere/later, then send the chat alerts still pending."""
+        self._shutting_down = True
         sockets = list(self.bridges.values()) + list(self.devices.values())
         sockets += [session.device_ws for session in self.sessions.values()]
         log.info("shutting down: closing %d connection(s)", len(sockets))
@@ -313,7 +315,7 @@ class Relay(AttachmentsMixin, MailboxMixin):
         finally:
             self._release(ip_key)
             if ws is not None:
-                await ws.close()
+                await ws.close(code=self._close_code())
         return ws
 
     async def _pair(self, ws: web.WebSocketResponse, ip_key: str) -> None:
@@ -418,8 +420,12 @@ class Relay(AttachmentsMixin, MailboxMixin):
         finally:
             self._release(ip_key, authenticated=bool(identity))
             self._unregister(role, identity, ws)
-            await ws.close()
+            await ws.close(code=self._close_code())
         return ws
+
+    def _close_code(self) -> int:
+        # aiohttp < 3.9 lets the handler's own close() win the race with _shutdown's.
+        return WSCloseCode.GOING_AWAY if self._shutting_down else WSCloseCode.OK
 
     async def _authenticate(self, ws: web.WebSocketResponse, ip_key: str) -> tuple[str, str]:
         nonce = sodium.random_bytes(auth.NONCE_BYTES)

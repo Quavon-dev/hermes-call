@@ -205,7 +205,8 @@ class Store:
         if not free:
             return 0
         if schema.auto_vacuum_mode(self._db) == 2:
-            self._db.execute(f"PRAGMA incremental_vacuum({min(free, VACUUM_PAGES)})").fetchall()
+            # executescript steps the pragma to the end (execute() frees only one page on SQLite 3.40).
+            self._db.executescript(f"PRAGMA incremental_vacuum({min(free, VACUUM_PAGES)});")
             return free
         pages, page_size = (self._db.execute(f"PRAGMA {name}").fetchone()[0] for name in ("page_count", "page_size"))
         if free * 4 >= pages and pages * page_size <= COMPACT_ONLINE_BYTES:
