@@ -151,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     call.add_argument("--reason", default="test call")
     call.add_argument("--device", default="all")
     sub.add_parser("status")
+    sub.add_parser("doctor", help="check config, relay, Hermes, Kokoro, speech model and disk")
     args = parser.parse_args(argv)
     configure_logging()
     try:
@@ -172,6 +173,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{d['id']}  {d['name']}  paired {time.strftime('%Y-%m-%d', time.localtime(d['created']))}")
         elif args.command == "device":
             print(json.dumps(_api(config, "DELETE", f"/v1/devices/{args.device_id}")))
+        elif args.command == "doctor":
+            from .doctor import doctor
+
+            return doctor(config)
         elif args.command == "call":
             body = {"reason": args.reason, "first_message": args.first_message, "device": args.device}
             print(json.dumps(_api(config, "POST", "/v1/calls", body, timeout=120)))
