@@ -37,7 +37,7 @@ struct OnboardingView: View {
             .accessibilityHidden(page == Self.pageCount - 1)
             .accessibilityIdentifier("onboarding.continue")
         }
-        .sheet(isPresented: $addingRelay) { AddRelayView() }
+        .sheet(isPresented: $addingRelay) { AddRelayView().agentTheme() }
     }
 }
 
@@ -49,19 +49,24 @@ private struct Page<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Image(systemName: symbol)
-                    .font(.system(.largeTitle).weight(.semibold))
-                    .foregroundStyle(.tint)
-                    .padding(.top, 32)
-                    .accessibilityHidden(true)
-                Text(title).font(.largeTitle.bold()).fixedSize(horizontal: false, vertical: true)
-                content
+        GeometryReader { space in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Image(systemName: symbol)
+                        .font(.system(size: 52, weight: .semibold))
+                        .foregroundStyle(.tint)
+                        .accessibilityHidden(true)
+                    Text(title).font(.largeTitle.bold()).fixedSize(horizontal: false, vertical: true)
+                    content
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 28)
+                .padding(.top, 16)
+                .padding(.bottom, 56)
+                // Short pages sit a little above the middle instead of leaving the lower half empty.
+                .frame(minHeight: space.size.height * 0.9, alignment: .center)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 28)
-            .padding(.bottom, 56)
+            .scrollBounceBehavior(.basedOnSize)
         }
     }
 }

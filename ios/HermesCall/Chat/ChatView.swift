@@ -107,6 +107,9 @@ struct ChatView: View {
                 .padding(.vertical, 8)
             }
             .scrollDismissesKeyboard(.interactively)
+            .onScrollPhaseChange { _, phase in
+                if phase == .interacting, highlighted != nil { withAnimation(.easeOut(duration: 0.6)) { highlighted = nil } }
+            }
             // No .defaultScrollAnchor(.bottom): with a lazy stack and the keyboard it loops layout forever.
             .onAppear { scrollToEnd(proxy, animated: false) }
             .onChange(of: chat.shownProfileID) { scrollToEnd(proxy, animated: false) }
@@ -117,8 +120,9 @@ struct ChatView: View {
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(80))
                     withAnimation { proxy.scrollTo(id, anchor: .center) }
-                    try? await Task.sleep(for: .seconds(2))
-                    if highlighted == id { withAnimation { highlighted = nil } }
+                    // Long enough to find it; scrolling away ends it earlier.
+                    try? await Task.sleep(for: .seconds(4))
+                    if highlighted == id { withAnimation(.easeOut(duration: 0.6)) { highlighted = nil } }
                 }
             }
             .overlay(alignment: .bottomTrailing) {
@@ -341,7 +345,7 @@ private struct SearchHitRow: View {
             HStack {
                 Text(message.role == .owner ? "You" : message.role == .agent ? agentName : "Call").font(.subheadline.bold())
                 Spacer()
-                Text(message.date, format: .dateTime.day().month(.abbreviated).hour().minute()).font(.caption).foregroundStyle(.secondary)
+                Text(ChatDates.hitLabel(message.date)).font(.caption).foregroundStyle(.secondary)
             }
             Text(snippet).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
         }
@@ -349,22 +353,15 @@ private struct SearchHitRow: View {
         .contentShape(Rectangle())
     }
 
-    /// The preview starting shortly before the match, with the match in bold.
+    /// The part around the match (text, transcript, file name or card), the match in bold.
     private var snippet: AttributedString {
-        // Text and transcript first; for a message without either, its preview ("🎙 Voice note", a file name).
-        let parts = [message.text, message.transcript ?? ""].filter { !$0.isEmpty }
-        let plain = message.role == .system ? message.systemText
-            : ChatText.plain(parts.isEmpty ? message.preview : parts.joined(separator: " · "), limit: 2000)
-        let needle = query.trimmingCharacters(in: .whitespaces)
-        guard let range = plain.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) else {
-            return AttributedString(String(plain.prefix(160)))
-        }
-        let start = plain.index(range.lowerBound, offsetBy: -40, limitedBy: plain.startIndex) ?? plain.startIndex
-        var text = AttributedString((start > plain.startIndex ? "…" : "") + plain[start..<range.lowerBound])
-        var match = AttributedString(plain[range])
-        match.inlinePresentationIntent = .stronglyEmphasized
-        match.foregroundColor = .primary
-        text += match + AttributedString(String(plain[range.upperBound...].prefix(120)))
+        let found = SearchSnippet(message: message, query: query)
+        guard let match = found.match else { return AttributedString(found.text) }
+        var text = AttributedString(String(found.text[..<match.lowerBound]))
+        var marked = AttributedString(String(found.text[match]))
+        marked.inlinePresentationIntent = .stronglyEmphasized
+        marked.foregroundColor = .primary
+        text += marked + AttributedString(String(found.text[match.upperBound...]))
         return text
     }
 }

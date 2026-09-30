@@ -1,6 +1,22 @@
 import HermesCallCore
 import SwiftUI
 
+extension EnvironmentValues {
+    /// Drawn inside the owner's coloured bubble (Standard appearance): quiet parts are white, not grey.
+    @Entry var onOwnerBubble = false
+}
+
+/// Secondary text and graphics that stay readable on the owner's bubble (see `OwnerBubble`).
+enum BubbleStyle {
+    static func secondary(_ onBubble: Bool) -> AnyShapeStyle {
+        onBubble ? AnyShapeStyle(Color.white.opacity(Double(OwnerBubble.secondaryOpacity))) : AnyShapeStyle(.secondary)
+    }
+
+    static func unplayed(_ onBubble: Bool) -> AnyShapeStyle {
+        onBubble ? AnyShapeStyle(Color.white.opacity(Double(OwnerBubble.unplayedOpacity))) : AnyShapeStyle(.secondary.opacity(0.55))
+    }
+}
+
 struct MessageRow: View {
     let message: ChatMessage
     let agentName: String
@@ -59,7 +75,7 @@ struct MessageRow: View {
                                play: { play(attachment, $0) })
             }
             if let transcript = message.transcript, !transcript.isEmpty {
-                Text(transcript).font(.callout.italic()).foregroundStyle(.secondary)
+                Text(transcript).font(.callout.italic()).foregroundStyle(BubbleStyle.secondary(isOwner && !hud))
             }
             if !message.text.isEmpty {
                 if isOwner {
@@ -73,10 +89,14 @@ struct MessageRow: View {
         .padding(.vertical, 8)
         // Links and controls in the owner's blue bubble are white (not the bubble's own tint).
         .tint(isOwner && !hud ? .white : nil)
+        .environment(\.onOwnerBubble, isOwner && !hud)
         .background { background }
         .overlay {
             if highlighted {
-                RoundedRectangle(cornerRadius: 18).stroke(hud ? HUD.glow : Color.accentColor, lineWidth: 2)
+                // A ring just outside the bubble, so it shows on the coloured owner bubble too.
+                RoundedRectangle(cornerRadius: 22).stroke(hud ? HUD.glow : HUD.alert, lineWidth: 3).padding(-5)
+                    .shadow(color: (hud ? HUD.glow : HUD.alert).opacity(0.5), radius: 6)
+                    .transition(.opacity)
             }
         }
         .foregroundStyle(isOwner && !hud ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
@@ -98,7 +118,7 @@ struct MessageRow: View {
             RoundedRectangle(cornerRadius: 16).fill(tint.opacity(isOwner ? 0.1 : 0.05))
                 .overlay(RoundedRectangle(cornerRadius: 16).stroke(tint.opacity(0.22), lineWidth: 0.75))
         } else {
-            RoundedRectangle(cornerRadius: 18).fill(isOwner ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary))
+            RoundedRectangle(cornerRadius: 18).fill(isOwner ? AnyShapeStyle(HUD.ownerBubble) : AnyShapeStyle(.quaternary))
         }
     }
 
@@ -154,6 +174,7 @@ struct AttachmentView: View {
     let open: () -> Void
     let play: (Double?) -> Void
     @Environment(ChatModel.self) private var chat
+    @Environment(\.onOwnerBubble) private var onBubble
     @State private var image: UIImage?
 
     var body: some View {
@@ -181,7 +202,7 @@ struct AttachmentView: View {
                     VStack(alignment: .leading) {
                         Text(attachment.name).lineLimit(2)
                         Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.size), countStyle: .file))
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(BubbleStyle.secondary(onBubble))
                     }
                 } icon: {
                     Image(systemName: "doc.fill").font(.title2)
@@ -211,6 +232,7 @@ struct VoiceNoteView: View {
     let player: VoicePlayer
     let play: (Double?) -> Void
     @Environment(ChatModel.self) private var chat
+    @Environment(\.onOwnerBubble) private var onBubble
     @State private var bars: [Float] = []
 
     private var isCurrent: Bool { player.playing == attachment.id }
@@ -226,7 +248,7 @@ struct VoiceNoteView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(isPlaying ? "Pause" : "Play voice note")
             VStack(alignment: .leading, spacing: 4) {
-                WaveformBars(bars: bars, progress: progress)
+                WaveformBars(bars: bars, progress: progress, onBubble: onBubble)
                     .frame(width: 160, height: 28)
                     .contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0).onEnded { value in
@@ -252,7 +274,7 @@ struct VoiceNoteView: View {
                         .accessibilityLabel("Playback speed \(player.rate.formatted())")
                     }
                 }
-                .foregroundStyle(.secondary)
+                .foregroundStyle(BubbleStyle.secondary(onBubble))
             }
         }
         .disabled(attachment.localFile == nil)
@@ -272,6 +294,7 @@ struct VoiceNoteView: View {
 struct WaveformBars: View {
     let bars: [Float]
     let progress: Double
+    var onBubble = false
 
     var body: some View {
         Canvas { context, size in
@@ -282,7 +305,7 @@ struct WaveformBars: View {
                 let rect = CGRect(x: CGFloat(index) * step + step * 0.2, y: (size.height - height) / 2, width: step * 0.6, height: height)
                 let played = (Double(index) + 0.5) / Double(values.count) <= progress
                 context.fill(Path(roundedRect: rect, cornerRadius: step * 0.3),
-                             with: .style(played ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary.opacity(0.55))))
+                             with: .style(played ? (onBubble ? AnyShapeStyle(Color.white) : AnyShapeStyle(.primary)) : BubbleStyle.unplayed(onBubble)))
             }
         }
     }

@@ -41,7 +41,7 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .sheet(isPresented: $addingAgent) { AddRelayView() }
+            .sheet(isPresented: $addingAgent) { AddRelayView().agentTheme() }
             .confirmationDialog("Delete all Hermes Call data?", isPresented: $confirmingDelete, titleVisibility: .visible) {
                 Button("Delete everything", role: .destructive) {
                     Task {

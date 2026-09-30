@@ -58,8 +58,8 @@ struct HomeView: View {
                         .accessibilityIdentifier("home.settings")
                 }
             }
-            .sheet(isPresented: $showingProfiles) { ProfilesView() }
-            .sheet(isPresented: $showingSettings) { SettingsView() }
+            .sheet(isPresented: $showingProfiles) { ProfilesView().agentTheme() }
+            .sheet(isPresented: $showingSettings) { SettingsView().agentTheme() }
         }
     }
 

@@ -77,6 +77,12 @@ struct HermesCallApp: App {
                     if count > 0 { notifications.requestAuthorization() }
                 }
                 .onOpenURL { url in open(url) }
+                #if DEBUG
+                .task(id: app.activeProfile?.id) {
+                    try? await Task.sleep(for: .seconds(1))
+                    phone.showDemoPromptIfRequested()
+                }
+                #endif
                 .onContinueUserActivity(NSStringFromClass(INStartCallIntent.self)) { activity in callBack(activity) }
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
@@ -130,13 +136,6 @@ struct RootView: View {
     /// HUD appearance: the presence is the whole app (and the call screen).
     private var presence: Bool { app.preferences.appearance == .hud }
 
-    /// What the Apple Watch shows; it is updated when this changes.
-    private var watchKey: String {
-        let profile = app.activeProfile
-        return [profile?.id.uuidString, chat.shownProfileID?.uuidString, profile?.bridgeName, profile?.agentPalette.rawValue, chat.messages.last?.id,
-                String(app.preferences.showMessageText)].map { $0 ?? "-" }.joined(separator: "|")
-    }
-
     /// Standard appearance shows calls on their own screen.
     private var callScreen: Bool { !presence && calls.inCall && calls.phase != .ringing }
 
@@ -158,18 +157,17 @@ struct RootView: View {
                 }
             }
         }
-        .fullScreenCover(isPresented: .constant(callScreen)) { InCallView() }
+        .fullScreenCover(isPresented: .constant(callScreen)) { InCallView().agentTheme() }
         .fullScreenCover(isPresented: Binding(get: { askConsent && !callScreen }, set: { if !$0 { consentDeferred = true } })) {
-            ConsentView { consentDeferred = true }
+            ConsentView { consentDeferred = true }.agentTheme()
         }
         .phonePrompt(enabled: !callScreen && chat.pendingApproval == nil)
         .sheet(item: Binding(get: { callScreen ? nil : chat.pendingApproval }, set: { if $0 == nil { chat.pendingApproval = nil } })) {
-            ChatApprovalSheet(approval: $0).interactiveDismissDisabled()
+            ChatApprovalSheet(approval: $0).interactiveDismissDisabled().agentTheme()
         }
-        .sheet(item: $app.route) { route in routeView(route).hudStyle(app.preferences.appearance == .hud) }
+        .sheet(item: $app.route) { route in routeView(route).agentTheme() }
         .hudStyle(app.preferences.appearance == .hud)
         .onChange(of: calls.inCall) { _, live in if live { chat.player.stop() } }
-        .onChange(of: watchKey, initial: true) { WatchBridge.shared.publish() }
         .task {
             // The Home Screen icon can be out of step with the setting (reinstall, restore): fix it once active.
             try? await Task.sleep(for: .seconds(1.5))

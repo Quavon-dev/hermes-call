@@ -10,7 +10,7 @@ struct PhonePromptModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content.sheet(item: Binding(get: { enabled ? phone.prompt : nil }, set: { _ in })) { prompt in
-            PhoneQuerySheet(prompt: prompt).interactiveDismissDisabled()
+            PhoneQuerySheet(prompt: prompt).interactiveDismissDisabled().agentTheme()
         }
     }
 }
@@ -54,6 +54,8 @@ struct PhoneQuerySheet: View {
         }
         .padding()
         .presentationDetents([.medium, .large])
+        // A decision: an opaque sheet, so nothing behind it shows through the item and the buttons.
+        .presentationBackground(app.preferences.appearance == .hud ? AnyShapeStyle(Color.black) : AnyShapeStyle(Color(.systemBackground)))
         .hudStyle(app.preferences.appearance == .hud)
         .disabled(phone.answering)
         .onChange(of: photos) { _, items in

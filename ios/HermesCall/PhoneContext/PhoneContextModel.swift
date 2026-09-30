@@ -90,6 +90,25 @@ final class PhoneContextModel {
         }
     }
 
+    #if DEBUG
+    /// `-PhoneDemoPrompt YES` (App Store screenshots): the active agent asks to add a calendar event (Ask).
+    func showDemoPromptIfRequested() {
+        guard UserDefaults.standard.bool(forKey: "PhoneDemoPrompt"), prompt == nil, let profile = app.activeProfile,
+              let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date()),
+              let start = Calendar.current.date(bySettingHour: 15, minute: 0, second: 0, of: tomorrow) else { return }
+        let iso = ISO8601DateFormatter()
+        let body: [String: JSON] = [
+            "type": "phone_query", "query_id": .string(Base64URL.encode(Sodium.randomBytes(16))), "capability": "calendar_create",
+            "reason": "You booked the dentist for tomorrow. Shall I put it in your calendar?",
+            "expires": .int(Int64((Date().timeIntervalSince1970 + 280) * 1000)),
+            "params": ["title": "Dentist", "start": .string(iso.string(from: start)),
+                       "end": .string(iso.string(from: start.addingTimeInterval(3600))), "location": "Dr. Weber, 2nd floor"],
+        ]
+        guard let query = PhoneQuery.parse(body) else { return }
+        enqueue(PhonePrompt(query: query, profileID: profile.id, agentName: profile.bridgeName, mailID: nil))
+    }
+    #endif
+
     private func isOpen(_ id: String) -> Bool { prompt?.id == id || queue.contains { $0.id == id } }
 
     private func close(_ id: String) {

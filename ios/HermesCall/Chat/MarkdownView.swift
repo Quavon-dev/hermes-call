@@ -1,5 +1,6 @@
 import HermesCallCore
 import SwiftUI
+import UIKit
 
 /// Agent Markdown: headings, lists, code blocks, quotes, tables and rules (`ChatMarkdown`), with
 /// inline styles and links inside each block.
@@ -46,11 +47,8 @@ private struct MarkdownBlockView: View {
                 .accessibilityAddTraits(.isHeader)
         case .list(let items):
             MarkdownListView(items: items)
-        case .code(_, let text):
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(text).font(.callout.monospaced()).textSelection(.enabled).padding(10)
-            }
-            .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
+        case .code(let language, let text):
+            CodeBlockView(language: language, text: text)
         case .quote(let blocks):
             MarkdownBlocksView(blocks: blocks)
                 .foregroundStyle(.secondary)
@@ -60,6 +58,68 @@ private struct MarkdownBlockView: View {
             MarkdownTableView(table: table)
         case .rule:
             Rectangle().fill(.secondary.opacity(0.4)).frame(height: 1).padding(.vertical, 2)
+        }
+    }
+}
+
+/// A code block: scrolls sideways with a fade at the edge that hides more (so it is clear there is more),
+/// or wraps its lines (toggle); copy puts the whole block on the pasteboard.
+private struct CodeBlockView: View {
+    let language: String?
+    let text: String
+    @State private var wraps = false
+    @State private var hiddenTrailing = false
+    @State private var hiddenLeading = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 14) {
+                Text(language.flatMap { $0.isEmpty ? nil : $0 } ?? "code").font(.caption.monospaced()).foregroundStyle(.secondary)
+                Spacer()
+                Button { wraps.toggle() } label: {
+                    Image(systemName: wraps ? "arrow.left.and.right" : "text.alignleft")
+                }
+                .accessibilityLabel(wraps ? "Scroll lines sideways" : "Wrap lines")
+                Button { UIPasteboard.general.string = text } label: { Image(systemName: "doc.on.doc") }
+                    .accessibilityLabel("Copy code")
+            }
+            .font(.footnote)
+            .buttonStyle(.borderless)
+            .padding(.horizontal, 10)
+            .padding(.top, 6)
+            if wraps {
+                code.fixedSize(horizontal: false, vertical: true)
+            } else {
+                ScrollView(.horizontal, showsIndicators: true) { code }
+                    .onScrollGeometryChange(for: [Bool].self) { geometry in
+                        [geometry.contentOffset.x > 1,
+                         geometry.contentOffset.x + geometry.containerSize.width < geometry.contentSize.width - 1]
+                    } action: { _, edges in
+                        hiddenLeading = edges[0]
+                        hiddenTrailing = edges[1]
+                    }
+                    .mask(fade)
+                    .overlay(alignment: .trailing) {
+                        if hiddenTrailing {
+                            Image(systemName: "chevron.right").font(.caption2.bold()).foregroundStyle(.secondary)
+                                .padding(.trailing, 4).accessibilityHidden(true)
+                        }
+                    }
+            }
+        }
+        .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var code: some View {
+        Text(text).font(.callout.monospaced()).textSelection(.enabled).padding(10)
+    }
+
+    /// Fades the edges that have more code behind them.
+    private var fade: some View {
+        HStack(spacing: 0) {
+            LinearGradient(colors: [hiddenLeading ? .clear : .black, .black], startPoint: .leading, endPoint: .trailing).frame(width: 24)
+            Color.black
+            LinearGradient(colors: [.black, hiddenTrailing ? .clear : .black], startPoint: .leading, endPoint: .trailing).frame(width: 36)
         }
     }
 }

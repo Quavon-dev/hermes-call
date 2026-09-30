@@ -50,6 +50,8 @@ enum HUD {
     static var alert: Color { Color(HUDTheme.shared.palette.alert) }
     static var ember: Color { Color(HUDTheme.shared.palette.ember) }
     static let deep = Color(red: 0.03, green: 0.024, blue: 0.02)  // #080605
+    /// The owner's chat bubble in the Standard appearance: dark enough for white text (WCAG AA).
+    static var ownerBubble: Color { Color(HUDTheme.shared.palette.ownerBubble) }
 
     /// Small spaced capitals, the only "HUD" typography left. They grow with Dynamic Type (up to about
     /// twice their size, so the presence keeps its room).
@@ -92,10 +94,22 @@ extension View {
         }
     }
 
+    /// Sheets and covers do not inherit the tint: every presented screen applies the agent's look again.
+    func agentTheme() -> some View { modifier(AgentTheme()) }
+
     /// A quiet near-black surface with a hairline edge (cards, bubbles, fields in HUD appearance). With
     /// Increase Contrast the edge is stronger; with Reduce Transparency the surface is opaque.
     func hudSurface(tint: Color = HUD.glow, fill: Double = 0.06, cornerRadius: CGFloat = 14) -> some View {
         modifier(HUDSurface(tint: tint, fill: fill, cornerRadius: cornerRadius))
+    }
+}
+
+/// The appearance's look with the active agent's colour (see `hudStyle`).
+struct AgentTheme: ViewModifier {
+    @Environment(AppModel.self) private var app
+
+    func body(content: Content) -> some View {
+        content.hudStyle(app.preferences.appearance == .hud)
     }
 }
 

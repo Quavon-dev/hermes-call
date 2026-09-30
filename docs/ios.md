@@ -76,6 +76,11 @@ account to get incoming calls.
 - **Calls**: interruptions and route changes are followed (`CallAudioRoute`), *Speaker* shows the real
   route, the call screen has iOS' audio route picker and captions, CallKit shows a template icon, and push
   rings with several agents show "Atlas or Nova" until the bridge confirms which one rang.
+- **Chat details**: code blocks scroll sideways with a fade and a chevron where more is hidden, or wrap
+  (toggle), and copy; the owner's bubble is the agent's colour darkened until white text, the transcript and
+  the waveform pass WCAG AA (`AgentPalette.ownerBubble`); search hits say *Today* / *Yesterday* and mark
+  matches in file names and cards too (`SearchSnippet`); a jumped-to hit keeps its ring for 4 s or until you
+  scroll. Every sheet and cover takes the active agent's colour (`agentTheme()`), not system blue.
 - **Chats** (several agents): the chat tab lists every agent's conversation, newest first, with its colour,
   connection dot, last message and its own unread count; the badge is the sum (`UnreadCounts`, app group).
   Opening a chat makes that agent active. While the app is open every agent (up to five, the active one
@@ -111,7 +116,9 @@ account to get incoming calls.
 UI tests (`HermesCallUITests`, part of the scheme's tests) run on the demo agent: onboarding → demo →
 consent → chat → call → hang up, the presence tap-to-call, Settings and Diagnostics. Debug launch arguments:
 `-UITestReset YES` (fresh install state), `-UITestConsent YES`, `-appearance hud|standard`.
-App Store screenshots (6.9", iPhone 17 Pro Max simulator):
+App Store screenshots (6.9", iPhone 17 Pro Max simulator), each with a one-line caption above the screen on
+the app's near-black backdrop (drawn by the test at 1320 × 2868): presence, call, chat, a place card with its
+map, and a phone-access *Ask* prompt (`-PhoneDemoPrompt YES`):
 
 ```bash
 cd ios && TEST_RUNNER_APPSTORE_SHOTS=$PWD/appstore/screenshots xcodebuild test -project HermesCall.xcodeproj \

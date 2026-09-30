@@ -175,7 +175,7 @@ struct PresentationBubble: View {
             }
             Text(message.date, style: .time).font(.caption2).foregroundStyle(.secondary)
         }
-        .sheet(item: $selected) { ResultDetail(item: $0, hud: hud) }
+        .sheet(item: $selected) { ResultDetail(item: $0, hud: hud).agentTheme() }
     }
 
     private var symbol: String {

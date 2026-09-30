@@ -32,7 +32,7 @@ struct ProfilesView: View {
                     Button { addingRelay = true } label: { Label("Add an agent", systemImage: "plus") }
                 }
             }
-            .sheet(isPresented: $addingRelay) { AddRelayView() }
+            .sheet(isPresented: $addingRelay) { AddRelayView().agentTheme() }
         }
     }
 }

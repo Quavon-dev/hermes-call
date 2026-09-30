@@ -20,6 +20,15 @@ struct ConsentView: View {
                     .foregroundStyle(.tint)
                     .accessibilityHidden(true)
                 Text("Before you talk to \(agentName)").font(.largeTitle.bold())
+                // First, so it is never under the buttons: the demo keeps everything on this iPhone.
+                if demo {
+                    Label("You are trying the demo: the demo agent runs on this iPhone and nothing leaves it.",
+                          systemImage: "info.circle")
+                        .font(.footnote)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: Metrics.cornerRadius))
+                }
                 Text("Hermes Call connects you to your own AI agent. To answer you, it sends what you share to that "
                      + "agent — and your agent may pass it on to the AI service its owner set it up with (for example "
                      + "a cloud language model provider).")
@@ -41,14 +50,6 @@ struct ConsentView: View {
                 }
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-                if demo {
-                    Label("You are trying the demo: the demo agent runs on this iPhone and nothing leaves it.",
-                          systemImage: "info.circle")
-                        .font(.footnote)
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: Metrics.cornerRadius))
-                }
             }
             .padding(24)
         }

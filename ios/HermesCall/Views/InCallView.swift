@@ -11,9 +11,10 @@ struct InCallView: View {
         .sheet(item: Binding(get: { calls.pendingApproval }, set: { if $0 == nil { calls.pendingApproval = nil } })) { approval in
             ApprovalSheet(approval: approval)
                 .interactiveDismissDisabled()
+                .agentTheme()
         }
         .phonePrompt(enabled: calls.pendingApproval == nil)
-        .fullScreenCover(isPresented: $looking) { LookSheet() }
+        .fullScreenCover(isPresented: $looking) { LookSheet().agentTheme() }
     }
 
     private var standard: some View {
