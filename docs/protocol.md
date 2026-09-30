@@ -72,11 +72,15 @@ Payload fields beyond `sign_pk` are defined by the bridge/app (M2/M3).
 ## Authenticated session (`GET /v1/ws`)
 
 ```
-relay  → client {"t":"challenge","nonce":32 bytes,"v":1}
+relay  → client {"t":"challenge","nonce":32 bytes,"v":1[,"time":ms since epoch]}
 client → relay  {"t":"auth","role":"bridge"|"device","id":ID,"sig":Ed25519(msg)[,"v":N,"caps":[…]]}
 relay  → client {"t":"ready","v":1,"relay":"0.6.2","caps":["unsupported","mail","blobs","live_activity","turns"]}
 msg = "hermescall/v1/auth" | authority | role | id | nonce     (joined with "|")
 ```
+
+The optional `time` lets a client notice clock skew early: the bridge logs a warning when its
+clock is more than 30 s off the relay's (E2E live messages fail beyond ±120 s). Relays do not
+send it yet; without `time` nothing changes.
 
 A new session for the same identity closes the old one. Revoked identities are
 disconnected within 15 s. On shutdown the relay closes sessions with WebSocket code 1001
@@ -181,7 +185,7 @@ to finish), with `iceTransportPolicy = relay` and only the relay's TURN server.
 | device → bridge | `ptt` | `call_id`, `down` (bool) | push-to-talk: switches the bridge from VAD endpointing to PTT |
 | device → bridge | `interrupt` | `call_id` | the owner tapped to cut the agent off: the bridge stops the current speech at once (like barge-in: output flushed, rest of the turn cancelled) and listens again; idempotent, no-op when the agent is not speaking; only from the device in the call |
 | device → bridge | `unpair` | – | the user removed this relay profile in the app: bridge revokes the device |
-| device → bridge | `approval` | `call_id`, `request_id`, `choice`: `once`\|`deny` | answer to `approval_request` |
+| device → bridge | `approval` | `call_id`, `request_id`, `choice`: `once`\|`session`\|`deny` | answer to `approval_request`; `session` = allow this command for the rest of the Hermes session (Hermes ≥ 0.15; only when the request's `choices` lists it); anything else counts as `deny` |
 | device → bridge | `call_image` | `call_id`, `blob_id`, `key`, `mime`: `image/jpeg`\|`image/png`\|`image/heic` | "look at this": a still for the agent, uploaded as an encrypted blob (see Chat); only from the device in the call, at most 1 per second and 30 per call (extras are rejected; beyond 40 `call_image` messages per minute per device they are ignored
 without an ack); the bridge downloads and deletes it, re-encodes it (JPEG ≤ 1280 px, no metadata) and sends it with the owner's **next** utterance as an `image_url` data-URL part (at most the newest 3 wait) |
 | bridge → device | `invite` | `call_id`, `reason` | ringing; also the positive answer to `invite_query` |
@@ -190,7 +194,7 @@ without an ack); the bridge downloads and deletes it, re-encodes it (JPEG ≤ 12
 | bridge → device | `busy` | `call_id` | another call is active |
 | bridge → device | `hangup` | `call_id` | bridge ended the call |
 | bridge → device | `caption` | `call_id`, `role`: `agent`\|`owner`, `text` (≤ 500, trimmed) | live caption, best-effort: an agent sentence when its audio starts playing; an owner utterance transcribed by the bridge (never with `stt: "device"`) |
-| bridge → device | `approval_request` | `call_id`, `request_id`, `command`, `description` | Hermes wants to run a gated command; show it, never approve by voice |
+| bridge → device | `approval_request` | `call_id`, `request_id`, `command`, `description`, `choices` (e.g. `["once","session","deny"]`; absent from older bridges = once/deny) | Hermes wants to run a gated command; show it, never approve by voice |
 | bridge → device | `call_image_ack` | `call_id` (`""` if the message's was invalid), `blob_id`, `ok` (bool) | `ok: true` once the image was downloaded and queued for the agent; `false` when it was rejected (not in this call, rate limit, unsupported or unreadable image). HEIC needs a HEIF-capable Pillow on the bridge; send JPEG |
 
 `call_id` = 16 random bytes, base64url; the app uses the same 16 bytes as the
@@ -248,11 +252,14 @@ after it has stored the message (`mail_ack`), so a crash cannot lose it.
 | bridge → device | `chat_ack` | `id`, `state: delivered/transcribed`, `transcript?` (voice notes) |
 | bridge → device | `chat` (mail) | `id`, `role: agent/owner` (owner = mirrored from another phone), `kind: text/missed_call/declined_call`, `text`, `attachments?` (with `size`) |
 | bridge → device | `typing` | – |
-| bridge → device | `approval_request` (mail) | `request_id`, `command`, `description`, `chat: true` |
-| device → bridge | `approval` (mailbox envelope, no `call_id`) | `request_id`, `choice: once/deny` |
+| bridge → device | `approval_request` (mail) | `request_id`, `command`, `description`, `chat: true`, `choices` (e.g. `["once","session","deny"]`; absent from older bridges = once/deny) |
+| device → bridge | `approval` (mailbox envelope, no `call_id`) | `request_id`, `choice: once/session/deny` |
 | bridge → device | `approval_done` | `request_id` (answered on another phone) |
 
-A resent chat message (same `id`, new `mid`) is acked again but delivered once.
+A resent chat message (same `id`, new `mid`) is acked again but delivered once. The bridge stores
+an owner message durably before it sends `delivered` (so `delivered` survives a bridge restart);
+agent messages wait in a persistent outbox on the bridge until the relay's mailbox took them
+(retried with backoff and after every reconnect, for up to 7 days, with the same `mid`).
 
 **Spoken replies (M9).** An owner voice note with `voice_replies: true` asks for a spoken answer.
 The bridge remembers it for 10 minutes (a text message or a voice note without the flag clears it).
@@ -273,7 +280,9 @@ The agent's tool progress, for the presence's tasks ring and the Live Activity.
 `POST /v1/chat/progress` (ring/chat token allowed; the Hermes plugin's tool hooks):
 `{turn_id?: str 1–64 (default "chat"), tool: str 1–64 ([A-Za-z0-9_.:-]; optional for done/failed),
 index: int ≥ 0 (optional for done/failed), state: started|finished|done|failed, ok?: bool,
-duration?: number ≥ 0, preview?: str ≤ 200}`. Unknown keys → 400; success → 204 (503 when the
+duration?: number ≥ 0, preview?: str ≤ 200, total?: int 1–999 (tools the turn will run, when
+known), toolset?: str ([a-z0-9_-] 1–64, Hermes' toolset of the tool: labels unknown tools)}`.
+Unknown keys → 400; success → 204 (503 when the
 bridge runs without task support). `done`/`failed`
 end the turn (the plugin sends them when the reply for the owner's message was sent). Only the
 newest turn counts: a new `turn_id` replaces a running one, and later events of the replaced turn
@@ -316,9 +325,14 @@ decides; the bridge only relays and validates. Nothing is stored on the bridge.
 | `files` | No/Ask | `max` 1–4 (default 1) | same as `photos` |
 | `geofence` | No/Ask/Yes | `action`: `add`\|`remove`\|`list`; add: `title` (1–120, required), `note?` (≤ 500), `place` (required): `{lat, lon, radius_m?}` (radius 100–2000 m, default 200) or `{query}` (1–120, resolved on the phone near the owner), `trigger`: `enter` (default) \| `exit`, `repeat` (bool, default false), `id?` (≤ 64); remove: `id` (required, ≤ 64); list: – | add: `id`, `resolved_name?`; remove: `removed`; list: `reminders` (≤ 20): [{`id`, `title`, `place_name?`, `trigger`, `repeat`}] — never the phone's location |
 
+| `reminder_create` | No/Ask | `title` (1–200, required), `due?` (ISO 8601 with offset), `notes?` (≤ 1000) | `ok` (true), `id` (≤ 200) |
+| `calendar_create` | No/Ask | `title` (1–200, required), `start`, `end` (ISO 8601 with offset, required; end after start, ≤ 14 days later), `location?` (≤ 200), `notes?` (≤ 1000) | `ok` (true), `id` (≤ 200) |
+
 Times are ISO 8601 with offset. Answers carry only what the table lists (no ids, except
-geofence reminder ids). Place reminders live on the phone: it monitors the region itself and
-fires a local notification; the bridge validates params before asking (400 on bad input).
+geofence reminder ids and the ids of created reminders/events). Place reminders live on the phone:
+it monitors the region itself and fires a local notification; the bridge validates params before
+asking (400 on bad input). The write capabilities (`reminder_create`, `calendar_create`) go to one
+phone only, the most recently active one, so nothing is created twice.
 
 ### Local API (Hermes plugin, ring/chat token allowed)
 
@@ -338,7 +352,10 @@ directory and gives the agent only paths.
 | device → bridge | `phone_answer` (mailbox envelope) | `query_id`, `status`: `ok`/`denied`/`unavailable`/`timeout`, `data?` (≤ 16 KiB JSON) |
 | bridge → device | `query_done` | `query_id` (answered elsewhere or expired: close the prompt) |
 
-The query goes to every paired phone. An `ok` answer wins at once; otherwise the bridge
+The query goes to every paired phone (writes: see above). An `ok` answer from the most recently
+active phone (the one that last sent the bridge anything) wins at once; an `ok` from another phone
+waits up to 3 s for that phone (it is probably in the owner's hand) and wins if that phone declines
+or stays silent; pickers take the first `ok`. Otherwise the bridge
 waits until every phone answered or `expires` + 10 s passed and reports, in this order,
 `denied`, `unavailable`, `timeout`. The bridge validates `data` per capability (only the
 listed top-level keys, ≤ 16 KiB) and rejects anything else as `unavailable`.

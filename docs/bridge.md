@@ -18,9 +18,15 @@ phone ⇄ (DTLS-SRTP via TURN) ⇄ aiortc → Silero VAD → faster-whisper → 
   control API listens on `127.0.0.1:8765` and needs a bearer token.
 - **Hermes stays in charge.** The bridge talks to the official Hermes API
   server (`/v1/chat/completions`, streaming) with `X-Hermes-Session-Id:
-  hermes-call-phone`, so all calls share one Hermes session with full memory and
-  tools. Tool approvals are **never granted by voice**: the exact command is
-  shown on the phone (Approve once / Deny); no answer within 60 s = deny.
+  hermes-call-phone-<phone>-<date>`: one Hermes session per phone and day (a new one
+  also after 200 turns), so sessions do not grow forever; the recent chat and the last
+  call's transcript carry over between calls and chat (kept in the state directory, so
+  also across restarts). Tool approvals are **never granted by voice**: the exact
+  command is shown on the phone (Approve once / Approve for this session / Deny); no
+  answer within 60 s = deny.
+- **If Hermes or Kokoro fails mid-call** the agent says "Sorry, I couldn't reach
+  <agent> just now." (or, if speech synthesis itself is down, two short tones), never
+  silence; the log says which one failed and how (HTTP status or error class).
 - **No audio stored, no transcripts logged.** Audio lives only in memory for
   the current utterance. Logs contain timings and 6-character ids only. (Hermes
   itself keeps the conversation text in its session store, as with any chat.)
@@ -58,7 +64,7 @@ normally run `hermes gateway`), then pair with the relay using the link that
 `hermescall-relay pair` printed on the relay:
 
 ```bash
-pct exec 121 -- bash -c "hermes-call-bridge relay add 'hermescall://pair?v=1&k=relay&r=relay.example.com&c=...' && systemctl restart hermes-call-bridge"
+pct exec 121 -- bash -c "systemctl stop hermes-call-bridge; hermes-call-bridge relay add 'hermescall://pair?v=1&k=relay&r=relay.example.com&c=...' && systemctl start hermes-call-bridge"
 ```
 
 Pair a phone (the app shows a code field and a QR scanner):
@@ -70,6 +76,7 @@ pct exec 121 -- hermes-call-bridge device add --name iPhone
 Other commands:
 
 ```bash
+pct exec 121 -- hermes-call-bridge doctor
 pct exec 121 -- hermes-call-bridge device list
 pct exec 121 -- hermes-call-bridge device revoke <device-id>
 pct exec 121 -- hermes-call-bridge call --first-message "Hello, this is Hermes." --reason "test"
@@ -122,8 +129,11 @@ Restart Hermes afterwards. The agent then has one tool:
 
 `call_owner(reason, first_message, device="all")` — rings your phone(s) and
 waits up to 45 s. If you answer, the bridge speaks `first_message` and the
-conversation continues on the call (Hermes session `hermes-call-phone`, which
-is told the `reason`). The tool returns `answered`, `declined`, `no_answer`,
+conversation continues on the call (that phone's call session, which
+is told the `reason`). If the owner stops the agent while a tool waits, the tool returns at
+once (`interrupted`). The plugin needs Hermes ≥ 0.15 (`min_hermes`); on startup it checks the
+Hermes internals it uses and disables only what is missing (with a warning in Hermes' log).
+The tool returns `answered`, `declined`, `no_answer`,
 `busy`, `no_devices` or `rate_limited` (at most 3 rings per 10 minutes and
 20 per day, whoever asks). The plugin only talks to `127.0.0.1` (a non-loopback
 `HERMES_CALL_URL` is refused); the relay limits rings to 10 per minute.
@@ -145,6 +155,70 @@ end-of-speech → first-audio latency.
 | POST | `/v1/devices/pairing` | `{"name"}` → one-time code + link |
 | DELETE | `/v1/devices/{id}` | revoke (bridge + relay) |
 | GET | `/v1/status` | relay connection, device count, call state |
+| GET | `/v1/chat/events?cursor=&wait=&epoch=` | chat adapter long-poll → `{cursor, events, epoch}` (Hermes token); `epoch` names the bridge's event store, a cursor with another epoch acks nothing |
+| POST | `/v1/chat/messages` | `{text, reply_to?, answers?}` → `{message_id, queued}` (`queued`: the relay has not taken it yet; it is retried) |
+| GET | `/healthz` | **no token**: `{ok, relay, hermes, kokoro}`, 503 when something is down |
+| GET | `/metrics` | **no token**: Prometheus text — call latency (end of speech → first audio), STT real-time factor, turn errors by cause, calls, relay connection, chat event/inbox/outbox depth. Counts and timings only |
+
+`hermes-call-bridge doctor` checks the config, secrets, relay pairing and reachability,
+Hermes and Kokoro (`/health`), the speech model, free disk space and whether the service
+answers `/healthz`; it exits 1 when a check failed.
+
+## Reliability
+
+- **Chat never loses a message on a restart.** An owner message is stored (SQLite,
+  `/var/lib/hermes-call-bridge/chat.db`, 0600) before the phone sees *delivered*, and stays
+  there until the Hermes adapter took it. Agent messages wait (end-to-end encrypted) in an
+  outbox until the relay's mailbox took them: retried with backoff and after every relay
+  reconnect for up to 7 days; if one is given up, the adapter logs it. Owner message text sits
+  in that file only until Hermes has it (Hermes keeps the conversation in its own session store).
+- **Replay protection** marks are appended to a small log per message and compacted in the
+  background (no file rewrite per message).
+- **Revoking a phone works offline**: it is forgotten locally at once and the relay is told when
+  it is reachable again.
+- **Stopping** (`systemctl stop`, SIGTERM) hangs up an active call, gives queued chat messages a
+  last try and saves the replay marks. The unit uses systemd's watchdog (`WatchdogSec=60`).
+- **Live-call speech recognition goes first**: a long voice note is transcribed in pieces behind
+  any live utterance.
+- Hermes' tool approvals that cannot be delivered are retried and otherwise denied, so a Hermes
+  run never waits on a lost answer.
+
+## Settings (`/etc/hermes-call-bridge/bridge.toml`, all optional)
+
+```toml
+[calls]
+ring_timeout = 45        # seconds
+approval_timeout = 60
+max_call_seconds = 3600  # "We have about a minute left on this call." warning_seconds before
+warning_seconds = 60
+media_timeout = 20       # a call whose audio never arrives ends
+[voice]
+end_silence_ms = 550     # silence that ends your utterance (200–3000)
+[turn]
+transport = "auto"       # TURN transport the bridge uses: auto/udp, tcp or tls (turns:)
+[log]
+level = "INFO"
+format = "text"          # or "json" (one object per line)
+```
+
+The bridge gets all TURN URLs from the relay and uses the preferred one (aiortc uses one TURN
+server per call; the phone uses all of them). Set `transport = "tcp"` or `"tls"` when the bridge's
+network blocks outbound UDP. Restart the service after changing the file.
+
+## Several agents on one host
+
+Each agent gets its own bridge with its own relay pairing, phones and port:
+
+```bash
+/root/hermes-call/bridge/install.sh install --instance atlas --api-port 8766 --hermes-port 8643 \
+  --hermes-user atlas --agent-name Atlas --configure-hermes
+hermes-call-bridge-atlas relay add '<pairing link>' && systemctl start hermes-call-bridge@atlas
+```
+
+It uses `/etc/hermes-call-bridge-atlas`, `/var/lib/hermes-call-bridge-atlas`, the unit
+`hermes-call-bridge@atlas` and the wrapper `hermes-call-bridge-atlas`, and sets
+`HERMES_CALL_URL` for that Hermes user. The default bridge is unchanged. One Hermes user per
+bridge. `install.sh uninstall --instance atlas [--purge]` removes only that one.
 
 ## Resources
 
