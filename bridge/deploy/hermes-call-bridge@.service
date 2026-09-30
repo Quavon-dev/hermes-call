@@ -1,5 +1,8 @@
+# Named instance for a second agent on the same host (install.sh --instance NAME):
+# config /etc/hermes-call-bridge-NAME/bridge.toml, state /var/lib/hermes-call-bridge-NAME.
+# The default single bridge keeps using hermes-call-bridge.service.
 [Unit]
-Description=Hermes Call hermes-call-bridge (voice calls for Hermes Agent, outbound connections only)
+Description=Hermes Call bridge instance %i (voice calls for Hermes Agent, outbound connections only)
 Documentation=https://github.com/quavon-dev/hermes-call
 After=network-online.target
 Wants=network-online.target
@@ -7,17 +10,15 @@ Wants=network-online.target
 [Service]
 Type=notify
 NotifyAccess=main
-# The bridge pings systemd while its event loop runs (sd_notify WATCHDOG=1 every 30 s).
 WatchdogSec=60
 TimeoutStartSec=180
-# SIGTERM: the active call is hung up and queued chat messages get one last try.
 TimeoutStopSec=20
 User=hermes-call-bridge
 Group=hermes-call-bridge
-ExecStart=/opt/hermes-call-bridge/venv/bin/python -m hermescall_bridge.cli serve
+ExecStart=/opt/hermes-call-bridge/venv/bin/python -m hermescall_bridge.cli --config /etc/hermes-call-bridge-%i/bridge.toml serve
 Environment=PYTHONPATH=/opt/hermes-call-bridge/common:/opt/hermes-call-bridge/bridge
 Environment=PYTHONDONTWRITEBYTECODE=1 HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1
-StateDirectory=hermes-call-bridge
+StateDirectory=hermes-call-bridge-%i
 StateDirectoryMode=0700
 Restart=on-failure
 RestartSec=5

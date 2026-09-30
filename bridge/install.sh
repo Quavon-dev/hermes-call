@@ -4,6 +4,8 @@
 #   install.sh [install]          install or reconfigure (idempotent)
 #   install.sh update             redeploy code from this checkout, keep keys and pairings
 #   install.sh uninstall [--purge]
+#   install.sh … --instance NAME  a second bridge for another agent on this host (own config, state,
+#                                  port and systemd unit hermes-call-bridge@NAME); default: the single bridge
 #
 # The bridge only makes outbound connections (to your relay) and binds its
 # control API to 127.0.0.1. Nothing listens on the network.
@@ -11,11 +13,13 @@
 set -Eeuo pipefail
 
 readonly PREFIX=/opt/hermes-call-bridge
-readonly ETC=/etc/hermes-call-bridge
-readonly STATE=/var/lib/hermes-call-bridge
 readonly SERVICE_USER=hermes-call-bridge
-readonly WRAPPER=/usr/local/bin/hermes-call-bridge
-readonly UNIT=hermes-call-bridge.service
+# Per instance (set_paths): the default instance keeps the historical paths and unit.
+ETC=/etc/hermes-call-bridge
+STATE=/var/lib/hermes-call-bridge
+WRAPPER=/usr/local/bin/hermes-call-bridge
+UNIT=hermes-call-bridge.service
+UNIT_FILE=hermes-call-bridge.service
 declare -A MODEL_REVISIONS=(
   [small.en]=d1d751a5f8271d482d14ca55d9e2deeebbae577f
   [base.en]=3d3d5dee26484f91867d81cb899cfcf72b96be6c
@@ -32,6 +36,9 @@ HERMES_USER=${HERMES_USER:-}
 STT_MODEL=${STT_MODEL:-}
 TTS_VOICE=${TTS_VOICE:-}
 AGENT_NAME=${AGENT_NAME:-}
+INSTANCE=${INSTANCE:-}
+API_PORT=${API_PORT:-}
+HERMES_PORT=${HERMES_PORT:-}
 CONFIGURE_HERMES=0
 PURGE=0
 
@@ -52,6 +59,9 @@ Usage: install.sh [install|update|uninstall] [options]
                          (more accurate, ~1.7 s per utterance on 2 cores, ~300 MB more RAM)
   --voice NAME           Kokoro voice (default: bm_george)
   --agent-name NAME      name shown on the phone for calls (default: Hermes)
+  --instance NAME        install/update/uninstall a named extra bridge (another agent on this host)
+  --api-port PORT        the bridge's local API port (default 8765; each instance needs its own)
+  --hermes-port PORT     that agent's Hermes API server port on 127.0.0.1 (default 8642)
   --purge                with uninstall: also delete keys, pairings and models
 EOF
 }
@@ -64,6 +74,9 @@ parse_flags() {
       --stt-model) STT_MODEL=${2:?}; shift ;;
       --voice) TTS_VOICE=${2:?}; shift ;;
       --agent-name) AGENT_NAME=${2:?}; shift ;;
+      --instance) INSTANCE=${2:?}; shift ;;
+      --api-port) API_PORT=${2:?}; shift ;;
+      --hermes-port) HERMES_PORT=${2:?}; shift ;;
       --purge) PURGE=1 ;;
       -h | --help) usage; exit 0 ;;
       *) die "unknown option: $1" ;;
@@ -75,8 +88,26 @@ parse_flags() {
 # Both read files a fresh install does not have yet: never fail (set -e + pipefail).
 toml_value() { { sed -n "s/^$1 = \"\\(.*\\)\"\$/\\1/p" "$ETC/bridge.toml" 2>/dev/null || true; } | head -1; }
 
+toml_port() { { sed -n "s/^$1 = \\([0-9][0-9]*\\)\$/\\1/p" "$ETC/bridge.toml" 2>/dev/null || true; } | head -1; }
+
+set_paths() {
+  [[ -z $INSTANCE ]] && return 0
+  [[ $INSTANCE =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]] || die "invalid --instance (a-z, 0-9, -; up to 31 chars)"
+  ETC=/etc/hermes-call-bridge-$INSTANCE
+  STATE=/var/lib/hermes-call-bridge-$INSTANCE
+  WRAPPER=/usr/local/bin/hermes-call-bridge-$INSTANCE
+  UNIT=hermes-call-bridge@$INSTANCE.service
+  UNIT_FILE=hermes-call-bridge@.service
+}
+
 # Flags win; otherwise `update` keeps what is installed; defaults only for a first install.
 load_settings() {
+  [[ -n $API_PORT ]] || API_PORT=$(toml_port port)
+  [[ -n $HERMES_PORT ]] || HERMES_PORT=$(section_url hermes | sed -n 's|^http://127.0.0.1:\([0-9]*\)$|\1|p')
+  API_PORT=${API_PORT:-8765}
+  HERMES_PORT=${HERMES_PORT:-8642}
+  [[ $API_PORT =~ ^[0-9]{2,5}$ && $API_PORT -le 65535 ]] || die "invalid --api-port"
+  [[ $HERMES_PORT =~ ^[0-9]{2,5}$ && $HERMES_PORT -le 65535 ]] || die "invalid --hermes-port"
   [[ -n $HERMES_USER ]] || HERMES_USER=$({ sed -n 's/^HERMES_USER=//p' "$ETC/install.env" 2>/dev/null || true; } | head -1)
   [[ -n $AGENT_NAME ]] || AGENT_NAME=$(toml_value agent_name)
   [[ -n $TTS_VOICE ]] || TTS_VOICE=$(toml_value voice)
@@ -147,7 +178,7 @@ export PATH
 [ "\$(id -u)" -eq 0 ] || { echo "hermes-call-bridge: run as root" >&2; exit 1; }
 cd /
 exec runuser -u $SERVICE_USER -- env PYTHONPATH=$PREFIX/common:$PREFIX/bridge PYTHONDONTWRITEBYTECODE=1 \\
-  HF_HUB_OFFLINE=1 $PREFIX/venv/bin/python -m hermescall_bridge.cli "\$@"
+  HF_HUB_OFFLINE=1 $PREFIX/venv/bin/python -m hermescall_bridge.cli --config $ETC/bridge.toml "\$@"
 EOF
   chmod 0755 "$WRAPPER"
 }
@@ -234,6 +265,10 @@ install_hermes_plugin() {
   as_hermes sh -c 'umask 022; mkdir -p "$1" && rm -rf "$1/hermes-call.new" && cp -R "$2" "$1/hermes-call.new" &&
     rm -rf "$1/hermes-call" && mv "$1/hermes-call.new" "$1/hermes-call"' _ "$plugins" "$PREFIX/hermes-integration/hermes-call"
   set_env_value "$env_file" HERMES_CALL_TOKEN "$(cat "$ETC/call_token")"
+  # The plugin reaches this bridge's local API (the default port needs no setting).
+  if [[ $API_PORT != 8765 || -n $(env_value "$env_file" HERMES_CALL_URL) ]]; then
+    set_env_value "$env_file" HERMES_CALL_URL "http://127.0.0.1:$API_PORT"
+  fi
   # Chat: cron `deliver=hermes_call` goes to the owner's chat; only paired phones can reach the bridge,
   # so a global GATEWAY_ALLOWED_USERS must not lock the owner out of it.
   set_env_value "$env_file" HERMES_CALL_HOME_CHANNEL owner
@@ -257,10 +292,11 @@ secrets_dir = "$ETC"
 
 [api]
 host = "127.0.0.1"
-port = 8765
+port = $API_PORT
 
 [hermes]
-url = "http://127.0.0.1:8642"
+url = "http://127.0.0.1:$HERMES_PORT"
+# Base of the per-phone call sessions (<base>-<phone>-<date>); the chat uses Hermes' own sessions.
 session_id = "hermes-call-phone"
 
 [tts]
@@ -271,15 +307,54 @@ voice = "$TTS_VOICE"
 model = "$STT_MODEL"
 model_dir = "$STATE/models"
 threads = $(nproc)
+
+# Optional (defaults shown):
+# [calls]
+# ring_timeout = 45        # seconds a ring lasts
+# approval_timeout = 60    # seconds to approve a command on the phone during a call
+# max_call_seconds = 3600  # a call ends after this; a warning is spoken warning_seconds before
+# warning_seconds = 60
+# media_timeout = 20       # a call whose audio never arrives ends after this
+# [voice]
+# end_silence_ms = 550     # silence that ends the owner's utterance
+# [turn]
+# transport = "auto"       # TURN transport the bridge tries first: auto/udp, tcp or tls
+# [log]
+# level = "INFO"           # DEBUG, INFO, WARNING, ERROR
+# format = "text"          # or "json"
 EOF
   chmod 0644 "$ETC/bridge.toml.tmp"
   mv "$ETC/bridge.toml.tmp" "$ETC/bridge.toml"
 }
 
 install_unit() {
-  install -m 0644 "$PREFIX/bridge/deploy/$UNIT" "/etc/systemd/system/$UNIT"
+  install -m 0644 "$PREFIX/bridge/deploy/$UNIT_FILE" "/etc/systemd/system/$UNIT_FILE"
   systemctl daemon-reload
   systemctl enable "$UNIT" >/dev/null
+}
+
+# `url` of a bridge.toml section ([hermes] or [tts]).
+section_url() { { sed -n "/^\\[$1\\]/,/^\\[/ s/^url = \"\\(.*\\)\"\$/\\1/p" "$ETC/bridge.toml" 2>/dev/null || true; } | head -1; }
+
+probe_dependency() {
+  local name=$1 url=$2
+  if "$PREFIX/venv/bin/python" - "$url" >/dev/null 2>&1 <<'PY'; then
+import sys
+import urllib.request
+
+with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(sys.argv[1], timeout=3) as response:
+    sys.exit(0 if response.status < 500 else 1)
+PY
+    log "$name reachable ($url)"
+  else
+    warn "$name is not reachable at $url; calls need it (is it running? see docs/bridge.md)"
+  fi
+}
+
+# Reachability only: Kokoro and Hermes are installed and run by you, never by this script.
+check_dependencies() {
+  probe_dependency Hermes "$(section_url hermes)/health"
+  probe_dependency Kokoro "$(section_url tts)/health"
 }
 
 start_if_ready() {
@@ -311,23 +386,34 @@ cmd_install() {
   install_hermes_plugin
   install_unit
   save_settings
+  check_dependencies
   start_if_ready
+  local cli=${WRAPPER##*/}
   cat <<EOF
 
-hermes-call-bridge installed. It makes outbound connections only; its API is 127.0.0.1:8765.
-  hermes-call-bridge relay add '<link>'     pair with your relay (then: systemctl restart hermes-call-bridge)
-  hermes-call-bridge device add --name iPhone
-  hermes-call-bridge device list | revoke <id>
-  hermes-call-bridge call                   ring your paired devices
+hermes-call-bridge installed ($UNIT). It makes outbound connections only; its API is 127.0.0.1:$API_PORT.
+  $cli relay add '<link>'     pair with your relay (stop the service first: systemctl stop $UNIT)
+  $cli device add --name iPhone
+  $cli device list | revoke <id>
+  $cli call                   ring your paired devices
+  $cli doctor                 check config, relay, Hermes, Kokoro, speech model and disk
 EOF
 }
 
 cmd_uninstall() {
   need_root
   systemctl disable --now "$UNIT" >/dev/null 2>&1 || true
-  rm -f "/etc/systemd/system/$UNIT" "$WRAPPER"
+  rm -f "$WRAPPER"
+  if [[ -z $INSTANCE ]] && ! compgen -G '/etc/hermes-call-bridge-*/bridge.toml' >/dev/null; then
+    rm -f "/etc/systemd/system/$UNIT"
+    rm -rf "$PREFIX"
+  elif [[ -z $INSTANCE ]]; then
+    rm -f "/etc/systemd/system/$UNIT"
+    log "Kept the shared code in $PREFIX: named bridges (--instance) still use it."
+  else
+    log "Kept the shared code in $PREFIX and the unit template (other bridges may use them)."
+  fi
   systemctl daemon-reload
-  rm -rf "$PREFIX"
   if [[ $PURGE -eq 1 ]]; then
     rm -rf "$ETC" "$STATE"
     userdel "$SERVICE_USER" 2>/dev/null || true
@@ -341,6 +427,7 @@ main() {
   local command=install
   if [[ $# -gt 0 && $1 != -* ]]; then command=$1; shift; fi
   parse_flags "$@"
+  set_paths
   case "$command" in
     install | update) cmd_install ;;
     uninstall) cmd_uninstall ;;
