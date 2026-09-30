@@ -206,12 +206,26 @@ class BrokenTts(FakeTts):
         yield b""  # pragma: no cover
 
 
+class CountingTrack(SpeechTrack):
+    def __init__(self) -> None:
+        super().__init__()
+        self.enqueued = 0
+
+    def enqueue_pcm(self, pcm: bytes, rate: int) -> None:
+        self.enqueued += len(pcm)
+        super().enqueue_pcm(pcm, rate)
+
+
 async def test_a3_tts_error_is_not_silence() -> None:
-    out = SpeechTrack()
-    conversation = Conversation(FakeHermes(), BrokenTts(), None, out, None)
+    out = CountingTrack()
+    tts = BrokenTts()
+    conversation = Conversation(FakeHermes(), tts, None, out, None)
+    player = drain(out)
     turn = asyncio.ensure_future(conversation._run_turn(None, time.monotonic(), "what's up?"))
     await asyncio.wait_for(turn, 5)
-    assert out.buffered_seconds > 0, "Kokoro failed and the owner hears nothing"
+    player.cancel()
+    assert out.enqueued > 0, "Kokoro failed and the owner hears nothing"
+    assert len(tts.spoken) == 1, "after the first TTS failure the rest of the turn is not tried again"
 
 
 # ---- A4: relay add --force while the daemon runs ----------------------------------

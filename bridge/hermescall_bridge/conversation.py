@@ -12,10 +12,12 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 
+import httpx
 import numpy as np
 
 from .audio import SpeechTrack
 from .hermes import ApprovalRequest, HermesClient, TextDelta, ToolProgress
+from .metrics import METRICS
 from .tasks import TOOL_NAME, Progress
 from .text import Chunker
 from .tts import SAMPLE_RATE as TTS_RATE
@@ -38,6 +40,26 @@ PHONE_SYSTEM = (
 )
 APPROVAL_PROMPT = "I need your approval on your phone screen before I run that."
 APPROVAL_DENIED = "Understood, I will not run it."
+FALLBACK_LINE = "Sorry, I couldn't reach {agent} just now."
+# Hermes (API server) or Kokoro failing mid-turn: the owner hears a short line or tone, never silence.
+HERMES_ERRORS = (httpx.HTTPError, TimeoutError, OSError, ValueError)
+TTS_ERRORS = (httpx.HTTPError, TimeoutError, OSError)
+# When even TTS is down: two short tones instead of silence (24 kHz, 16-bit mono).
+_TONE_RATE = 24_000
+
+
+def fallback_tone() -> bytes:
+    t = np.arange(int(_TONE_RATE * 0.15)) / _TONE_RATE
+    beep = (np.sin(2 * np.pi * 660 * t) * 6000).astype(np.int16)
+    gap = np.zeros(int(_TONE_RATE * 0.12), dtype=np.int16)
+    return np.concatenate([beep, gap, beep]).tobytes()
+
+
+def describe(exc: BaseException) -> str:
+    """For logs: the error class and, for HTTP errors, the status (never URLs or bodies)."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    return exc.__class__.__name__
 
 
 @dataclass(frozen=True)
@@ -286,7 +308,12 @@ class Conversation:
         marks = {"stt": stt_done}
         self.transcript.append(("owner", text))
         try:
-            await self._stream_reply(text, chunks, marks)
+            try:
+                await self._stream_reply(text, chunks, marks)
+            except HERMES_ERRORS as exc:
+                log.warning("turn failed: Hermes %s after %.0f ms", describe(exc), (time.monotonic() - stt_done) * 1000)
+                METRICS.turn_errors.inc("hermes")
+                await chunks.put(FALLBACK_LINE.format(agent=self._agent_name))
             await chunks.put(None)
             await speaker
         finally:
@@ -351,16 +378,27 @@ class Conversation:
             await chunks.put(chunk)
 
     async def _speak_queue(self, chunks: asyncio.Queue, ended: float | None = None) -> None:
+        tts_failed = False
         while (chunk := await chunks.get()) is not None:
-            async with contextlib.aclosing(self._tts.synthesize(chunk)) as audio:
-                await self._play(audio, ended, chunk)
-                ended = None
+            if tts_failed:
+                continue  # Kokoro is down: the tone played once; the rest of the turn is dropped
+            try:
+                async with contextlib.aclosing(self._tts.synthesize(chunk)) as audio:
+                    await self._play(audio, ended, chunk)
+            except TTS_ERRORS as exc:
+                log.warning("speech synthesis failed: %s; playing a tone instead", describe(exc))
+                METRICS.turn_errors.inc("tts")
+                tts_failed = True
+                self._out.enqueue_pcm(fallback_tone(), _TONE_RATE)
+            ended = None
         await self._out.drained.wait()
 
     async def _play(self, audio: AsyncIterator[bytes], ended: float | None, caption: str = "") -> None:
         async for pcm in audio:
             if ended is not None:
-                log.info("latency: end of speech → first audio %.0f ms", (time.monotonic() - ended) * 1000)
+                latency = time.monotonic() - ended
+                log.info("latency: end of speech → first audio %.0f ms", latency * 1000)
+                METRICS.call_latency.observe(latency)
                 ended = None
             if caption:
                 self._caption_when_heard(caption)
