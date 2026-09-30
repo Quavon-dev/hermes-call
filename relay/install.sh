@@ -56,6 +56,7 @@ HC_TURNS=${HC_TURNS:-}
 INTERACTIVE=1
 PURGE=0
 RESTORE_DB=0
+ALLOW_DOWNGRADE=${HC_ALLOW_DOWNGRADE:-0}
 TURN_MIN_PORT=49160
 TURN_MAX_PORT=49200
 
@@ -96,6 +97,7 @@ Usage: install.sh [install|update|rollback|backup|restore|rotate|uninstall|pair|
   --non-interactive      never prompt; fail on missing settings
   --purge                with uninstall: also delete keys, config and database
   --restore-db           with rollback: also restore the database snapshot taken before the update
+  --allow-downgrade      with update: allow code older than the installed version (or HC_ALLOW_DOWNGRADE=1)
 EOF
 }
 
@@ -132,6 +134,7 @@ parse_flags() {
       --turns) HC_TURNS=yes ;;
       --no-turns) HC_TURNS=no ;;
       --restore-db) RESTORE_DB=1 ;;
+      --allow-downgrade) ALLOW_DOWNGRADE=1 ;;
       --no-firewall) HC_FIREWALL=no ;;
       --harden-ssh) HC_HARDEN_SSH=yes ;;
       --non-interactive) INTERACTIVE=0 ;;
@@ -309,11 +312,15 @@ build_of() {
   sed -n 's/^version=//p; s/^commit=//p' "$1/VERSION" | paste -sd' ' -
 }
 
+source_version() { sed -n 's/^VERSION = "\(.*\)"$/\1/p' "$SRC_ROOT/relay/hermescall_relay/version.py"; }
+
 write_version_file() {
   local version commit
-  version=$(sed -n 's/^VERSION = "\(.*\)"$/\1/p' "$SRC_ROOT/relay/hermescall_relay/version.py")
-  commit=$(git -C "$SRC_ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
-  printf 'version=%s\ncommit=%s\ninstalled=%s\n' "${version:-unknown}" "$commit" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$1"
+  version=$(source_version)
+  # A git checkout knows its commit; a release tarball carries it in RELEASE (tools/release.sh).
+  commit=$(git -C "$SRC_ROOT" rev-parse --short=12 HEAD 2>/dev/null ||
+    sed -n 's/^commit=\([0-9a-f]\{12\}\).*/\1/p' "$SRC_ROOT/RELEASE" 2>/dev/null || true)
+  printf 'version=%s\ncommit=%s\ninstalled=%s\n' "${version:-unknown}" "${commit:-unknown}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$1"
   chmod 0644 "$1"
 }
 
@@ -838,9 +845,23 @@ cmd_update() {
   [[ -f $SETTINGS ]] || die "not installed; run install first"
   INTERACTIVE=0
   need_root
+  check_not_downgrade
   snapshot_db
   cmd_install quiet
   log "Updated to $(installed_version). Settings, keys and paired devices were kept; 'install.sh rollback' goes back."
+}
+
+# Rollback protection: `update` never deploys older code than the installed one unless asked to
+# ('install.sh rollback' is the way back to the previous code).
+check_not_downgrade() {
+  local installed new
+  installed=$(sed -n 's/^version=//p' "$PREFIX/VERSION" 2>/dev/null || true)
+  new=$(source_version)
+  [[ $installed =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $new =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $installed != "$new" ]] || return 0
+  [[ $(printf '%s\n%s\n' "$installed" "$new" | sort -V | head -1) == "$new" ]] || return 0
+  [[ $ALLOW_DOWNGRADE == 1 ]] ||
+    die "this code is $new, older than the installed $installed: not downgrading (--allow-downgrade forces it; 'install.sh rollback' returns to the previous code)"
+  warn "downgrading from $installed to $new (--allow-downgrade)"
 }
 
 installed_version() {
