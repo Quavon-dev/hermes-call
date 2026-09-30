@@ -75,6 +75,32 @@ import Testing
         #expect(app.openSession(for: fixture.office.id) == nil)
     }
 
+    @Test func outsideCallLinksAskFirstAndSwitchNothing() throws {
+        let fixture = try ChatFixture()
+        let app = fixture.app
+        let active = try #require(app.activeProfile?.id)
+        #expect(active != fixture.office.id)
+        #expect(!app.open(.call(agent: fixture.office.id, trusted: false)), "no call without a confirmation")
+        #expect(app.activeProfile?.id == active, "an outside link does not change the active agent")
+        #expect(app.route == .confirmCall(fixture.office.id))
+        #expect(!app.open(.call(agent: UUID(), trusted: false)))
+        #expect(app.route == .confirmCall(nil), "an unknown agent id means the active agent")
+        app.route = nil
+        #expect(!app.open(.chat(agent: nil)) && app.activeProfile?.id == active && app.tab == .chat)
+        fixture.app.disconnect()
+    }
+
+    @Test func confirmedAndOwnWidgetCallLinksCallTheirAgent() throws {
+        let fixture = try ChatFixture()
+        let app = fixture.app
+        app.route = .confirmCall(fixture.office.id)
+        app.confirmCall(fixture.office.id)
+        #expect(app.activeProfile?.id == fixture.office.id && app.tab == .call && app.route == nil)
+        #expect(app.open(.call(agent: fixture.home.id, trusted: true)), "the widget's own link calls at once")
+        #expect(app.activeProfile?.id == fixture.home.id && app.route == nil)
+        fixture.app.disconnect()
+    }
+
     @Test func openChatSwitchesAgentAndAsksTheListForIt() throws {
         let fixture = try ChatFixture()
         fixture.app.openChat(fixture.office.id)

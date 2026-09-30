@@ -153,6 +153,36 @@ final class AppModel {
         chatRequest = activeProfile?.id
     }
 
+    /// What a `hermescall://` link does (see `DeepLink`). True when a call should start now: only the app's
+    /// own widget links; a call link from anywhere else asks first and switches no agent until confirmed.
+    func open(_ link: DeepLink) -> Bool {
+        switch link {
+        case .pair(let text):
+            route = .pair(text)
+        case .chat(let agent):
+            openChat(agent)
+        case .call(let agent, let trusted):
+            let known = agent.flatMap { id in profiles.contains { $0.id == id } ? id : nil }
+            guard trusted else {
+                route = .confirmCall(known)
+                return false
+            }
+            if let known, known != activeProfile?.id { activate(known) }
+            tab = .call
+            return true
+        case .open:
+            break
+        }
+        return false
+    }
+
+    /// "Call" on the confirmation of an outside call link: now the agent may become the active one.
+    func confirmCall(_ agent: UUID?) {
+        route = nil
+        if let agent, agent != activeProfile?.id { activate(agent) }
+        tab = .call
+    }
+
     /// The paired agent `step` places after (or before) the active one, wrapping around; nil with one agent.
     func neighbor(_ step: Int) -> RelayProfile? {
         guard profiles.count > 1 else { return nil }

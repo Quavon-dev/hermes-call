@@ -75,12 +75,15 @@ enum AppRoute: Identifiable, Equatable {
     case relays
     /// A `hermescall://pair…` link: the pairing sheet with it filled in (it still asks before pairing).
     case pair(String)
+    /// A `hermescall://call` link from another app or a web page: "Call <agent>?" first (nil: the active agent).
+    case confirmCall(UUID?)
 
     var id: String {
         switch self {
         case .consent: "consent"
         case .relays: "relays"
         case .pair(let link): "pair-\(link)"
+        case .confirmCall(let agent): "call-\(agent?.uuidString ?? "active")"
         }
     }
 }

@@ -124,6 +124,28 @@ final class HermesCallUITests: XCTestCase {
         XCTAssertFalse(nova.label.contains("unread"), "reading the chat clears its count: \(nova.label)")
     }
 
+    /// A `hermescall://call` link from outside (another app, a web page) asks before the microphone goes live.
+    func testOutsideCallLinkAsksFirst() throws {
+        app.launchArguments += ["-UITestConsent", "YES", "-UITestAgents", "YES"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Call"].waitForExistence(timeout: 8))
+        app.open(URL(string: "hermescall://call")!)
+        // iOS may ask "Open in Hermes Call?" for a link from outside.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let open = springboard.buttons["Open"]
+        if open.waitForExistence(timeout: 3) { open.tap() }
+        let title = app.staticTexts["callLink.title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 8), "an outside call link must ask first")
+        XCTAssertTrue(title.label.hasPrefix("Call "), title.label)
+        XCTAssertTrue(app.buttons["callLink.call"].exists)
+        let notNow = springboard.buttons["Don’t Allow"]  // the notification permission alert, if it is up
+        if notNow.waitForExistence(timeout: 2) { notNow.tap() }
+        snap("call-link-confirm")
+        app.buttons["callLink.cancel"].tap()
+        XCTAssertTrue(title.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["End"].exists, "Cancel starts no call")
+    }
+
     // MARK: helpers
 
     private func tap(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {

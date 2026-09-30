@@ -20,6 +20,7 @@ struct HermesCallApp: App {
         UITestSupport.resetIfRequested()
         ChatDemo.seedIfRequested()
         #endif
+        LinkSecret.ensure()  // the widget's links carry it (see DeepLink)
         let app = AppModel()
         let router = MessageRouter()
         let calls = CallCoordinator(app: app, router: router)
@@ -96,21 +97,12 @@ struct HermesCallApp: App {
         }
     }
 
-    /// `hermescall://pair…` (a pairing link opened on this iPhone: confirmed before pairing), `hermescall://chat`
-    /// and `hermescall://call` (widget, shortcuts; `?agent=<id>` picks the agent).
+    /// `hermescall://` links (see `DeepLink`): a pairing link (confirmed before pairing), `chat` and `call`.
+    /// A call starts at once only from the app's own widget (its links carry the per-install secret);
+    /// from any other app or web page it asks "Call <agent>?" first.
     private func open(_ url: URL) {
-        guard url.scheme == "hermescall" else { return }
-        if url.host == "pair" { return app.route = .pair(url.absoluteString) }
-        let agent = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "agent" }?.value
-        let id = agent.flatMap(UUID.init(uuidString:))
-        switch url.host {
-        case "chat": app.openChat(id)
-        case "call":
-            if let id, id != app.activeProfile?.id { app.activate(id) }
-            app.tab = .call
-            Task { await calls.startCall() }
-        default: break
-        }
+        guard let link = DeepLink.parse(url, secret: LinkSecret.current()) else { return }
+        if app.open(link) { Task { await calls.startCall() } }
     }
 
     /// A tap on a Hermes Call entry in the Phone app's Recents (CallKit, `includesCallsInRecents`):
@@ -195,6 +187,11 @@ struct RootView: View {
         case .consent: ConsentView()
         case .relays: ProfilesView()
         case .pair(let link): AddRelayView(initialLink: link)
+        case .confirmCall(let agent):
+            CallLinkConfirmView(agentID: agent) {
+                app.confirmCall(agent)
+                Task { await calls.startCall() }
+            }
         }
     }
 

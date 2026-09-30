@@ -15,13 +15,10 @@ struct ChatEntry: TimelineEntry {
     var title: String { agent?.name ?? snapshot?.agentName ?? "Hermes Call" }
     var entity: AgentEntity? { agent.map(AgentEntity.init) }
 
-    /// `hermescall://chat?agent=…` / `hermescall://call?agent=…`.
+    /// `hermescall://chat?agent=…` / `hermescall://call?agent=…`, with the app's link secret so a tap calls
+    /// at once (links from anywhere else ask first; see DeepLink).
     func url(_ host: String) -> URL {
-        var components = URLComponents()
-        components.scheme = "hermescall"
-        components.host = host
-        if let agent { components.queryItems = [URLQueryItem(name: "agent", value: agent.id.uuidString)] }
-        return components.url ?? URL(fileURLWithPath: "/")
+        LinkSecret.link(host, agent: agent?.id) ?? URL(fileURLWithPath: "/")
     }
 }
 

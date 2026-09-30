@@ -376,8 +376,11 @@ access › Place reminders lists them (swipe to delete).
   the blob itself; the relay copy stays for the app). Phone-context "Ask" notifications have
   **Answer…** (opens the app at the question) and **Deny** (answers without opening).
 - **Widget**: pick the agent in the widget's settings (default: the active one); the Call and chat
-  buttons run their intent in the app. `hermescall://chat?agent=<id>` and `…/call?agent=<id>`
-  switch to that agent. The app writes agent names and colours (no keys) to the app group for this.
+  buttons run their intent in the app. The widget's `hermescall://chat?agent=<id>` and
+  `…/call?agent=<id>` links carry a per-install secret from the app group (`s=`), so a tap calls at
+  once and switches to that agent. The same links from any other app or web page cannot: a call link
+  shows "Call <agent>?" first (the agent becomes active only after **Call**), and a chat link opens the
+  active agent's chat. The app writes agent names and colours (no keys) to the app group for this.
 - Debug builds: `-ChatDemo YES` seeds a demo agent and history for screenshots
   (`-ChatDemoQuery <text>`, `-ChatDemoPlay YES`, `-ChatDemoReveal <text>`).
 

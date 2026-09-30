@@ -118,6 +118,7 @@
 		DEA2B55BF76625700B0E1A3F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C1795C2EE043107F457BFD5E /* Assets.xcassets */; };
 		E4609E50A935BC9FE2E0D3F5 /* ChatNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6100F7F693C7F153053D66E2 /* ChatNotifications.swift */; };
 		E5ED5495B9ED00BFFE917CE5 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 606A4C5C83183366D9329287 /* PrivacyInfo.xcprivacy */; };
+		E607937CB9135EA4A55C77BB /* CallLinkConfirmView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 345DEEF192F907CE5D0568DD /* CallLinkConfirmView.swift */; };
 		E6153D6ABECD9B688E9C1631 /* TaskLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C68FDE7DC74A5D8A28C825AC /* TaskLiveActivity.swift */; };
 		E6865A5A584E99D3207F1211 /* AudioThreadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E98767E513BBB4AA26C6D5B /* AudioThreadTests.swift */; };
 		E805558404282495687BBA94 /* PresenceMood.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89FD6C096332F4C3EB01EEEA /* PresenceMood.swift */; };
@@ -247,6 +248,7 @@
 		306985FC5AB57EFDF36F1E89 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		3081E4DD873C8C0724EA9BB5 /* CallKitSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitSupport.swift; sourceTree = "<group>"; };
 		31ADD53270A4B876EDE45E25 /* Licenses */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Licenses; path = HermesCall/Resources/Licenses; sourceTree = SOURCE_ROOT; };
+		345DEEF192F907CE5D0568DD /* CallLinkConfirmView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallLinkConfirmView.swift; sourceTree = "<group>"; };
 		3E98767E513BBB4AA26C6D5B /* AudioThreadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioThreadTests.swift; sourceTree = "<group>"; };
 		3FFC4DA277DD0CD5B04504A9 /* ChatLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatLink.swift; sourceTree = "<group>"; };
 		416D48B6DEC5D89FBEC69061 /* PresenceRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenceRenderer.swift; sourceTree = "<group>"; };
@@ -550,6 +552,7 @@
 				BDBC207885F299764D79674D /* AddRelayView.swift */,
 				874F9816CDB7F7C65050D4EF /* AppIconPicker.swift */,
 				2D8481C271214A70D51D2130 /* Approvals.swift */,
+				345DEEF192F907CE5D0568DD /* CallLinkConfirmView.swift */,
 				F1E28AC90CD90F043D390AF8 /* ConsentView.swift */,
 				CFBFFB0EF4F5022D6EC15A2B /* DiagnosticsView.swift */,
 				DDDD59464AA12FBED0EF02FA /* HomeView.swift */,
@@ -1109,6 +1112,7 @@
 				2920A2D5D893D78EB6DA51DD /* CallAudioRoute.swift in Sources */,
 				031132302F325F3280094EBE /* CallCoordinator.swift in Sources */,
 				2CB8F2F62EC50F94DD7849F0 /* CallKitSupport.swift in Sources */,
+				E607937CB9135EA4A55C77BB /* CallLinkConfirmView.swift in Sources */,
 				D1D807037466A7646BC5ACEE /* CarPlaySceneDelegate.swift in Sources */,
 				26BCF39D49714C533100CF74 /* ChatComposer.swift in Sources */,
 				0BDF08F83D7F388F13397740 /* ChatDemo.swift in Sources */,
