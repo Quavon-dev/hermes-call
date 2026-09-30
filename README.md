@@ -51,11 +51,20 @@ anything runs) and asks two things:
 Forward **TCP/UDP 3478** and **UDP 49160–49200** from your router to the container (voice relay).
 Pushes reach the phone through the Hermes Call push gateway, so no Apple account is needed.
 
-**2 · Bridge**: into the container that runs Hermes (replace `121` with its ID):
+**2 · Bridge**: where Hermes runs, the same way Hermes installs itself:
 
 ```bash
-pct exec 121 -- bash -c 'apt-get install -y -qq git >/dev/null && git clone --depth 1 https://github.com/Quavon-dev/hermes-call /root/hermes-call && /root/hermes-call/bridge/install.sh install --configure-hermes'
+curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/bridge/get.sh | sudo bash
 ```
+
+Or from the Proxmox host into the Hermes container (replace `121` with its ID):
+
+```bash
+pct exec 121 -- bash -c "curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/bridge/get.sh | bash"
+```
+
+It installs the signed release, finds the Hermes user, turns on Hermes' local API and installs the
+`hermes-call` plugin. Run it again to update.
 
 **3 · Pair**:
 
@@ -77,7 +86,7 @@ Scan the QR code with the app, then restart Hermes and its gateway once so they 
 |---|---|---|
 | Relay | small VPS or LXC with a public address (Debian 12/13, Ubuntu 24.04) | `relay/install.sh install --domain relay.example.com` ([docs](docs/relay.md)) |
 | Relay behind your proxy | same, TLS by Nginx Proxy Manager/Traefik/Caddy | `relay/install.sh install --domain … --tls proxy --proxy-from <proxy IP>` ([docs](docs/relay.md#behind-your-own-reverse-proxy-nginx-proxy-manager-traefik-caddy)) |
-| Bridge + plugin | next to Hermes | `bridge/install.sh install --configure-hermes` ([docs](docs/bridge.md)) |
+| Bridge + plugin | next to Hermes | `curl -fsSL …/bridge/get.sh \| sudo bash` ([docs](docs/bridge.md)) |
 | iPhone app | TestFlight, then the App Store | or Xcode with your own team ([docs](docs/ios.md)) |
 
 Proxmox helper without questions:

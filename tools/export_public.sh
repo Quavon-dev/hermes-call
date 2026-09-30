@@ -15,7 +15,7 @@ mkdir -p "$target"
 git -C "$root" archive --format=tar HEAD | tar -x -C "$target"
 
 # Last safety net: nothing private or film-derived may leave (see CONTRIBUTING.md).
-if grep -rInE "00008140-|192\.168\.0\.177|iPhone von|/Users/[a-z]+|Jarvis|Ultron|Marvel" "$target" \
+if grep -rInE "00008140-|192\.168\.0\.177|iPhone von|Leopold|/Users/[a-z]+|Jarvis|Ultron|Marvel" "$target" \
     --exclude=export_public.sh; then
   echo "refusing: private or film-derived text found above" >&2
   rm -rf "$target"

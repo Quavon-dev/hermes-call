@@ -41,15 +41,17 @@ Explained before you run it:
   file stays mode 600). It does not touch anything else in Hermes.
 
 ```bash
-pct exec 121 -- bash -c 'apt-get install -y -qq git >/dev/null && git clone --depth 1 https://github.com/quavon-dev/hermes-call /root/hermes-call && /root/hermes-call/bridge/install.sh install --configure-hermes'
+pct exec 121 -- bash -c "curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/bridge/get.sh | bash"
 ```
 
-Update later (keeps keys, pairings, voice, model and agent name, and refreshes the Hermes plugin;
-restart Hermes and its gateway afterwards when the plugin changed):
+`bridge/get.sh` downloads the latest release, checks its signature against the pinned release key
+before anything runs, finds the Hermes user (the one who called `sudo`, or the only user with a
+`~/.hermes`; else set `HERMES_USER=`) and runs `bridge/install.sh install --configure-hermes`.
+Inside the container, or on any other Hermes host: `curl -fsSL …/bridge/get.sh | sudo bash`.
+Settings go in front of `bash`, e.g. `| sudo AGENT_NAME=Atlas STT_MODEL=small.en bash`.
 
-```bash
-pct exec 121 -- bash -c 'git -C /root/hermes-call pull && /root/hermes-call/bridge/install.sh update'
-```
+Update later the same way (keeps keys, pairings, voice, model and agent name, and refreshes the
+Hermes plugin; restart Hermes and its gateway afterwards when the plugin changed).
 
 Restart Hermes so its API server starts (as the `hermes` user, the way you
 normally run `hermes gateway`), then pair with the relay using the link that
@@ -62,7 +64,7 @@ pct exec 121 -- bash -c "hermes-call-bridge relay add 'hermescall://pair?v=1&k=r
 Pair a phone (the app shows a code field and a QR scanner):
 
 ```bash
-pct exec 121 -- hermes-call-bridge device add --name "Leopold's iPhone"
+pct exec 121 -- hermes-call-bridge device add --name iPhone
 ```
 
 Other commands:

@@ -76,7 +76,7 @@ def test_bad_params_are_rejected(params) -> None:
 
 def test_answer_data_is_checked_per_action() -> None:
     add = parse_params("geofence", {"action": "add", "title": "t", "place": {"query": "Rewe"}})
-    assert check_data("geofence", add, {"id": "g1", "resolved_name": "REWE, Leopoldstr. 1"})[0]["id"] == "g1"
+    assert check_data("geofence", add, {"id": "g1", "resolved_name": "REWE, Hauptstr. 1"})[0]["id"] == "g1"
     remove = parse_params("geofence", {"action": "remove", "id": "g1"})
     assert check_data("geofence", remove, {"removed": True})[0] == {"removed": True}
     listing = parse_params("geofence", {"action": "list"})
