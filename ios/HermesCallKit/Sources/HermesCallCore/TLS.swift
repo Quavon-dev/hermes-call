@@ -38,6 +38,7 @@ final class RelayTrust: NSObject, URLSessionWebSocketDelegate, @unchecked Sendab
     private let mode: Mode
     private let lock = NSLock()
     private var observed: String?
+    private var mismatched = false
     private var openState: Result<Void, Error>?
     private var openWaiters: [CheckedContinuation<Void, Error>] = []
 
@@ -68,7 +69,19 @@ final class RelayTrust: NSObject, URLSessionWebSocketDelegate, @unchecked Sendab
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        finishOpen(.failure(error ?? ProtocolError.notConnected))
+        finishOpen(.failure(Self.openError(status: (task.response as? HTTPURLResponse)?.statusCode,
+                                           pinMismatch: lock.withLock { mismatched }, error: error)))
+    }
+
+    /// What a failed WebSocket upgrade means: the relay's rate limit (429) and connection cap (503) answer
+    /// with plain HTTP; a pinned key that did not match cancels the TLS handshake.
+    static func openError(status: Int?, pinMismatch: Bool, error: Error?) -> Error {
+        if pinMismatch { return ProtocolError.pinMismatch }
+        switch status {
+        case 429: return ProtocolError.relay("rate_limited")
+        case 503: return ProtocolError.relay("busy")
+        default: return error ?? ProtocolError.notConnected
+        }
     }
 
     /// "" for a WebPKI-valid relay, the SPKI pin of a (rejected) self-signed one.
@@ -83,7 +96,10 @@ final class RelayTrust: NSObject, URLSessionWebSocketDelegate, @unchecked Sendab
         case .webPKI:
             return (.performDefaultHandling, nil)
         case .pinned(let expected):
-            guard TLSPin.pin(of: trust) == expected else { return (.cancelAuthenticationChallenge, nil) }
+            guard TLSPin.pin(of: trust) == expected else {
+                lock.withLock { mismatched = true }
+                return (.cancelAuthenticationChallenge, nil)
+            }
             return (.useCredential, URLCredential(trust: trust))
         case .firstContact:
             if SecTrustEvaluateWithError(trust, nil) {

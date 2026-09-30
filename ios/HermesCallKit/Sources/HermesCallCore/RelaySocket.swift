@@ -63,6 +63,28 @@ final class RelaySocket: @unchecked Sendable {
         return message
     }
 
+    /// WebSocket ping → pong (the relay answers these itself).
+    func ping(timeout: TimeInterval) async throws -> Duration {
+        let clock = ContinuousClock()
+        let start = clock.now
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    self.task.sendPing { error in
+                        if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+                    }
+                }
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(timeout))
+                throw ProtocolError.timeout
+            }
+            defer { group.cancelAll() }
+            try await group.next()
+        }
+        return clock.now - start
+    }
+
     func close() {
         task.cancel(with: .normalClosure, reason: nil)
         session.invalidateAndCancel()

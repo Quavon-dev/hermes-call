@@ -5,6 +5,9 @@ public enum PhoneCapability: String, CaseIterable, Codable, Sendable, Identifiab
     case location, battery, device, calendar, reminders, contacts, motion, focus
     case nowPlaying = "now_playing"
     case health, home, clipboard, photos, files, geofence
+    /// Write capabilities: the agent asks to add something (shown to the owner before it is created).
+    case reminderCreate = "reminder_create"
+    case calendarCreate = "calendar_create"
 
     public var id: String { rawValue }
 
@@ -25,6 +28,8 @@ public enum PhoneCapability: String, CaseIterable, Codable, Sendable, Identifiab
         case .photos: "Photos"
         case .files: "Files"
         case .geofence: "Place reminders"
+        case .reminderCreate: "Add reminders"
+        case .calendarCreate: "Add calendar events"
         }
     }
 
@@ -45,6 +50,8 @@ public enum PhoneCapability: String, CaseIterable, Codable, Sendable, Identifiab
         case .photos: "photo.on.rectangle"
         case .files: "doc"
         case .geofence: "mappin.and.ellipse"
+        case .reminderCreate: "checklist.checked"
+        case .calendarCreate: "calendar.badge.plus"
         }
     }
 
@@ -67,8 +74,13 @@ public enum PhoneCapability: String, CaseIterable, Codable, Sendable, Identifiab
         case .files: "Files you pick yourself."
         case .geofence: "Reminders for places (\"when I'm at the supermarket\"). This iPhone watches the place itself; your "
             + "location is never sent to the agent. With Yes, the agent also learns when a reminder fires."
+        case .reminderCreate: "Adds a reminder (title, due date, note) to your Reminders. With Ask you see it before it is added."
+        case .calendarCreate: "Adds an event (title, time, place, note) to your calendar. With Ask you see it before it is added."
         }
     }
+
+    /// Changes something on the phone instead of reading it.
+    public var writes: Bool { self == .reminderCreate || self == .calendarCreate }
 
     /// Clipboard and pickers always need the owner in the loop.
     public var allowsYes: Bool { ![.clipboard, .photos, .files].contains(self) }
@@ -150,6 +162,9 @@ public struct PhoneQuery: Sendable, Equatable, Identifiable {
         capability == .reminders ? Self.clamp(params["limit"]?.int, 1...30, default: 15) : Self.clamp(params["limit"]?.int, 1...25, default: 10)
     }
     public var maxFiles: Int { Self.clamp(params["max"]?.int, 1...4, default: 1) }
+    /// `reminder_create` / `calendar_create`: the item to add, validated; nil when the params are unusable.
+    public var newItem: PhoneNewItem? { PhoneNewItem.parse(capability, params) }
+
     /// Contacts: the name to look up (required; never a full dump).
     public var name: String? {
         guard let name = params["name"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines), (1...100).contains(name.count)
@@ -160,6 +175,55 @@ public struct PhoneQuery: Sendable, Equatable, Identifiable {
     private static func clamp(_ value: Int64?, _ range: ClosedRange<Int>, default fallback: Int) -> Int {
         guard let value else { return fallback }
         return min(range.upperBound, max(range.lowerBound, Int(value)))
+    }
+}
+
+/// A reminder or calendar event the agent asks to add (`reminder_create`: title, due?, notes?;
+/// `calendar_create`: title, start, end, location?, notes?). Times are ISO 8601.
+public struct PhoneNewItem: Sendable, Equatable {
+    public let title: String
+    public let notes: String?
+    /// Reminder: when it is due (optional).
+    public let due: Date?
+    /// Event: start and end (end after start, at most 14 days long).
+    public let start: Date?
+    public let end: Date?
+    public let location: String?
+
+    public static let maxTitle = 200
+    public static let maxNotes = 1000
+    public static let maxLocation = 200
+
+    static func parse(_ capability: PhoneCapability, _ params: [String: JSON]) -> PhoneNewItem? {
+        guard capability.writes, let title = text(params["title"], maxTitle) else { return nil }
+        let notes = text(params["notes"], maxNotes)
+        switch capability {
+        case .reminderCreate:
+            var due: Date?
+            if let raw = params["due"] {
+                guard let parsed = date(raw) else { return nil }
+                due = parsed
+            }
+            return PhoneNewItem(title: title, notes: notes, due: due, start: nil, end: nil, location: nil)
+        case .calendarCreate:
+            guard let start = params["start"].flatMap(date), let end = params["end"].flatMap(date), end > start,
+                  end.timeIntervalSince(start) <= 14 * 86_400 else { return nil }
+            return PhoneNewItem(title: title, notes: notes, due: nil, start: start, end: end,
+                                location: text(params["location"], maxLocation))
+        default:
+            return nil
+        }
+    }
+
+    private static func text(_ value: JSON?, _ limit: Int) -> String? {
+        guard let raw = value?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty, raw.count <= limit else { return nil }
+        return raw
+    }
+
+    private static func date(_ value: JSON) -> Date? {
+        guard let text = value.string else { return nil }
+        if let date = try? Date(text, strategy: .iso8601) { return date }
+        return try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(text)
     }
 }
 

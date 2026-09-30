@@ -16,6 +16,9 @@ public actor RelaySession {
     private var loop: Task<Void, Never>?
     private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
     private var stopped = false
+    /// The pause before the next connection attempt; `reconnectNow` cuts it short.
+    private var backoffSleep: Task<Void, Never>?
+    private var skipBackoff = false
     /// Mail delivered to `messages` but not acked yet: relay mail id → (message id, timestamp).
     private var unackedMail: [String: (mid: String, ts: Int64)] = [:]
 
@@ -41,6 +44,7 @@ public actor RelaySession {
     /// Final: a stopped session never reconnects and its `messages` stream ends.
     public func stop() {
         stopped = true
+        backoffSleep?.cancel()
         loop?.cancel()
         loop = nil
         socket?.close()
@@ -54,6 +58,20 @@ public actor RelaySession {
     }
 
     public var isConnected: Bool { socket != nil }
+
+    /// The network came back (or the app returned): try again at once instead of after the backoff.
+    public func reconnectNow() {
+        guard !stopped, socket == nil else { return }
+        skipBackoff = true
+        backoffSleep?.cancel()
+        start()
+    }
+
+    /// Round trip to the relay (WebSocket ping), for diagnostics; nil when not connected or no answer in time.
+    public func pingRelay(timeout: TimeInterval = 5) async -> Duration? {
+        guard let socket else { return nil }
+        return try? await socket.ping(timeout: timeout)
+    }
 
     public func waitUntilConnected(timeout: TimeInterval = 15) async throws {
         start()
@@ -226,8 +244,22 @@ public actor RelaySession {
             socket = nil
             onStatus(.disconnected)
             guard !Task.isCancelled else { return }
-            try? await Task.sleep(for: .seconds(backoff + Double.random(in: 0...(backoff / 2))))
-            backoff = min(backoff * 2, 30)
+            if skipBackoff {
+                skipBackoff = false
+                backoff = 1
+                continue
+            }
+            let pause = backoff + Double.random(in: 0...(backoff / 2))
+            let sleep = Task { _ = try? await Task.sleep(for: .seconds(pause)) }
+            backoffSleep = sleep
+            await sleep.value
+            backoffSleep = nil
+            if skipBackoff {
+                skipBackoff = false
+                backoff = 1
+            } else {
+                backoff = min(backoff * 2, 30)
+            }
         }
     }
 

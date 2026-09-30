@@ -40,4 +40,13 @@ public enum SharedContainer {
     public static var usesHUD: Bool {
         defaults.string(forKey: appearanceKey) == "hud"
     }
+
+    /// The owner agreed that what they send may reach their agent's AI model (App Review 5.1.2(i)); the app
+    /// and the share extension send nothing to an agent without it. The number is the version of the wording.
+    public static let aiConsentKey = "consent.aiSharing"
+    public static let aiConsentVersion = 1
+
+    public static var hasAIConsent: Bool {
+        defaults.integer(forKey: aiConsentKey) >= aiConsentVersion
+    }
 }
