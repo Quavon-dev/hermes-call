@@ -76,8 +76,19 @@ final class Preferences {
         didSet { SharedContainer.defaults.set(showMessageText, forKey: SharedContainer.showMessageTextKey) }
     }
 
-    init(defaults: UserDefaults = .standard) {
+    /// Sharing with the agent's AI model is allowed (ConsentView); in the app group for the share extension.
+    var aiConsent: Bool {
+        didSet { shared.set(aiConsent ? SharedContainer.aiConsentVersion : 0, forKey: SharedContainer.aiConsentKey) }
+    }
+    /// The offline demo agent is shown (DemoAgent).
+    var demoActive: Bool { didSet { defaults.set(demoActive, forKey: "demoActive") } }
+    private let shared: UserDefaults
+
+    init(defaults: UserDefaults = .standard, shared: UserDefaults = SharedContainer.defaults) {
         self.defaults = defaults
+        self.shared = shared
+        aiConsent = shared.integer(forKey: SharedContainer.aiConsentKey) >= SharedContainer.aiConsentVersion
+        demoActive = defaults.bool(forKey: "demoActive")
         talkMode = TalkMode(rawValue: defaults.string(forKey: "talkMode") ?? "") ?? .handsFree
         includeInRecents = defaults.object(forKey: "includeInRecents") as? Bool ?? true
         activeProfileID = defaults.string(forKey: "activeProfile").flatMap(UUID.init(uuidString:))
@@ -110,15 +121,16 @@ final class Preferences {
         }
         for key in ["talkMode", "includeInRecents", "activeProfile", "onboardingDone", "pushRegistrations", "appearance",
                     "speechRecognition", "alertRegistrations", "voiceHaptics", "showCaptions", "presenceHints",
-                    "appIcon", "voiceReplies", "autoPlayVoiceReplies", "taskDetailsOnLockScreen"] {
+                    "appIcon", "voiceReplies", "autoPlayVoiceReplies", "taskDetailsOnLockScreen", "demoActive"] {
             defaults.removeObject(forKey: key)
         }
-        let shared = SharedContainer.defaults
         for key in shared.dictionaryRepresentation().keys
         where key.hasPrefix(E2EChannel.mailKeyPrefix) || key == SharedContainer.showMessageTextKey
-            || key == SharedContainer.appearanceKey {
+            || key == SharedContainer.appearanceKey || key == SharedContainer.aiConsentKey {
             shared.removeObject(forKey: key)
         }
+        aiConsent = false
+        demoActive = false
         alertRegistrations = [:]
         showMessageText = true
         talkMode = .handsFree

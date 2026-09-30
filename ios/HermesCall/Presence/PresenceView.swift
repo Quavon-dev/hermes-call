@@ -13,11 +13,12 @@ struct PresenceView: View {
     @Environment(PhoneContextModel.self) private var phone
     @Environment(TaskActivityModel.self) private var tasks
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var engine = PresenceEngine()
     @State private var haptics = PresenceHaptics()
     @State private var motion = PresenceMotion()
-    @State private var mood = PresenceMood()
+    @State private var mood = PresenceMood.State.idle
     @State private var touch: PresenceTouch?
     @State private var holdTimer: Task<Void, Never>?
     @State private var holdingToTalk = false
@@ -29,9 +30,6 @@ struct PresenceView: View {
     @State private var dropTargeted = false
     @State private var focusedRing: Int?
     @AppStorage("presenceHints") private var hintUses = 0
-    #if DEBUG
-    @State private var demo = PresenceDemo.enabled ? PresenceDemo() : nil
-    #endif
 
     enum PresenceSheet: String, Identifiable {
         case history, settings, relays, phoneAccess, look
@@ -41,10 +39,13 @@ struct PresenceView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                PresenceCanvas(engine: engine).ignoresSafeArea()
+                PresenceCanvas(engine: engine, paused: canvasPaused,
+                               framesPerSecond: FrameBudget.shared.framesPerSecond(reduceMotion: reduceMotion))
+                    .ignoresSafeArea()
                 touchLayer
                 VStack(spacing: 0) {
                     header.padding(.top, 6)
+                    ConnectionBanner(hud: true).padding(.top, 18)
                     taskLabel
                     Spacer(minLength: 0)
                     captionsView
@@ -100,8 +101,7 @@ struct PresenceView: View {
                 app.tab = .call
             }
         }
-        .task(id: inCall) { await followCall() }
-        .task(id: chat.player.playing) { await followVoiceReply() }
+        .onChange(of: voiceReplyPlaying) { _, playing in voiceReplyChanged(playing) }
         .onChange(of: presencePalette) { _, palette in engine.palette = palette }
         .task(id: app.activeProfile?.id) { await chat.reload() }
     }
@@ -116,15 +116,15 @@ struct PresenceView: View {
         engine.place(center: CGPoint(x: size.width / 2, y: size.height * (cards ? 0.3 : 0.44)), radius: radius, animated: animated)
     }
 
-    private var inCall: Bool {
-        #if DEBUG
-        if let demo { return demo.active }
-        #endif
-        return calls.inCall
+    private var inCall: Bool { calls.inCall }
+
+    /// Nothing to draw while another screen covers the presence or the app is not in front (battery, heat).
+    private var canvasPaused: Bool {
+        scenePhase != .active || [.settings, .relays, .phoneAccess, .look].contains(sheet)
     }
 
     private var agentName: String {
-        if inCall, !isDemo { return calls.peerName }
+        if inCall { return calls.peerName }
         return app.activeProfile?.bridgeName ?? RelayProfile.defaultAgentName
     }
 
@@ -142,23 +142,25 @@ struct PresenceView: View {
                         Text("LINKING")
                     }
                 }
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.caption2.monospaced().weight(.medium))
                 .foregroundStyle(HUD.glow.opacity(0.85))
-                if mood.state != .idle { HUD.label(moodLabel, size: 9).transition(.opacity) }
-                if calls.isMuted { Image(systemName: "mic.slash").font(.system(size: 11)).foregroundStyle(HUD.alert) }
+                if mood != .idle { HUD.label(moodLabel, size: 9).transition(.opacity) }
+                if calls.isDemoCall { HUD.label("demo", size: 8).opacity(0.7) }
+                if calls.isMuted { Image(systemName: "mic.slash").font(.caption2).foregroundStyle(HUD.alert) }
             } else {
                 Circle().fill(statusColor).frame(width: 5, height: 5)
                 HUD.label(statusText, size: 9)
             }
         }
-        .animation(.easeInOut(duration: 0.3), value: mood.state)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: mood)
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         .accessibilityElement(children: .combine)
         .frame(maxWidth: .infinity)
         .overlay(alignment: .bottom) { pageDots.offset(y: 14) }
         .overlay(alignment: .trailing) {
             // The same menu as a long-press, for those who don't know the gesture.
             Button { menuOrigin = CGPoint(x: engine.center.x, y: engine.center.y + engine.radius * 0.6) } label: {
-                Image(systemName: "ellipsis").font(.system(size: 15, weight: .semibold)).foregroundStyle(HUD.glow.opacity(0.8))
+                Image(systemName: "ellipsis").font(.body.weight(.semibold)).foregroundStyle(HUD.glow.opacity(0.8))
                     .frame(width: Metrics.iconButton, height: Metrics.iconButton)
             }
             .accessibilityLabel("More")
@@ -194,15 +196,12 @@ struct PresenceView: View {
     }
 
     private var connectedSince: Date? {
-        #if DEBUG
-        if let demo { return demo.since }
-        #endif
         if case .connected(let since) = calls.phase { return since }
         return nil
     }
 
     private var moodLabel: String {
-        switch mood.state {
+        switch mood {
         case .idle: ""
         case .listening: "listening"
         case .thinking: "thinking"
@@ -219,10 +218,11 @@ struct PresenceView: View {
     }
 
     private var statusText: String {
+        if app.activeProfile?.isDemo == true { return "demo · on this iPhone" }
         switch app.relayStatus {
-        case .connected: "online"
-        case .connecting: "linking"
-        case .disconnected: "offline"
+        case .connected: return "online"
+        case .connecting: return "linking"
+        case .disconnected: return "offline"
         }
     }
 
@@ -233,13 +233,14 @@ struct PresenceView: View {
                 VStack(spacing: 6) {
                     ForEach(recentCaptions(at: timeline.date)) { caption in
                         Text(caption.text)
-                            .font(.system(size: caption.fromAgent ? 15 : 13, design: .monospaced))
+                            .font(caption.fromAgent ? .subheadline.monospaced() : .footnote.monospaced())
                             .foregroundStyle(caption.fromAgent ? HUD.light : HUD.glow.opacity(0.7))
                             .multilineTextAlignment(.center)
                             .lineLimit(3)
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
                     }
                 }
+                .dynamicTypeSize(...DynamicTypeSize.accessibility2)
                 .animation(.easeOut(duration: 0.4), value: recentCaptions(at: timeline.date).map(\.id))
                 .padding(.horizontal, 28)
                 .padding(.bottom, 10)
@@ -249,18 +250,14 @@ struct PresenceView: View {
     }
 
     private func recentCaptions(at date: Date) -> [CallCoordinator.Caption] {
-        var captions = calls.captions
-        #if DEBUG
-        if let demo { captions = demo.captions }
-        #endif
-        return captions.filter { date.timeIntervalSince($0.date) < 9 }.suffix(2)
+        calls.captions.filter { date.timeIntervalSince($0.date) < 9 }.suffix(2)
     }
 
     @ViewBuilder private var bottom: some View {
         if inCall {
             VStack(spacing: 6) {
                 Button { perform(.endCall) } label: {
-                    Image(systemName: "phone.down.fill").font(.system(size: 16, weight: .semibold)).foregroundStyle(HUD.light)
+                    Image(systemName: "phone.down.fill").font(.callout.weight(.semibold)).foregroundStyle(HUD.light)
                         .frame(width: Metrics.iconButton, height: Metrics.iconButton)
                         .background(Circle().fill(HUD.alert.opacity(0.3)))
                         .overlay(Circle().stroke(HUD.alert.opacity(0.8), lineWidth: 0.75))
@@ -330,6 +327,7 @@ struct PresenceView: View {
                 .onEnded(touchEnded))
             .accessibilityElement()
             .accessibilityLabel("\(agentName), \(inCall ? (moodLabel.isEmpty ? "on a call" : moodLabel) : statusText)")
+            .accessibilityIdentifier("presence")
             .accessibilityValue(focusedRing.flatMap { PresenceRings.summary(engine.rings[$0]) } ?? ringsSummary)
             .accessibilityHint(inCall ? "Double-tap to interrupt." : "Double-tap to call.")
             .accessibilityAddTraits(.isButton)
@@ -341,10 +339,7 @@ struct PresenceView: View {
     }
 
     private var canCall: Bool {
-        #if DEBUG
-        if demo != nil { return true }
-        #endif
-        return app.relayStatus == .connected && app.activeProfile != nil
+        PresenceDemo.forced || (app.relayStatus == .connected && app.activeProfile != nil)
     }
 
     private func touchMoved(_ value: DragGesture.Value) {
@@ -392,9 +387,6 @@ struct PresenceView: View {
             hintUses += 1
             haptics.tick()
             engine.ignite()
-            #if DEBUG
-            if let demo { return demo.start() }
-            #endif
             holdingToTalk = mode == .pushToTalk
             Task { await calls.startCall(talkMode: mode) }
         case .interrupt:
@@ -409,9 +401,6 @@ struct PresenceView: View {
             sheet = .history
         case .endCall:
             haptics.tick(sharpness: 0.9, intensity: 0.8)
-            #if DEBUG
-            if let demo { return demo.end() }
-            #endif
             calls.hangUp()
         case .openMenu(let point):
             menuOrigin = point
@@ -466,7 +455,7 @@ struct PresenceView: View {
 
     /// The call's agent while a call is on (it may be another paired agent ringing), else the active one.
     private var presencePalette: AgentPalette {
-        if inCall, !isDemo, let id = calls.profileID, let profile = app.profiles.first(where: { $0.id == id }) {
+        if inCall, let id = calls.profileID, let profile = app.profiles.first(where: { $0.id == id }) {
             return profile.agentPalette
         }
         return app.activeProfile?.agentPalette ?? .gold
@@ -500,17 +489,24 @@ struct PresenceView: View {
             }
             return chat.player.spectrum?.bands()
         }
+        // Voice levels are read by the presence every frame (no polling): the call's, or a voice reply's.
+        engine.levelSource = { [calls, chat] in
+            if calls.inCall { return calls.liveLevels() }
+            return (Double(chat.player.spectrum?.currentLevel ?? 0), 0)
+        }
+        engine.onMood = { mood = $0 }
+        engine.onVoice = { [calls, haptics, app] level in
+            guard app.preferences.voiceHaptics, calls.isConnected, !calls.isDemoCall else { return }
+            haptics.follow(voice: level)
+        }
         if !reduceMotion { motion.start() }
         engine.assemble()
-        #if DEBUG
-        if let demo, PresenceDemo.autoStart {
+        if PresenceDemo.autoStart {
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(2.2))
-                engine.ignite()
-                demo.start()
+                perform(.startCall(app.preferences.talkMode))
             }
         }
-        #endif
     }
 
     private func stop() {
@@ -525,70 +521,20 @@ struct PresenceView: View {
         } else {
             holdingToTalk = false
             haptics.stopVoice()
-            mood = PresenceMood()
-            engine.mood = .idle
-            engine.agentLevel = 0
-            engine.micLevel = 0
             engine.breakApart()
             // Another paired agent called: the conversation continues with it.
-            if !isDemo, let id = calls.profileID, id != app.activeProfile?.id, app.profiles.contains(where: { $0.id == id }) {
+            if let id = calls.profileID, id != app.activeProfile?.id, app.profiles.contains(where: { $0.id == id }) {
                 app.activate(id)
             }
         }
     }
 
-    /// While a call is up: voice levels → mood, presence, haptics.
-    private func followCall() async {
-        guard inCall else { return }
-        while inCall && !Task.isCancelled {
-            var sample = (agent: 0.0, mic: 0.0)
-            var connected = calls.isConnected
-            #if DEBUG
-            if let demo {
-                sample = demo.sample()
-                connected = true
-            }
-            #endif
-            if connected, !isDemo {
-                let telemetry = await calls.telemetry()
-                sample = (telemetry.agent, calls.isMuted ? 0 : telemetry.mic)
-                // The played audio's own level reacts faster than WebRTC's statistics.
-                if let level = calls.agentPlayoutLevel { sample.agent = max(sample.agent, Double(level)) }
-            }
-            mood.update(agent: sample.agent, mic: sample.mic, muted: calls.isMuted)
-            // Linking: the presence "thinks" until the call is up.
-            engine.mood = connected ? mood.state : .thinking
-            engine.agentLevel = sample.agent
-            engine.micLevel = sample.mic
-            if app.preferences.voiceHaptics, connected, !isDemo { haptics.follow(voice: sample.agent) }
-            try? await Task.sleep(for: .milliseconds(80))
-        }
-    }
+    private var voiceReplyPlaying: Bool { chat.player.playing != nil }
 
-    /// A voice reply playing outside a call: the presence speaks it.
-    private func followVoiceReply() async {
-        guard chat.player.playing != nil, !inCall else { return }
-        engine.inCall = true
-        defer {
-            if !inCall {
-                engine.inCall = false
-                engine.mood = .idle
-                engine.agentLevel = 0
-            }
-        }
-        while chat.player.playing != nil, !inCall, !Task.isCancelled {
-            engine.mood = .speaking
-            engine.agentLevel = Double(chat.player.spectrum?.currentLevel ?? 0)
-            try? await Task.sleep(for: .milliseconds(50))
-        }
-    }
-
-    private var isDemo: Bool {
-        #if DEBUG
-        return demo != nil
-        #else
-        return false
-        #endif
+    /// A voice reply playing outside a call: the presence speaks it (levels come from `levelSource`).
+    private func voiceReplyChanged(_ playing: Bool) {
+        guard !inCall else { return }
+        engine.inCall = playing
     }
 
     // MARK: sending things into the presence

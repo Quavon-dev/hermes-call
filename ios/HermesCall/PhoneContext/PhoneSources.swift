@@ -33,6 +33,8 @@ enum PhoneSources {
         case .clipboard: clipboard()
         case .photos, .files: throw PhoneSourceUnavailable()  // picked in the prompt, see PhoneContextModel
         case .geofence: throw PhoneSourceUnavailable()  // PlaceMonitor, see PhoneContextModel
+        case .reminderCreate: try await addReminder(query.newItem)
+        case .calendarCreate: try await addEvent(query.newItem)
         }
     }
 
@@ -164,6 +166,45 @@ enum PhoneSources {
                 })
             }
         }
+    }
+
+    // MARK: adding reminders and events (write capabilities)
+
+    /// Adds the reminder to the default list; the answer is `{ok: true, id}`.
+    static func addReminder(_ item: PhoneNewItem?) async throws -> [String: JSON] {
+        guard let item else { throw PhoneSourceUnavailable() }
+        let store = EKEventStore()
+        guard try await store.requestFullAccessToReminders(), let list = store.defaultCalendarForNewReminders() else {
+            throw PhoneSourceUnavailable()
+        }
+        let reminder = EKReminder(eventStore: store)
+        reminder.calendar = list
+        reminder.title = item.title
+        reminder.notes = item.notes
+        if let due = item.due {
+            reminder.dueDateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: due)
+            reminder.addAlarm(EKAlarm(absoluteDate: due))
+        }
+        try store.save(reminder, commit: true)
+        return ["ok": true, "id": .string(reminder.calendarItemIdentifier)]
+    }
+
+    /// Adds the event to the default calendar; the answer is `{ok: true, id}`.
+    static func addEvent(_ item: PhoneNewItem?) async throws -> [String: JSON] {
+        guard let item, let start = item.start, let end = item.end else { throw PhoneSourceUnavailable() }
+        let store = EKEventStore()
+        guard try await store.requestFullAccessToEvents(), let calendar = store.defaultCalendarForNewEvents else {
+            throw PhoneSourceUnavailable()
+        }
+        let event = EKEvent(eventStore: store)
+        event.calendar = calendar
+        event.title = item.title
+        event.notes = item.notes
+        event.location = item.location
+        event.startDate = start
+        event.endDate = end
+        try store.save(event, span: .thisEvent, commit: true)
+        return ["ok": true, "id": .string(event.calendarItemIdentifier)]
     }
 
     // MARK: contacts

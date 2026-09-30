@@ -2,6 +2,8 @@ import HermesCallCore
 import SwiftUI
 
 struct AddRelayView: View {
+    /// A `hermescall://pair…` link opened on this iPhone: filled in, and confirmed like a scanned one.
+    var initialLink: String?
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
     @State private var method = Method.code
@@ -42,6 +44,7 @@ struct AddRelayView: View {
                 if method == .code {
                     Section {
                         TextField("relay.example.com", text: $address)
+                            .accessibilityIdentifier("pair.address")
                             .textContentType(.URL)
                             .keyboardType(.URL)
                             .textInputAutocapitalization(.never)
@@ -57,7 +60,7 @@ struct AddRelayView: View {
                     }
                 } else {
                     Section {
-                        QRScannerView { link in
+                        QRScannerSection { link in
                             address = link
                             method = .code
                             prepare()
@@ -74,7 +77,10 @@ struct AddRelayView: View {
                 }
 
                 if let error {
-                    Section { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
+                    Section {
+                        Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+                            .accessibilityIdentifier("pair.error")
+                    }
                 }
             }
             .alert(confirmationTitle, isPresented: Binding(get: { confirmation != nil }, set: { if !$0 { confirmation = nil } }),
@@ -86,6 +92,11 @@ struct AddRelayView: View {
             }
             .navigationTitle("Add relay")
             .navigationBarTitleDisplayMode(.inline)
+            .task {
+                guard let initialLink, address.isEmpty else { return }
+                address = initialLink
+                prepare()
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -116,7 +127,7 @@ struct AddRelayView: View {
                 Task { await pair(invite) }
             }
         } catch {
-            self.error = "Check the relay address and the 8-character code."
+            self.error = Self.explain(.invalidInput, relay: address)
         }
     }
 
@@ -165,10 +176,29 @@ struct AddRelayView: View {
             dismiss()
         } catch ProtocolError.selfSignedRelay(let pin) {
             confirmation = .selfSigned(invite, pin: pin)
-        } catch ProtocolError.pairingFailed, ProtocolError.relay("pairing_failed"), ProtocolError.cryptoFailure {
-            error = "Pairing failed: wrong or expired code. Create a new one on the bridge."
         } catch {
-            self.error = "Could not reach the relay at \(invite.relay.authority), or too many attempts (wait 15 minutes)."
+            self.error = Self.explain(PairingFailure.classify(error), relay: invite.relay.authority)
+        }
+    }
+
+    /// What went wrong and what to do, per failure.
+    static func explain(_ failure: PairingFailure, relay: String) -> String {
+        switch failure {
+        case .invalidInput:
+            "Check the relay address and the 8-character code (like K7Q-4TXP9), or paste the whole hermescall:// link."
+        case .unreachable:
+            "Can't reach the relay at \(relay). Check the address and that this iPhone is online."
+        case .tlsMismatch:
+            "The relay's certificate does not match the pairing link, so nothing was sent. If the relay got a new "
+                + "certificate, create a new code on the bridge; otherwise someone may be in between."
+        case .rateLimited:
+            "Too many pairing attempts from this network. Wait 15 minutes, then try again with a new code."
+        case .relayBusy:
+            "The relay is busy right now. Try again in a minute."
+        case .wrongOrExpiredCode:
+            "Wrong or expired code. Codes work only for a few minutes and a few tries: create a new one on the bridge."
+        case .other:
+            "Pairing did not work. Create a new code on the bridge and try again."
         }
     }
 }

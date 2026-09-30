@@ -17,9 +17,10 @@ struct InCallView: View {
     }
 
     private var standard: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 20) {
+            ConnectionBanner()
             Spacer()
-            Text(calls.peerName).font(.largeTitle.bold())
+            Text(calls.peerName).font(.largeTitle.bold()).multilineTextAlignment(.center)
             status.font(.title3).foregroundStyle(.secondary)
             if !calls.callReason.isEmpty {
                 Text(calls.callReason)
@@ -27,19 +28,33 @@ struct InCallView: View {
                     .multilineTextAlignment(.center)
                     .lineLimit(4)
             }
-            Label("End-to-end encrypted via \(calls.relayLabel)", systemImage: "lock.fill")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            if calls.isDemoCall {
+                Label("Demo call · simulated on this iPhone, nothing is recorded", systemImage: "info.circle")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            } else {
+                Label("End-to-end encrypted via \(calls.relayLabel)", systemImage: "lock.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            if calls.audio.isInterrupted {
+                Label("Audio paused by another call or app", systemImage: "pause.circle")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.orange)
+            }
+            captions
             Spacer()
             if app.preferences.talkMode == .pushToTalk {
                 pushToTalkButton
             }
-            HStack(spacing: 48) {
+            HStack(spacing: 28) {
                 RoundButton(icon: calls.isMuted ? "mic.slash.fill" : "mic.fill", label: calls.isMuted ? "Unmute" : "Mute",
                             active: calls.isMuted) { calls.setMuted(!calls.isMuted) }
                 RoundButton(icon: "speaker.wave.3.fill", label: "Speaker", active: calls.isSpeaker) { calls.toggleSpeaker() }
+                AudioOutputButton(size: buttonSize)
                 RoundButton(icon: "camera.viewfinder", label: "Look", active: false) { looking = true }
-                    .disabled(!calls.isConnected)
+                    .disabled(!calls.isConnected || calls.isDemoCall)
             }
             Button(role: .destructive) {
                 calls.hangUp()
@@ -47,13 +62,34 @@ struct InCallView: View {
                 Image(systemName: "phone.down.fill")
                     .font(.title)
                     .foregroundStyle(.white)
-                    .frame(width: Metrics.callButton, height: Metrics.callButton)
+                    .frame(width: buttonSize, height: buttonSize)
                     .background(Circle().fill(.red))
             }
             .accessibilityLabel("Hang up")
+            .accessibilityIdentifier("call.hangUp")
             .padding(.bottom, 32)
         }
         .padding()
+    }
+
+    @ScaledMetric(relativeTo: .title2) private var buttonSize = Metrics.callButton
+
+    /// The last spoken lines (bridge captions, or the demo's).
+    @ViewBuilder private var captions: some View {
+        let recent = calls.captions.suffix(2)
+        if !recent.isEmpty {
+            VStack(spacing: 6) {
+                ForEach(recent) { caption in
+                    Text(caption.text)
+                        .font(caption.fromAgent ? .body : .subheadline)
+                        .foregroundStyle(caption.fromAgent ? .primary : .secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
+                }
+            }
+            .padding(.horizontal)
+            .accessibilityElement(children: .combine)
+        }
     }
 
     @ViewBuilder private var status: some View {
@@ -90,59 +126,46 @@ private struct RoundButton: View {
     let label: String
     let active: Bool
     let action: () -> Void
+    @ScaledMetric(relativeTo: .title2) private var size = Metrics.callButton
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 6) {
                 Image(systemName: icon)
                     .font(.title2)
-                    .frame(width: Metrics.callButton, height: Metrics.callButton)
+                    .frame(width: size, height: size)
                     .background(Circle().fill(active ? Color.primary : Color.secondary.opacity(0.2)))
                     .foregroundStyle(active ? Color(.systemBackground) : Color.primary)
-                Text(label).font(.caption)
+                Text(label).font(.caption).lineLimit(1).minimumScaleFactor(0.8)
             }
         }
         .buttonStyle(.plain)
     }
 }
 
+/// iOS' output picker (AirPods, car, speaker…) in the look of the other call buttons.
+private struct AudioOutputButton: View {
+    let size: CGFloat
+
+    var body: some View {
+        VStack(spacing: 6) {
+            RoutePicker()
+                .frame(width: size, height: size)
+                .background(Circle().fill(Color.secondary.opacity(0.2)))
+            Text("Audio").font(.caption).lineLimit(1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Audio output")
+    }
+}
+
 struct ApprovalSheet: View {
     let approval: CallCoordinator.Approval
     @Environment(CallCoordinator.self) private var calls
-    @State private var looking = false
 
     var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                Label("Your assistant wants to run a command that needs your approval.", systemImage: "exclamationmark.shield")
-                    .font(.headline)
-                if !approval.details.isEmpty {
-                    Text(approval.details).foregroundStyle(.secondary)
-                }
-                ScrollView {
-                    Text(approval.command)
-                        .font(.body.monospaced())
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                }
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
-                Text("Approving requires Face ID or your passcode and applies to this one command only. Voice never approves.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                HStack {
-                    Button(role: .cancel) { Task { await calls.answerApproval(approve: false) } } label: { Text("Deny").frame(maxWidth: .infinity) }
-                        .buttonStyle(.bordered)
-                    Button { Task { await calls.answerApproval(approve: true) } } label: { Text("Approve once").frame(maxWidth: .infinity) }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.orange)
-                }
-                .controlSize(.large)
-            }
-            .padding()
-            .navigationTitle("Approval needed")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .presentationDetents([.medium, .large])
+        ApprovalPanel(command: approval.command, details: approval.details, step: calls.approvalStep, voiceNote: true,
+                      onDeny: { Task { await calls.answerApproval(approve: false) } },
+                      onApprove: { Task { await calls.answerApproval(approve: true) } })
     }
 }

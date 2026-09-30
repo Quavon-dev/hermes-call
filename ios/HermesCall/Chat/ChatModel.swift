@@ -1,6 +1,5 @@
 import Foundation
 import HermesCallCore
-import LocalAuthentication
 import os
 import UIKit
 import UniformTypeIdentifiers
@@ -35,7 +34,10 @@ final class ChatModel {
     var messages: [ChatMessage] { window.messages }
     private(set) var agentTyping = false
     private(set) var unread = 0
-    var pendingApproval: ChatApproval?
+    var pendingApproval: ChatApproval? { didSet { if pendingApproval?.id != oldValue?.id { approvalStep = .waiting } } }
+    private(set) var approvalStep = ApprovalStep.waiting
+    /// Face ID / passcode for approvals (a fake in tests).
+    var authenticator: any OwnerAuthenticator = DeviceOwnerAuthenticator()
     /// The newest result cards, unfolded on the presence (Home in HUD appearance, the call screen) until dismissed.
     private(set) var spotlight: ChatMessage?
     /// Hits of the last `search`, newest first.
@@ -68,7 +70,6 @@ final class ChatModel {
     private var typingReset: Task<Void, Never>?
     private var acks: [String: CheckedContinuation<Bool, Never>] = [:]
     private var inFlight: Set<String> = []
-    private var approvalAnswering = false
     private var loadingPage = false
     private var replyWaiters: [UUID: ReplyWaiter] = [:]
     private var listeners: [Task<Void, Never>] = []
@@ -389,22 +390,21 @@ final class ChatModel {
     }
 
     /// Approving needs Face ID / passcode; denying never does. `id`: only answer this request (the watch).
+    /// A cancelled Face ID keeps the request open (Try again / Deny) instead of denying it.
     func answerApproval(approve: Bool, id: String? = nil) async {
-        guard let approval = pendingApproval, id == nil || approval.id == id, !approvalAnswering,
+        guard let approval = pendingApproval, id == nil || approval.id == id, approvalStep != .confirming,
               let profile = app.profiles.first(where: { $0.id == approval.profileID }) else { return }
-        approvalAnswering = true
-        defer { approvalAnswering = false }
-        var choice = "deny"
         if approve {
-            let reason = "Approve the command your assistant wants to run."
-            if (try? await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)) == true {
-                choice = "once"
-            }
+            approvalStep = .confirming
+            let check = await authenticator.confirm(reason: ApprovalStep.reason)
+            guard pendingApproval?.id == approval.id else { return }
+            guard check == .confirmed else { return approvalStep = ApprovalStep.after(check) }
         }
         guard pendingApproval?.id == approval.id else { return }
         pendingApproval = nil
         await withSession(profile) { session in
-            try await session.send(["type": "approval", "request_id": .string(approval.id), "choice": .string(choice)], mail: true)
+            try await session.send(["type": "approval", "request_id": .string(approval.id), "choice": .string(approve ? "once" : "deny")],
+                                   mail: true)
             if let mailID = approval.mailID { try await session.ackMail([mailID]) }
         }
     }
@@ -415,6 +415,8 @@ final class ChatModel {
     @discardableResult
     func send(text: String, files: [OutgoingFile] = [], profileID: UUID? = nil) async -> String? {
         guard let profile = profileID.flatMap({ id in app.profiles.first { $0.id == id } }) ?? app.activeProfile else { return nil }
+        // Nothing goes to an agent before the owner agreed (the demo agent keeps everything on the phone).
+        guard profile.isDemo || app.requireConsent() else { return nil }
         let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(ChatWire.maxText))
         guard !trimmed.isEmpty || !files.isEmpty else { return nil }
         var message = ChatMessage(id: E2EChannel.newMessageID(), role: .owner, text: trimmed, status: .pending)
@@ -506,7 +508,7 @@ final class ChatModel {
         let byProfile = Dictionary(grouping: entries, by: \.profile)
         await withTaskGroup(of: Void.self) { group in
             for (profileID, pending) in byProfile {
-                guard let profile = app.profiles.first(where: { $0.id == profileID }) else { continue }
+                guard let profile = app.profiles.first(where: { $0.id == profileID }), profile.isDemo || app.mayShare else { continue }
                 for entry in pending.suffix(20) { group.addTask { await self.deliver(entry.message.id, profile: profile) } }
             }
         }

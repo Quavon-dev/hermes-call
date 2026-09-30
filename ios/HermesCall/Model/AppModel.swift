@@ -11,7 +11,17 @@ final class AppModel {
     private(set) var relayStatus: RelaySession.Status = .disconnected
     private(set) var session: RelaySession?
     private(set) var pushToken: String?
-    var lastError: String?
+    /// The alert on screen (RootView), with its recovery action.
+    var error: AppError?
+    /// Plain-text errors (chat, composer): shown like any other error, without a recovery action.
+    var lastError: String? {
+        get { error?.message }
+        set { error = newValue.map(AppError.message) }
+    }
+    /// A screen the root view should show (error recovery, `hermescall://pair` links).
+    var route: AppRoute?
+    /// When the active relay connection last came up, and the last connection problem (Diagnostics).
+    private(set) var connectedSince: Date?
     /// Lets the call coordinator listen to every relay connection the app opens.
     var onSessionCreated: ((RelaySession) -> Void)?
     /// A relay connection (the app's own or a borrowed one) is up: fetch mail, resend the outbox.
@@ -37,8 +47,9 @@ final class AppModel {
             profiles = try store.load()
         } catch {
             log.error("loading profiles failed: \(error.localizedDescription, privacy: .public)")
-            lastError = "Could not read your saved relays from the Keychain."
+            self.error = .keychainUnreadable
         }
+        if preferences.demoActive, let demo = DemoAgent.makeProfile() { profiles.append(demo) }
         if activeProfile == nil { preferences.activeProfileID = profiles.first?.id }
         shareActiveAgent()
     }
@@ -47,11 +58,48 @@ final class AppModel {
         profiles.first { $0.id == preferences.activeProfileID }
     }
 
+    /// Paired agents, without the demo agent.
+    var realProfiles: [RelayProfile] { profiles.filter { !$0.isDemo } }
+
+    /// Something may go to the active agent only with the owner's consent; the demo agent keeps everything on the phone.
+    var mayShare: Bool { preferences.aiConsent }
+
+    /// Asks for consent (ConsentView) when it is missing; true when sharing is allowed.
+    func requireConsent() -> Bool {
+        guard !mayShare else { return true }
+        error = .consentRequired
+        return false
+    }
+
+    // MARK: demo agent
+
+    /// "Try a demo": the offline demo agent becomes the active one (see DemoAgent).
+    func startDemo() {
+        if !profiles.contains(where: \.isDemo), let demo = DemoAgent.makeProfile() { profiles.append(demo) }
+        preferences.demoActive = true
+        preferences.onboardingDone = true
+        activate(DemoAgent.id)
+    }
+
+    /// Removes the demo agent and its chat; real agents are untouched.
+    func removeDemo() async {
+        let wasActive = activeProfile?.isDemo == true
+        profiles.removeAll(where: \.isDemo)
+        preferences.demoActive = false
+        await ChatStore.shared.deleteChat(DemoAgent.id)
+        if wasActive {
+            disconnect()
+            preferences.activeProfileID = profiles.first?.id
+            connect()
+        }
+        shareActiveAgent()
+    }
+
     func pair(invite: PairingInvite, deviceName: String) async throws {
         var profile = try await DevicePairing.pair(invite: invite, deviceName: deviceName)
         profile.palette = AgentPalette.next(after: profiles.map(\.agentPalette))
         profiles.append(profile)
-        try store.save(profiles)
+        try store.save(realProfiles)
         activate(profile.id)
         preferences.onboardingDone = true
         syncPushRegistrations()
@@ -84,6 +132,8 @@ final class AppModel {
     private func shareAgents() {
         AgentDirectory.save(profiles.map { AgentInfo(id: $0.id, name: $0.bridgeName, palette: $0.agentPalette.rawValue) },
                             active: activeProfile?.id)
+        // "Call Atlas with Hermes Call": Siri learns the agents' names.
+        HermesShortcuts.updateAppShortcutParameters()
     }
 
     func setPalette(_ id: UUID, to palette: AgentPalette) {
@@ -111,6 +161,7 @@ final class AppModel {
     /// Asks the bridge to revoke this phone (best effort), then deletes the local keys.
     func unpair(_ id: UUID) async {
         guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        guard !profile.isDemo else { return await removeDemo() }
         await Self.notifyUnpair(profile)
         if preferences.activeProfileID == id { disconnect() }
         profiles.removeAll { $0.id == id }
@@ -125,7 +176,7 @@ final class AppModel {
 
     func deleteAllData() async {
         await withTaskGroup(of: Void.self) { group in
-            for profile in profiles { group.addTask { await Self.notifyUnpair(profile) } }
+            for profile in realProfiles { group.addTask { await Self.notifyUnpair(profile) } }
         }
         await ChatStore.shared.deleteAll()
         ChatSnapshot.clear()
@@ -136,11 +187,17 @@ final class AppModel {
         borrowed = [:]
         profiles = []
         do { try store.deleteAll() } catch { lastError = error.localizedDescription }
+        await ChatStore.shared.deleteChat(DemoAgent.id)
         preferences.reset()
     }
 
     func connect() {
         guard session == nil, let profile = activeProfile else { return }
+        // The demo agent is always "online": it runs on this iPhone.
+        guard !profile.isDemo else {
+            relayStatus = .connected
+            return
+        }
         if let shared = borrowed[profile.id]?.session {
             session = shared
             return
@@ -151,8 +208,14 @@ final class AppModel {
             onSessionCreated?(session)
             Task { await session.start() }
         } catch {
-            lastError = "This relay profile is damaged. Remove it and pair again."
+            self.error = .profileDamaged(agent: profile.bridgeName)
         }
+    }
+
+    /// The network came back: try the relay now instead of waiting for the backoff.
+    func reconnectNow() {
+        guard let session else { return connect() }
+        Task { await session.reconnectNow() }
     }
 
     var isBorrowed: Bool { borrowed.values.contains { $0.session === session } }
@@ -164,6 +227,7 @@ final class AppModel {
     }
 
     func disconnect() {
+        if activeProfile?.isDemo == true, session == nil { relayStatus = .disconnected }
         guard let session else { return }
         self.session = nil
         relayStatus = .disconnected
@@ -175,6 +239,7 @@ final class AppModel {
     /// A connection to `profile`'s relay (the app's own one for the active relay) that stays open
     /// until every borrower has called `releaseSession`.
     func borrowSession(for profile: RelayProfile) throws -> RelaySession {
+        guard !profile.isDemo else { throw ProtocolError.notConnected }
         if let entry = borrowed[profile.id] {
             borrowed[profile.id] = (entry.session, entry.users + 1)
             return entry.session
@@ -215,6 +280,7 @@ final class AppModel {
                 if status == .connected, let open = self.openSession(for: id) { self.onConnected?(open) }
                 guard self.session?.profile.id == id else { return }
                 self.relayStatus = status
+                self.connectedSince = status == .connected ? Date() : nil
             }
         }
     }
@@ -236,7 +302,7 @@ final class AppModel {
     func syncPushRegistrations(environment: String = PushEnvironment.current) {
         if pushToken == nil { preferences.pushRegistrations = [:] }
         if alertToken == nil { preferences.alertRegistrations = [:] }
-        for profile in profiles where !registeringPush.contains(profile.id) {
+        for profile in realProfiles where !registeringPush.contains(profile.id) {
             let voip = pushToken.map { "\(environment):\($0)" }
             let alert = alertToken.map { "\(environment):\($0)" }
             let needsVoip = voip != nil && preferences.pushRegistrations[profile.id.uuidString] != voip
@@ -286,6 +352,6 @@ final class AppModel {
     }
 
     private func persist() {
-        do { try store.save(profiles) } catch { lastError = error.localizedDescription }
+        do { try store.save(realProfiles) } catch { lastError = error.localizedDescription }
     }
 }

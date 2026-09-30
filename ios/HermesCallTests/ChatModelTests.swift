@@ -65,7 +65,10 @@ struct ChatFixture {
         let profiles = [try Self.profile("home"), try Self.profile("office")]
         try ProfileStore(service: service).save(profiles)
         let defaults = UserDefaults(suiteName: "de.quavon.hermescall.tests.\(UUID().uuidString)") ?? .standard
-        app = AppModel(store: ProfileStore(service: service), preferences: Preferences(defaults: defaults))
+        // The owner agreed to share with their agents (ConsentView); kept out of the real app group.
+        let preferences = Preferences(defaults: defaults, shared: defaults)
+        preferences.aiConsent = true
+        app = AppModel(store: ProfileStore(service: service), preferences: preferences)
         store = ChatStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("chat-\(UUID().uuidString)"),
                           changedSignal: nil)
         chat = ChatModel(app: app, store: store, links: links, listens: false)

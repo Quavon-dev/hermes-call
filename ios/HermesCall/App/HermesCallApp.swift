@@ -12,20 +12,25 @@ struct HermesCallApp: App {
     @State private var tasks: TaskActivityModel
     @State private var push: PushRegistrar
     @State private var notifications: ChatNotifications
+    @State private var network = NetworkMonitor()
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
         #if DEBUG
+        UITestSupport.resetIfRequested()
         ChatDemo.seedIfRequested()
         #endif
         let app = AppModel()
-        let calls = CallCoordinator(app: app)
-        let chat = ChatModel(app: app)
+        let router = MessageRouter()
+        let calls = CallCoordinator(app: app, router: router)
+        let links = AgentLinks(app: app)
+        let chat = ChatModel(app: app, links: links)
+        links.demo.chat = chat
         let phone = PhoneContextModel(app: app)
         let tasks = TaskActivityModel(app: app)
-        calls.onTaskMessage = { [weak tasks] message, session in tasks?.receive(message, from: session) }
-        calls.onPhoneMessage = { [weak phone] message, session in phone?.receive(message, from: session) }
-        calls.onChatMessage = { [weak chat] message, session in chat?.receive(message, from: session) }
+        router.onTask = { [weak tasks] message, session in tasks?.receive(message, from: session) }
+        router.onPhone = { [weak phone] message, session in phone?.receive(message, from: session) }
+        router.onChat = { [weak chat] message, session in chat?.receive(message, from: session) }
         calls.onCallEnded = { [weak chat] profile, duration, incoming in
             chat?.noteCall(profile: profile, duration: duration, incoming: incoming)
         }
@@ -61,11 +66,14 @@ struct HermesCallApp: App {
                 .environment(chat)
                 .environment(phone)
                 .environment(tasks)
+                .environment(network)
                 .onAppear {
                     delegate.notifications = notifications
-                    if !app.profiles.isEmpty { notifications.requestAuthorization() }
+                    network.onPathRestored = { [app] in app.reconnectNow() }
+                    network.start()
+                    if !app.realProfiles.isEmpty { notifications.requestAuthorization() }
                 }
-                .onChange(of: app.profiles.count) { _, count in
+                .onChange(of: app.realProfiles.count) { _, count in
                     if count > 0 { notifications.requestAuthorization() }
                 }
                 .onOpenURL { url in open(url) }
@@ -81,10 +89,11 @@ struct HermesCallApp: App {
         }
     }
 
-    /// `hermescall://chat` and `hermescall://call` (widget, shortcuts; `?agent=<id>` picks the agent);
-    /// pairing links are handled by onboarding.
+    /// `hermescall://pair…` (a pairing link opened on this iPhone: confirmed before pairing), `hermescall://chat`
+    /// and `hermescall://call` (widget, shortcuts; `?agent=<id>` picks the agent).
     private func open(_ url: URL) {
         guard url.scheme == "hermescall" else { return }
+        if url.host == "pair" { return app.route = .pair(url.absoluteString) }
         let agent = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "agent" }?.value
         if let id = agent.flatMap(UUID.init(uuidString:)), id != app.activeProfile?.id { app.activate(id) }
         switch url.host {
@@ -113,6 +122,8 @@ struct RootView: View {
     @Environment(AppModel.self) private var app
     @Environment(CallCoordinator.self) private var calls
     @Environment(ChatModel.self) private var chat
+    /// "Not now" on the consent screen: not asked again until the next launch (actions still ask).
+    @State private var consentDeferred = false
 
     /// HUD appearance: the presence is the whole app (and the call screen).
     private var presence: Bool { app.preferences.appearance == .hud }
@@ -126,6 +137,9 @@ struct RootView: View {
 
     /// Standard appearance shows calls on their own screen.
     private var callScreen: Bool { !presence && calls.inCall && calls.phase != .ringing }
+
+    /// Asked once, right after the first agent (or the demo) is added, before anything can be sent.
+    private var askConsent: Bool { !app.profiles.isEmpty && !app.preferences.aiConsent && !consentDeferred }
 
     var body: some View {
         @Bindable var app = app
@@ -143,10 +157,14 @@ struct RootView: View {
             }
         }
         .fullScreenCover(isPresented: .constant(callScreen)) { InCallView() }
+        .fullScreenCover(isPresented: Binding(get: { askConsent && !callScreen }, set: { if !$0 { consentDeferred = true } })) {
+            ConsentView { consentDeferred = true }
+        }
         .phonePrompt(enabled: !callScreen && chat.pendingApproval == nil)
         .sheet(item: Binding(get: { callScreen ? nil : chat.pendingApproval }, set: { if $0 == nil { chat.pendingApproval = nil } })) {
             ChatApprovalSheet(approval: $0).interactiveDismissDisabled()
         }
+        .sheet(item: $app.route) { route in routeView(route) }
         .hudStyle(app.preferences.appearance == .hud)
         .onChange(of: calls.inCall) { _, live in if live { chat.player.stop() } }
         .onChange(of: watchKey, initial: true) { WatchBridge.shared.publish() }
@@ -161,10 +179,33 @@ struct RootView: View {
             }
             #endif
         }
-        .alert("Hermes Call", isPresented: Binding(get: { app.lastError != nil }, set: { if !$0 { app.lastError = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(app.lastError ?? "")
+        .alert(app.error?.title ?? "Hermes Call", isPresented: Binding(get: { app.error != nil }, set: { if !$0 { app.error = nil } }),
+               presenting: app.error) { error in
+            if let action = error.recoveryTitle, let recovery = error.recovery {
+                Button(action) { recover(recovery) }
+            }
+            Button(error.recovery == nil ? "OK" : "Not now", role: .cancel) {}
+        } message: { error in
+            Text(error.message)
+        }
+    }
+
+    @ViewBuilder private func routeView(_ route: AppRoute) -> some View {
+        switch route {
+        case .consent: ConsentView()
+        case .relays: ProfilesView()
+        case .pair(let link): AddRelayView(initialLink: link)
+        }
+    }
+
+    private func recover(_ recovery: AppError.Recovery) {
+        switch recovery {
+        case .openSettings:
+            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+        case .reviewConsent:
+            app.route = .consent
+        case .showRelays:
+            app.route = .relays
         }
     }
 }

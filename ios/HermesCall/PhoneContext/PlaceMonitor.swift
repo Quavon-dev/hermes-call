@@ -213,6 +213,7 @@ final class PlaceMonitor {
         content.sound = .default
         content.interruptionLevel = .timeSensitive
         // Ask: the owner decides per reminder whether the agent hears about it.
+        content.filterCriteria = reminder.profileID?.uuidString
         if settings.permission(for: .geofence) == .ask {
             content.categoryIdentifier = Self.notificationCategory
             content.userInfo = ["place_message": Self.message(for: reminder), "profile": reminder.profileID?.uuidString ?? ""]

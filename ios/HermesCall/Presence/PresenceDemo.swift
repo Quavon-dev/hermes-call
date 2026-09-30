@@ -1,25 +1,35 @@
-#if DEBUG
 import Foundation
 
-/// Simulator stand-in for a call (CallKit calls end at once there). Launch with `-PresenceDemo YES`
-/// (HUD appearance) so tapping the presence starts a fake call; `-PresenceDemoAuto YES` starts one.
-/// Levels cycle listening → thinking → speaking, with captions.
+/// A simulated call: voice levels cycle listening → thinking → speaking, with captions. The demo agent's
+/// calls use it (DemoAgent), and so does the Simulator, where CallKit ends every real call at once:
+/// debug builds launched with `-PresenceDemo YES` make every call a simulated one; `-PresenceDemoAuto YES`
+/// starts one by itself (HUD appearance).
 @MainActor @Observable
 final class PresenceDemo {
-    static var enabled: Bool { UserDefaults.standard.bool(forKey: "PresenceDemo") }
+    #if DEBUG
+    static var forced: Bool { UserDefaults.standard.bool(forKey: "PresenceDemo") }
     static var autoStart: Bool { UserDefaults.standard.bool(forKey: "PresenceDemoAuto") }
+    #else
+    static let forced = false
+    static let autoStart = false
+    #endif
 
     private(set) var since: Date?
     private(set) var captions: [CallCoordinator.Caption] = []
     private var shownCycle = -1
+    private let lines: [(fromAgent: Bool, text: String)]
     var active: Bool { since != nil }
 
-    private static let lines = [
+    static let defaultLines: [(fromAgent: Bool, text: String)] = [
         (false, "Find me a quiet place for dinner nearby."),
         (true, "Three places are open near you. The trattoria has a table at eight."),
         (false, "Book the trattoria."),
         (true, "Done. I added it to your calendar and sent you the route."),
     ]
+
+    init(lines: [(fromAgent: Bool, text: String)] = PresenceDemo.defaultLines) {
+        self.lines = lines.isEmpty ? Self.defaultLines : lines
+    }
 
     func start() {
         since = Date()
@@ -41,8 +51,8 @@ final class PresenceDemo {
         let cycle = Int(elapsed / 6)
         if cycle != shownCycle {
             shownCycle = cycle
-            let line = Self.lines[cycle % Self.lines.count]
-            captions = Array((captions + [CallCoordinator.Caption(fromAgent: line.0, text: line.1, date: now)]).suffix(2))
+            let line = lines[cycle % lines.count]
+            captions = Array((captions + [CallCoordinator.Caption(fromAgent: line.fromAgent, text: line.text, date: now)]).suffix(2))
         }
         switch phase {
         case ..<1.5: return (0, 0)
@@ -52,4 +62,3 @@ final class PresenceDemo {
         }
     }
 }
-#endif

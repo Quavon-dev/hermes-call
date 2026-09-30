@@ -38,6 +38,7 @@ struct PhoneQuerySheet: View {
                     Text(capability.title + (prompt.query.precise ? " (precise)" : "")).font(.title2.bold())
                 }
             }
+            if let item = prompt.query.newItem { NewItemCard(item: item, capability: capability) }
             Text("“\(prompt.query.reason)”").font(.body.italic())
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding()
@@ -79,8 +80,11 @@ struct PhoneQuerySheet: View {
                 Button { importing = true } label: { Text("Choose files").frame(maxWidth: .infinity) }
                     .buttonStyle(.borderedProminent)
             default:
-                Button { Task { await phone.respond(to: prompt.id, allow: true) } } label: { Text("Allow once").frame(maxWidth: .infinity) }
-                    .buttonStyle(.borderedProminent)
+                Button { Task { await phone.respond(to: prompt.id, allow: true) } } label: {
+                    Text(capability.writes ? "Add" : "Allow once").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("phone.allow")
             }
         }
         .controlSize(.large)
@@ -103,6 +107,36 @@ struct PhoneQuerySheet: View {
             return try? OutgoingFile.from(url: url)
         }
         Task { await phone.respond(to: prompt.id, files: files) }
+    }
+}
+
+/// What the agent wants to add, exactly as it will be created.
+private struct NewItemCard: View {
+    let item: PhoneNewItem
+    let capability: PhoneCapability
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(item.title).font(.headline)
+            if let start = item.start, let end = item.end {
+                Label(Self.range(start, end), systemImage: "clock")
+            }
+            if let due = item.due {
+                Label("Due \(due.formatted(date: .abbreviated, time: .shortened))", systemImage: "bell")
+            }
+            if let location = item.location { Label(location, systemImage: "mappin") }
+            if let notes = item.notes { Text(notes).font(.footnote).foregroundStyle(.secondary).lineLimit(6) }
+        }
+        .font(.subheadline)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: Metrics.cornerRadius))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(capability.title): \(item.title)")
+    }
+
+    private static func range(_ start: Date, _ end: Date) -> String {
+        start.formatted(date: .abbreviated, time: .shortened) + " – " + end.formatted(date: .omitted, time: .shortened)
     }
 }
 

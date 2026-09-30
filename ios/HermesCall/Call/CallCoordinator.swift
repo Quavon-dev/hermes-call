@@ -4,6 +4,7 @@ import Foundation
 import HermesCallCore
 import LocalAuthentication
 import os
+import UIKit
 @preconcurrency import WebRTC
 
 /// Drives calls through CallKit (so they behave like real phone calls) and WebRTC.
@@ -35,37 +36,40 @@ final class CallCoordinator: NSObject {
 
     private(set) var phase: Phase = .idle
     private(set) var isMuted = false
-    private(set) var isSpeaker = false
     private(set) var isTalking = false
+    /// Speaker, route and interruptions of the call's audio session.
+    let audio = CallAudioRoute()
+    var isSpeaker: Bool { audio.isSpeaker }
     private(set) var peerName = RelayProfile.defaultAgentName
     /// The relay profile of the current (or last) call, once known.
     private(set) var profileID: UUID?
     private(set) var relayLabel = "relay"
     private(set) var callReason = ""
-    var pendingApproval: Approval?
-    /// The latest spoken lines of this call (bridge `caption`), newest last.
-    private(set) var captions: [Caption] = []
-    private var approvalInProgress = false
+    var pendingApproval: Approval? { didSet { if pendingApproval?.id != oldValue?.id { approvalStep = .waiting } } }
+    private(set) var approvalStep = ApprovalStep.waiting
+    /// Face ID / passcode for approvals (a fake in tests).
+    var authenticator: any OwnerAuthenticator = DeviceOwnerAuthenticator()
+    /// The latest spoken lines of this call (bridge `caption`, or the demo's), newest last.
+    var captions: [Caption] { demo?.captions ?? liveCaptions }
+    private var liveCaptions: [Caption] = []
+    /// The demo agent's simulated call (DemoAgent); no CallKit, no audio.
+    private(set) var demo: PresenceDemo?
+    private var demoLevels = (agent: 0.0, mic: 0.0)
+    private var demoClock: Task<Void, Never>?
     /// Talk mode for the next outgoing call (hold-to-talk on the presence), else the preference.
     private var nextTalkMode: TalkMode?
     /// Same limit as the bridge: longer commands are denied there, never shown cut off.
     static let maxApprovalText = 4000
 
     private let app: AppModel
+    private let router: MessageRouter
     private let provider: CXProvider
     private let controller = CXCallController()
     private let ringback = RingbackTone()
     private let log = Logger(subsystem: "de.quavon.hermescall", category: "call")
     private var call: ActiveCall?
-    private var pumps: [ObjectIdentifier: Task<Void, Never>] = [:]
     /// Rings that already ended, so a late `invite` (e.g. the reply to `invite_query`) cannot ring again.
     private var finishedCallIDs: [String] = []
-    /// Chat messages share the relay connections; the chat model takes them from here.
-    var onChatMessage: (([String: JSON], RelaySession) -> Void)?
-    /// Phone context queries from the agent (PhoneContextModel).
-    var onPhoneMessage: (([String: JSON], RelaySession) -> Void)?
-    /// The agent's task progress (TaskActivityModel).
-    var onTaskMessage: (([String: JSON], RelaySession) -> Void)?
     /// A connected call ended: (relay profile, duration, incoming), for the chat's call entries.
     var onCallEnded: ((UUID, TimeInterval, Bool) -> Void)?
 
@@ -88,35 +92,29 @@ final class CallCoordinator: NSObject {
     static let answerTimeout: Duration = .seconds(20)
     static let inviteTimeout: Duration = .seconds(15)
 
-    init(app: AppModel) {
+    init(app: AppModel, router: MessageRouter = MessageRouter()) {
         self.app = app
+        self.router = router
         provider = CXProvider(configuration: Self.configuration(includeInRecents: app.preferences.includeInRecents))
         super.init()
         provider.setDelegate(self, queue: .main)
-        app.onSessionCreated = { [weak self] session in self?.listen(to: session) }
+        router.onCall = { [weak self] message, session in self?.handle(message, from: session) }
+        app.onSessionCreated = { [weak router] session in router?.listen(to: session) }
         let audio = RTCAudioSession.sharedInstance()
         audio.useManualAudio = true
         audio.isAudioEnabled = false
-    }
-
-    static func configuration(includeInRecents: Bool) -> CXProviderConfiguration {
-        let configuration = CXProviderConfiguration()
-        configuration.supportsVideo = false
-        configuration.maximumCallGroups = 1
-        configuration.maximumCallsPerCallGroup = 1
-        configuration.supportedHandleTypes = [.generic]
-        configuration.includesCallsInRecents = includeInRecents
-        return configuration
     }
 
     func applyRecentsPreference() {
         provider.configuration = Self.configuration(includeInRecents: app.preferences.includeInRecents)
     }
 
-    var inCall: Bool { call != nil }
+    var inCall: Bool { call != nil || demo != nil }
+    var isDemoCall: Bool { demo != nil }
 
     func telemetry() async -> CallTelemetry {
-        await call?.rtc?.telemetry() ?? CallTelemetry()
+        if demo != nil { return CallTelemetry(mic: isMuted ? 0 : demoLevels.mic, agent: demoLevels.agent) }
+        return await call?.rtc?.telemetry() ?? CallTelemetry()
     }
     var isConnected: Bool { if case .connected = phase { true } else { false } }
 
@@ -130,16 +128,41 @@ final class CallCoordinator: NSObject {
 
     /// The agent's played loudness as of the last `spectrum()` read (no new analysis).
     var agentPlayoutLevel: Float? {
-        call?.rtc?.usesEngineAudio == true ? EngineAudioDevice.shared.agentSpectrum.currentLevel : nil
+        if demo != nil { return Float(demoLevels.agent) }
+        return call?.rtc?.usesEngineAudio == true ? EngineAudioDevice.shared.agentSpectrum.currentLevel : nil
     }
+
+    /// Voice levels (agent, owner) for the presence, read every frame: the audio engine's own analysis,
+    /// the demo's simulation, or with the legacy audio device WebRTC's statistics (refreshed at most four
+    /// times a second). nil while the call is not connected.
+    func liveLevels() -> (agent: Double, mic: Double)? {
+        guard isConnected else { return nil }
+        if demo != nil { return (demoLevels.agent, isMuted ? 0 : demoLevels.mic) }
+        guard let rtc = call?.rtc else { return nil }
+        if rtc.usesEngineAudio {
+            let device = EngineAudioDevice.shared
+            return (Double(device.agentSpectrum.currentLevel), isMuted ? 0 : Double(device.micSpectrum.currentLevel))
+        }
+        if Date().timeIntervalSince(statsRead) > 0.25 {
+            statsRead = Date()
+            Task { stats = await rtc.telemetry() }
+        }
+        return (stats.agent, isMuted ? 0 : stats.mic)
+    }
+
+    @ObservationIgnored private var stats = CallTelemetry()
+    @ObservationIgnored private var statsRead = Date.distantPast
 
     // MARK: user actions
 
     func startCall(talkMode: TalkMode? = nil) async {
-        guard call == nil, let profile = app.activeProfile else { return }
+        guard !inCall, let profile = app.activeProfile else { return }
+        if profile.isDemo || PresenceDemo.forced { return startDemoCall(profile) }
+        guard app.requireConsent() else { return }
         nextTalkMode = talkMode
         guard await AVAudioApplication.requestRecordPermission() else {
-            phase = .ended(reason: "Microphone access is off. Allow it in Settings › Hermes Call.")
+            phase = .ended(reason: "Microphone access is off.")
+            app.error = .microphoneDenied
             return
         }
         let uuid = UUID()
@@ -154,6 +177,7 @@ final class CallCoordinator: NSObject {
 
     /// If CallKit rejects the transaction (e.g. it lost track of the call), hang up anyway.
     func hangUp() {
+        if demo != nil { return endDemoCall() }
         guard let call else { return }
         let uuid = call.uuid
         Self.request(controller, CXEndCallAction(call: uuid)) { [weak self] in
@@ -162,6 +186,7 @@ final class CallCoordinator: NSObject {
     }
 
     func setMuted(_ muted: Bool) {
+        if demo != nil { return isMuted = muted }
         guard let call else { return }
         Self.request(controller, CXSetMutedCallAction(call: call.uuid, muted: muted)) { [weak self] in
             Task { @MainActor in self?.applyMute(muted) }
@@ -182,15 +207,7 @@ final class CallCoordinator: NSObject {
     }
 
     func toggleSpeaker() {
-        let audio = RTCAudioSession.sharedInstance()
-        audio.lockForConfiguration()
-        defer { audio.unlockForConfiguration() }
-        do {
-            try audio.overrideOutputAudioPort(isSpeaker ? .none : .speaker)
-            isSpeaker.toggle()
-        } catch {
-            log.error("speaker switch failed")
-        }
+        audio.toggleSpeaker()
     }
 
     /// The talk mode of the current call.
@@ -246,28 +263,57 @@ final class CallCoordinator: NSObject {
         Task { try? await current.session?.send(["type": "ptt", "call_id": .string(current.callID), "down": .bool(down)]) }
     }
 
-    /// Approving needs Face ID / passcode; denying never does.
+    /// Approving needs Face ID / passcode; denying never does. A cancelled Face ID keeps the request open
+    /// (Try again / Deny) instead of denying it.
     func answerApproval(approve: Bool) async {
-        guard let approval = pendingApproval, !approvalInProgress, let current = call, approval.callID == current.callID
+        guard let approval = pendingApproval, approvalStep != .confirming, let current = call, approval.callID == current.callID
         else { return }
-        approvalInProgress = true
-        defer { approvalInProgress = false }
-        var choice = "deny"
         if approve {
-            let context = LAContext()
-            let reason = "Approve the command your assistant wants to run."
-            if (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)) == true {
-                choice = "once"
-            }
+            approvalStep = .confirming
+            let check = await authenticator.confirm(reason: ApprovalStep.reason)
+            guard pendingApproval?.id == approval.id else { return }
+            guard check == .confirmed else { return approvalStep = ApprovalStep.after(check) }
         }
         guard pendingApproval?.id == approval.id, call?.callID == approval.callID else { return }
         pendingApproval = nil
         try? await current.session?.send([
-            "type": "approval", "call_id": .string(approval.callID), "request_id": .string(approval.id), "choice": .string(choice),
+            "type": "approval", "call_id": .string(approval.callID), "request_id": .string(approval.id),
+            "choice": .string(approve ? "once" : "deny"),
         ])
     }
 
-    // MARK: call flow
+    // MARK: demo call
+
+    /// The demo agent "answers" at once: captions and voice levels are simulated on this iPhone.
+    private func startDemoCall(_ profile: RelayProfile) {
+        let simulated = PresenceDemo(lines: DemoAgent.callLines)
+        simulated.start()
+        demo = simulated
+        show(profile)
+        callReason = ""
+        isMuted = false
+        phase = .connected(since: Date())
+        demoClock = Task { [weak self] in
+            while !Task.isCancelled, let self, let demo = self.demo {
+                self.demoLevels = demo.sample()
+                try? await Task.sleep(for: .milliseconds(80))
+            }
+        }
+    }
+
+    private func endDemoCall() {
+        guard let simulated = demo else { return }
+        demoClock?.cancel()
+        demoClock = nil
+        if let since = simulated.since, let profile = profileID { onCallEnded?(profile, Date().timeIntervalSince(since), false) }
+        simulated.end()
+        demo = nil
+        demoLevels = (0, 0)
+        isMuted = false
+        phase = .ended(reason: "Call ended.")
+    }
+
+    // MARK: call flow    // MARK: call flow
 
     private func startOutgoing(uuid: UUID) {
         guard let profile = app.activeProfile, let session = try? app.borrowSession(for: profile) else {
@@ -281,7 +327,7 @@ final class CallCoordinator: NSObject {
         show(profile)
         callReason = ""
         phase = .connecting
-        listen(to: session)
+        router.listen(to: session)
         Task { await negotiate(uuid: uuid) }
     }
 
@@ -326,9 +372,9 @@ final class CallCoordinator: NSObject {
     /// whether the ring is real; invalid or unconfirmed rings are ended immediately.
     func reportIncomingPush(callID: String?, completion: @escaping @Sendable () -> Void) {
         let uuid = callID.flatMap(Self.callUUID) ?? UUID()
-        let profiles = app.profiles
-        let name = profiles.count == 1 ? profiles[0].bridgeName : "Hermes"
-        let accepted = callID.map { !finishedCallIDs.contains($0) } == true && call == nil && !profiles.isEmpty
+        let profiles = app.realProfiles
+        let name = Self.ringName(profiles.map(\.bridgeName))
+        let accepted = callID.map { !finishedCallIDs.contains($0) } == true && !inCall && !profiles.isEmpty
         if accepted, let callID {
             call = ActiveCall(uuid: uuid, callID: callID, incoming: true, talkMode: app.preferences.talkMode)
             peerName = name
@@ -343,16 +389,9 @@ final class CallCoordinator: NSObject {
         }
     }
 
-    /// The call id is 16 random bytes, so it doubles as the CallKit UUID: a push and an `invite`
-    /// for the same ring become one call (CallKit rejects the second report as a duplicate).
-    static func callUUID(_ callID: String) -> UUID? {
-        guard let bytes = try? Base64URL.decode(callID, length: 16) else { return nil }
-        return bytes.withUnsafeBytes { UUID(uuid: $0.load(as: uuid_t.self)) }
-    }
-
     /// While the app is open, the bridge's E2E `invite` rings directly (no push needed).
     private func ringFromInvite(callID: String, session incoming: RelaySession, reason: String) {
-        guard let uuid = Self.callUUID(callID), !finishedCallIDs.contains(callID),
+        guard let uuid = Self.callUUID(callID), !finishedCallIDs.contains(callID), demo == nil,
               let session = try? app.borrowSession(for: incoming.profile) else { return }
         guard session === incoming else { return app.releaseSession(session) }
         call = ActiveCall(uuid: uuid, callID: callID, incoming: true, talkMode: app.preferences.talkMode, session: session)
@@ -379,10 +418,10 @@ final class CallCoordinator: NSObject {
 
     private func queryRing(uuid: UUID) {
         guard var current = call, current.uuid == uuid else { return }
-        for profile in app.profiles {
+        for profile in app.realProfiles {
             guard let session = try? app.borrowSession(for: profile) else { continue }
             current.candidates.append(session)
-            listen(to: session)
+            router.listen(to: session)
             Task { [log] in
                 do {
                     try await session.send(["type": "invite_query", "call_id": .string(current.callID)])
@@ -422,31 +461,6 @@ final class CallCoordinator: NSObject {
         profileID = profile.id
         peerName = profile.bridgeName
         relayLabel = profile.label
-    }
-
-    // CallKit's completions: made outside the main actor, so they never run as main-actor code on
-    // CallKit's queue (Swift 6 traps there); they hop to the main actor themselves.
-
-    private nonisolated static func report(_ provider: CXProvider, incoming uuid: UUID, update: CXCallUpdate,
-                                           done: @escaping @Sendable (Error?) -> Void) {
-        provider.reportNewIncomingCall(with: uuid, update: update) { error in done(error) }
-    }
-
-    /// `failed` runs only when CallKit refused the transaction.
-    private nonisolated static func request(_ controller: CXCallController, _ action: CXAction, failed: @escaping @Sendable () -> Void) {
-        controller.request(CXTransaction(action: action)) { error in if error != nil { failed() } }
-    }
-
-    private static func update(caller: String) -> CXCallUpdate {
-        let update = CXCallUpdate()
-        update.remoteHandle = CXHandle(type: .generic, value: caller)
-        update.localizedCallerName = caller
-        update.hasVideo = false
-        update.supportsHolding = false
-        update.supportsGrouping = false
-        update.supportsUngrouping = false
-        update.supportsDTMF = false
-        return update
     }
 
     /// On-device speech recognition when chosen in Settings and available; nil means the bridge transcribes.
@@ -521,31 +535,8 @@ final class CallCoordinator: NSObject {
         }
     }
 
-    /// One consumer per session for its lifetime: the stream ends when the session is stopped.
-    private func listen(to session: RelaySession) {
-        let key = ObjectIdentifier(session)
-        guard pumps[key] == nil else { return }
-        pumps[key] = Task { [weak self] in
-            for await message in session.messages {
-                self?.handle(message, from: session)
-            }
-            self?.pumps[key] = nil
-        }
-    }
-
+    /// Call signaling from the router (chat, phone and task messages go elsewhere).
     private func handle(_ message: [String: JSON], from session: RelaySession) {
-        if ChatModel.handles(message) {
-            onChatMessage?(message, session)
-            return
-        }
-        if PhoneContextModel.handles(message) {
-            onPhoneMessage?(message, session)
-            return
-        }
-        if TaskActivityModel.handles(message) {
-            onTaskMessage?(message, session)
-            return
-        }
         guard let callID = message["call_id"]?.string else { return }
         let type = message["type"]?.string
         guard var current = call else {
@@ -592,25 +583,29 @@ final class CallCoordinator: NSObject {
             guard let text = message["text"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty
             else { return }
             let caption = Caption(fromAgent: message["role"]?.string != "owner", text: String(text.prefix(500)), date: Date())
-            captions = Array((captions + [caption]).suffix(Self.maxCaptions))
+            liveCaptions = Array((liveCaptions + [caption]).suffix(Self.maxCaptions))
         case "approval_request":
-            guard isConnected, pendingApproval == nil, let id = message["request_id"]?.string, !id.isEmpty,
-                  let command = message["command"]?.string, command.count <= Self.maxApprovalText,
-                  let details = message["description"]?.string, details.count <= Self.maxApprovalText
-            else {
-                Task { [log] in
-                    log.error("approval request refused")
-                    let id = message["request_id"]?.string ?? ""
-                    guard !id.isEmpty else { return }
-                    try? await confirmed.send(["type": "approval", "call_id": .string(current.callID),
-                                               "request_id": .string(id), "choice": "deny"])
-                }
-                return
-            }
-            pendingApproval = Approval(id: id, callID: current.callID, command: command, details: details)
+            receiveApproval(message, call: current, session: confirmed)
         default:
             break
         }
+    }
+
+    private func receiveApproval(_ message: [String: JSON], call current: ActiveCall, session: RelaySession) {
+        guard isConnected, pendingApproval == nil, let id = message["request_id"]?.string, !id.isEmpty,
+              let command = message["command"]?.string, command.count <= Self.maxApprovalText,
+              let details = message["description"]?.string, details.count <= Self.maxApprovalText
+        else {
+            Task { [log] in
+                log.error("approval request refused")
+                let id = message["request_id"]?.string ?? ""
+                guard !id.isEmpty else { return }
+                try? await session.send(["type": "approval", "call_id": .string(current.callID),
+                                         "request_id": .string(id), "choice": "deny"])
+            }
+            return
+        }
+        pendingApproval = Approval(id: id, callID: current.callID, command: command, details: details)
     }
 
     /// Ends the call locally; `notify` tells the bridge (we hung up or failed).
@@ -636,9 +631,10 @@ final class CallCoordinator: NSObject {
             Task { await transcriber.stop() }
         }
         pendingApproval = nil
-        captions = []
+        liveCaptions = []
         isTalking = false
         isMuted = false
+        audio.reset()
         phase = .ended(reason: reason)
         return current
     }
@@ -665,25 +661,6 @@ final class CallCoordinator: NSObject {
         }
     }
 
-    private static func describe(_ error: Error) -> String {
-        switch error {
-        case ProtocolError.timeout: "Your agent did not answer. Is the bridge running?"
-        case ProtocolError.notConnected: "Cannot reach your relay."
-        case ProtocolError.relay(let code): "The relay refused the call (\(code))."
-        default: "The call could not be set up."
-        }
-    }
-
-    private func configureAudioSession() {
-        let audio = RTCAudioSession.sharedInstance()
-        audio.lockForConfiguration()
-        defer { audio.unlockForConfiguration() }
-        do {
-            try audio.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
-        } catch {
-            log.error("audio session configuration failed")
-        }
-    }
 }
 
 /// The provider delivers on the main queue (see `setDelegate(_:queue: .main)`).
@@ -699,8 +676,8 @@ extension CallCoordinator: CXProviderDelegate {
     nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
         let uuid = action.callUUID
         MainActor.assumeIsolated {
-            guard call == nil else { return action.fail() }
-            configureAudioSession()
+            guard !inCall else { return action.fail() }
+            audio.configure()
             provider.reportOutgoingCall(with: uuid, startedConnectingAt: Date())
             action.fulfill()
             startOutgoing(uuid: uuid)
@@ -712,10 +689,15 @@ extension CallCoordinator: CXProviderDelegate {
             guard var current = call, current.uuid == action.callUUID, current.incoming else { return action.fail() }
             guard AVAudioApplication.shared.recordPermission != .denied else {
                 action.fail()
-                return end(uuid: current.uuid, reason: "Microphone access is off. Allow it in Settings › Hermes Call.",
-                           notify: true, cause: .failed)
+                app.error = .microphoneDenied
+                return end(uuid: current.uuid, reason: "Microphone access is off.", notify: true, cause: .failed)
             }
-            configureAudioSession()
+            guard app.mayShare else {
+                action.fail()
+                app.error = .consentRequired
+                return end(uuid: current.uuid, reason: "Sharing with your agent is not allowed yet.", notify: true, cause: .failed)
+            }
+            audio.configure()
             current.accepted = true
             call = current
             phase = .connecting

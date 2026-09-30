@@ -308,37 +308,8 @@ struct ChatApprovalSheet: View {
     @Environment(ChatModel.self) private var chat
 
     var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                Label("Your assistant wants to run a command that needs your approval.", systemImage: "exclamationmark.shield")
-                    .font(.headline)
-                if !approval.details.isEmpty {
-                    Text(approval.details).foregroundStyle(.secondary)
-                }
-                ScrollView {
-                    Text(approval.command)
-                        .font(.body.monospaced())
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                }
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
-                Text("Approving requires Face ID or your passcode and applies to this one command only.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                HStack {
-                    Button(role: .cancel) { Task { await chat.answerApproval(approve: false) } } label: { Text("Deny").frame(maxWidth: .infinity) }
-                        .buttonStyle(.bordered)
-                    Button { Task { await chat.answerApproval(approve: true) } } label: { Text("Approve once").frame(maxWidth: .infinity) }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.orange)
-                }
-                .controlSize(.large)
-            }
-            .padding()
-            .navigationTitle("Approval needed")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .presentationDetents([.medium, .large])
+        ApprovalPanel(command: approval.command, details: approval.details, step: chat.approvalStep,
+                      onDeny: { Task { await chat.answerApproval(approve: false) } },
+                      onApprove: { Task { await chat.answerApproval(approve: true) } })
     }
 }

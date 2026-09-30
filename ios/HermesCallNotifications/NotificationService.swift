@@ -66,6 +66,8 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
     private static func apply(_ shown: PushPresentation, to content: UNMutableNotificationContent) {
         content.userInfo = shown.userInfo
         content.threadIdentifier = shown.profileID.uuidString
+        // The agent's id: the Focus filter (Settings › Focus › Hermes Call) lets chosen agents through.
+        content.filterCriteria = shown.profileID.uuidString
         content.title = shown.title
         content.body = shown.body
         content.categoryIdentifier = shown.category.rawValue

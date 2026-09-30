@@ -14,36 +14,22 @@ struct ProfilesView: View {
                         NavigationLink {
                             ProfileDetailView(profile: profile)
                         } label: {
-                            HStack {
-                                Circle().fill(Color(profile.agentPalette.glow)).frame(width: 10, height: 10)
-                                    .accessibilityHidden(true)
-                                VStack(alignment: .leading) {
-                                    Text(profile.label).font(.headline)
-                                    Text("\(profile.bridgeName) · \(profile.relay.authority)")
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if profile.id == app.activeProfile?.id {
-                                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint)
-                                        .accessibilityLabel("Active")
-                                }
-                            }
+                            AgentRow(profile: profile)
                         }
                         .swipeActions(edge: .leading) {
                             Button("Use") { app.activate(profile.id) }.tint(.accentColor)
                         }
                     }
                 } footer: {
-                    Text("Swipe right to switch the active relay, e.g. between home and a VPS. In the HUD appearance, "
-                         + "swipe sideways next to the presence to switch agents.")
+                    Text("Swipe right to switch the active agent. In the HUD appearance, swipe sideways next to the "
+                         + "presence to switch agents.")
                 }
             }
-            .navigationTitle("Relays")
+            .navigationTitle("Agents")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { addingRelay = true } label: { Label("Add relay", systemImage: "plus") }
+                    Button { addingRelay = true } label: { Label("Add an agent", systemImage: "plus") }
                 }
             }
             .sheet(isPresented: $addingRelay) { AddRelayView() }
@@ -65,6 +51,37 @@ struct ProfileDetailView: View {
     }
 
     var body: some View {
+        if profile.isDemo { demo } else { paired }
+    }
+
+    /// The demo agent: nothing to pair, name or trust; only removing it.
+    private var demo: some View {
+        Form {
+            Section {
+                LabeledContent("Colour") { PalettePicker(selection: palette) }
+            } footer: {
+                Text("\(DemoAgent.name) is a demo agent that runs on this iPhone, offline. It knows a few answers and "
+                     + "simulates calls; nothing you send it leaves the phone.")
+            }
+            Section {
+                if profile.id != app.activeProfile?.id {
+                    Button("Use the demo agent") { app.activate(profile.id) }
+                }
+                Button("Remove demo agent", role: .destructive) {
+                    Task {
+                        await app.removeDemo()
+                        dismiss()
+                    }
+                }
+                .accessibilityIdentifier("demo.remove")
+            } footer: {
+                Text("Removes the demo agent and its chat. Your paired agents are not affected.")
+            }
+        }
+        .navigationTitle("\(DemoAgent.name) (Demo)")
+    }
+
+    private var paired: some View {
         Form {
             Section {
                 LabeledContent("Relay") {
@@ -90,14 +107,14 @@ struct ProfileDetailView: View {
             }
             Section {
                 if profile.id != app.activeProfile?.id {
-                    Button("Use this relay") { app.activate(profile.id) }
+                    Button("Use this agent") { app.activate(profile.id) }
                 }
                 Button("Unpair", role: .destructive) { confirmingUnpair = true }
             } footer: {
                 Text("Unpairing asks the bridge to revoke this phone and deletes its keys here.")
             }
         }
-        .navigationTitle(profile.label)
+        .navigationTitle(profile.bridgeName)
         .onAppear {
             label = profile.label
             agentName = profile.bridgeName

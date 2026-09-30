@@ -1,6 +1,53 @@
 @preconcurrency import AVFoundation
 import SwiftUI
 
+/// The scanner, or why it cannot run: camera access asked for first, and when it is off an explanation
+/// with a way to Settings (the code can always be typed instead).
+struct QRScannerSection: View {
+    let onLink: (String) -> Void
+    @State private var status = AVCaptureDevice.authorizationStatus(for: .video)
+
+    var body: some View {
+        Group {
+            switch status {
+            case .authorized:
+                QRScannerView(onLink: onLink)
+            case .notDetermined:
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            default:
+                denied
+            }
+        }
+        .task {
+            guard status == .notDetermined else { return }
+            _ = await AVCaptureDevice.requestAccess(for: .video)
+            status = AVCaptureDevice.authorizationStatus(for: .video)
+        }
+    }
+
+    private var denied: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "camera.fill").font(.largeTitle).foregroundStyle(.secondary).accessibilityHidden(true)
+            Text("Camera access is off").font(.headline)
+            Text(status == .restricted
+                 ? "The camera is restricted on this iPhone. Enter the code instead."
+                 : "Allow the camera in Settings to scan the pairing QR code, or enter the code instead.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            if status == .denied {
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("scanner.denied")
+    }
+}
+
 /// Minimal QR scanner that reports the first hermescall:// link it sees.
 struct QRScannerView: UIViewControllerRepresentable {
     let onLink: (String) -> Void
@@ -31,10 +78,12 @@ struct QRScannerView: UIViewControllerRepresentable {
                   session.canAddInput(input)
             else {
                 let label = UILabel()
-                label.text = "Camera not available.\nEnter the code instead."
+                label.text = "No camera available.\nEnter the code instead."
                 label.numberOfLines = 0
                 label.textAlignment = .center
                 label.textColor = .white
+                label.font = .preferredFont(forTextStyle: .body)
+                label.adjustsFontForContentSizeCategory = true
                 label.frame = view.bounds
                 label.autoresizingMask = [.flexibleWidth, .flexibleHeight]
                 view.addSubview(label)

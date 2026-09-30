@@ -3,9 +3,12 @@ import os
 import SwiftUI
 
 /// Full-screen Metal view of the presence (black room, sphere, bloom). Touches pass through to
-/// the SwiftUI gesture layer above it.
+/// the SwiftUI gesture layer above it. Paused while covered or in the background; slower when the
+/// phone is hot, in Low Power Mode or with Reduce Motion.
 struct PresenceCanvas: UIViewRepresentable {
     let engine: PresenceEngine
+    var paused = false
+    var framesPerSecond = 120
 
     func makeCoordinator() -> PresenceRenderer? { PresenceRenderer(engine: engine) }
 
@@ -16,14 +19,51 @@ struct PresenceCanvas: UIViewRepresentable {
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         view.backgroundColor = .black
         view.isUserInteractionEnabled = false
-        view.preferredFramesPerSecond = engine.reduceMotion ? 30 : 120
+        view.preferredFramesPerSecond = framesPerSecond
+        view.isPaused = paused
         view.delegate = context.coordinator
         view.isAccessibilityElement = false
         return view
     }
 
     func updateUIView(_ view: MTKView, context: Context) {
-        view.preferredFramesPerSecond = engine.reduceMotion ? 30 : 120
+        view.preferredFramesPerSecond = framesPerSecond
+        view.isPaused = paused
+    }
+}
+
+/// How fast the presence may draw: 120 Hz normally, 30 with Reduce Motion, Low Power Mode or a hot phone,
+/// 20 when iOS reports a critical thermal state.
+@MainActor @Observable
+final class FrameBudget {
+    static let shared = FrameBudget()
+    private(set) var thermal = ProcessInfo.processInfo.thermalState
+    private(set) var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+    @ObservationIgnored private var observers: [Task<Void, Never>] = []
+
+    private init() {
+        observers.append(Task { [weak self] in
+            for await _ in NotificationCenter.default.notifications(named: ProcessInfo.thermalStateDidChangeNotification) {
+                self?.thermal = ProcessInfo.processInfo.thermalState
+            }
+        })
+        observers.append(Task { [weak self] in
+            for await _ in NotificationCenter.default.notifications(named: .NSProcessInfoPowerStateDidChange) {
+                self?.lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+            }
+        })
+    }
+
+    func framesPerSecond(reduceMotion: Bool) -> Int {
+        Self.framesPerSecond(reduceMotion: reduceMotion, lowPower: lowPower, thermal: thermal)
+    }
+
+    nonisolated static func framesPerSecond(reduceMotion: Bool, lowPower: Bool, thermal: ProcessInfo.ThermalState) -> Int {
+        switch thermal {
+        case .critical: 20
+        case .serious: 30
+        default: reduceMotion || lowPower ? 30 : 120
+        }
     }
 }
 

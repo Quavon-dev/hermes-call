@@ -34,6 +34,16 @@ final class PresenceEngine {
     var tiltSource: (@MainActor () -> SIMD2<Float>)?
     /// Real voice bands (8, 0…1) from the audio that is playing, read every frame; nil = shape them from `agentLevel`.
     var bandSource: (@MainActor () -> [Float]?)?
+    /// Voice levels (agent, owner; 0…1) read every frame while `inCall`; nil = the call is still linking
+    /// (the presence "thinks"). They set `agentLevel`, `micLevel` and `mood`, so nothing has to poll.
+    var levelSource: (@MainActor () -> (agent: Double, mic: Double)?)?
+    /// The mood changed (for the labels around the presence).
+    var onMood: ((PresenceMood.State) -> Void)?
+    /// The agent's voice level, at most `voiceRate` times a second (haptics).
+    var onVoice: ((Double) -> Void)?
+    static let voiceRate = 15.0
+    private var inferred = PresenceMood()
+    private var lastVoice: CFTimeInterval = 0
     /// The agent's colour; changes blend over half a second.
     var palette = AgentPalette.gold
     /// Sphere placement in the view, in points (glides to the target set by `place`).
@@ -174,6 +184,7 @@ final class PresenceEngine {
             assembly = min(assembly * 2, 1) * (1 - fade)
         }
         let flash = flashStart.map { Float(max(0, 1 - (now - $0) / 0.6)) } ?? 0
+        readLevels(now: now)
 
         let thinking: Float = mood == .thinking ? 1 : 0
         let listening: Float = mood == .listening ? 1 : 0
@@ -251,6 +262,30 @@ final class PresenceEngine {
         for index in 0..<4 { u[16 + index] = SIMD4(smooth.colors[index], 0) }
         u[20] = SIMD4(smooth.absorb, 0, 0, 0)
         return u
+    }
+
+    /// Voice levels and mood from `levelSource`, once per frame.
+    private func readLevels(now: CFTimeInterval) {
+        guard let levelSource else { return }
+        let previous = mood
+        if inCall, let levels = levelSource() {
+            agentLevel = levels.agent
+            micLevel = levels.mic
+            inferred.update(agent: levels.agent, mic: levels.mic, muted: false)
+            mood = inferred.state
+            if now - lastVoice >= 1 / Self.voiceRate {
+                lastVoice = now
+                onVoice?(levels.agent)
+            }
+        } else if inCall {
+            mood = .thinking
+        } else {
+            inferred = PresenceMood()
+            mood = .idle
+            agentLevel = 0
+            micLevel = 0
+        }
+        if mood != previous { onMood?(mood) }
     }
 
     /// Slots in `step`'s result (Presence.metal's header documents them).

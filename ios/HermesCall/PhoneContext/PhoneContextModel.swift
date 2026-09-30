@@ -60,7 +60,7 @@ final class PhoneContextModel {
             Task { await finish(request, status: .denied) }
             return
         }
-        switch PhoneAnswer.decide(settings.permission(for: query.capability), for: query.capability) {
+        switch Self.decision(consent: app.mayShare, permission: settings.permission(for: query.capability), for: query) {
         case .deny:
             Task { await finish(request, status: .denied) }
         case .answer:
@@ -68,6 +68,14 @@ final class PhoneContextModel {
         case .ask:
             enqueue(request)
         }
+    }
+
+    /// Nothing is answered before the owner agreed to share with their agent (ConsentView); a write
+    /// capability whose item is unusable is never shown.
+    nonisolated static func decision(consent: Bool, permission: PhonePermission, for query: PhoneQuery) -> PhoneAnswer.Decision {
+        guard consent else { return .deny }
+        if query.capability.writes, query.newItem == nil { return .deny }
+        return PhoneAnswer.decide(permission, for: query.capability)
     }
 
     private func enqueue(_ request: PhonePrompt) {
@@ -198,6 +206,7 @@ final class PhoneContextModel {
         content.categoryIdentifier = Self.notificationCategory
         content.interruptionLevel = .timeSensitive
         content.userInfo = ["profile": request.profileID.uuidString, "query": request.id]
+        content.filterCriteria = request.profileID.uuidString
         try? await center.add(UNNotificationRequest(identifier: "phone-\(request.id)", content: content, trigger: nil))
     }
 
