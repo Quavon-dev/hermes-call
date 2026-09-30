@@ -40,14 +40,20 @@ works for phones on IPv6 networks only; keep IPv4.
 
 ## Install on a VPS
 
-Clone this repository on the VPS, then run the installer as root.
-`install.sh` installs distribution packages, creates the unprivileged users
-`hermescall-relay` (daemon) and `turnserver` (coturn), writes configs/secrets
-(mode 600), enables the firewall and starts the services.
+Install from a **signed release**, not from a checkout of `main` (which may hold unreleased code).
+On the VPS, as root, download the latest release and check its signature and checksum as described in
+[Verify a release by hand](releasing.md#verify-a-release-by-hand): the release key, `ssh-keygen -Y verify`
+on `MANIFEST`, the tarball's SHA-256. Only when both checks pass, unpack it and run the installer:
 
 ```bash
-ssh root@relay.example.com 'apt-get install -y -qq git >/dev/null && git clone --depth 1 https://github.com/quavon-dev/hermes-call /root/hermes-call && /root/hermes-call/relay/install.sh install --domain relay.example.com --no-apns --harden-ssh'
+tar -xzf /tmp/hc/hermes-call.tar.gz -C /opt
+/opt/hermes-call/relay/install.sh install --domain relay.example.com --no-apns --harden-ssh
 ```
+
+`install.sh` installs distribution packages, creates the unprivileged users
+`hermescall-relay` (daemon) and `turnserver` (coturn), writes configs/secrets
+(mode 600), enables the firewall and starts the services. It installs the relay code into
+`/opt/hermescall-relay`; the unpacked `/opt/hermes-call` is only the installer's source.
 
 Pushes then go through the [push gateway](push-gateway.md): incoming calls ring and chat
 notifications arrive also when the app is closed. `--no-push-gateway` turns that off (calls then
@@ -83,8 +89,13 @@ firewall, e.g. in Proxmox). `install.sh --help` lists all of them.
 
 ### Updates, rollback and status
 
+Download and verify the next release the same way as for the install
+([Verify a release by hand](releasing.md#verify-a-release-by-hand)), replace the unpacked copy with it and
+run `update` from there:
+
 ```bash
-git -C /root/hermes-call pull && /root/hermes-call/relay/install.sh update
+rm -rf /opt/hermes-call && tar -xzf /tmp/hc/hermes-call.tar.gz -C /opt
+/opt/hermes-call/relay/install.sh update
 /opt/hermescall-relay/relay/install.sh status        # installed version and commit, services
 /opt/hermescall-relay/relay/install.sh rollback      # back to the code before the last update
 ```
@@ -94,6 +105,10 @@ git -C /root/hermes-call pull && /root/hermes-call/relay/install.sh update
 (`/var/lib/hermescall-relay/relay.db.pre-update`); running the same update again keeps both. `rollback` swaps the code back (run it again to
 return); the database stays, because schema changes so far only add. `rollback --restore-db` also
 puts the snapshot back (whatever was paired or queued since the update is then lost).
+
+`update` refuses code older than the installed version (a replayed old release). To go back on
+purpose, prefer `rollback`; to install an older release anyway, add `--allow-downgrade` (or put
+`HC_ALLOW_DOWNGRADE=1` in front of the command).
 
 A relay installed before the push gateway existed keeps sending no pushes after `update`, as
 before. To use the gateway: `install.sh update --push-gateway default`.
@@ -289,9 +304,20 @@ inside the container. `130` is the container id, pick a free one:
 pct create 130 local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst --hostname hermes-relay --unprivileged 1 --features nesting=1 --cores 1 --memory 512 --swap 256 --rootfs local-lvm:4 --net0 name=eth0,bridge=vmbr0,ip=dhcp,firewall=1 --onboot 1 --start 1
 ```
 
+Download and verify the release on the Proxmox host
+([Verify a release by hand](releasing.md#verify-a-release-by-hand)), then copy it into the container
+and install from it:
+
 ```bash
-pct exec 130 -- bash -c 'apt-get install -y -qq git >/dev/null && git clone --depth 1 https://github.com/quavon-dev/hermes-call /root/hermes-call && /root/hermes-call/relay/install.sh install --domain relay.example.com --no-apns --non-interactive'
+pct push 130 /tmp/hc/hermes-call.tar.gz /root/hermes-call.tar.gz
 ```
+
+```bash
+pct exec 130 -- bash -c 'tar -xzf /root/hermes-call.tar.gz -C /opt && /opt/hermes-call/relay/install.sh install --domain relay.example.com --no-apns --non-interactive'
+```
+
+Updates work as on a VPS: verify the next release on the host, `pct push` it, unpack it over a
+removed `/opt/hermes-call` and run `/opt/hermes-call/relay/install.sh update` in the container.
 
 Behind NAT the installer detects the public IP and configures coturn's `external-ip`; a timer
 re-checks it every 5 minutes (dynamic home IPs). Own APNs key (own app builds only): copy it in
@@ -360,7 +386,7 @@ relay ports (*Internet → Permit Access → Port Sharing*) and updating DynDNS.
 
 ## Troubleshooting
 
-Start with `hermescall-relay doctor`: it checks the database, disk, the running service, DNS, the
+More symptoms across the app, bridge and relay are in [Troubleshooting](troubleshooting.md). Start with `hermescall-relay doctor`: it checks the database, disk, the running service, DNS, the
 TLS certificate's expiry, whether coturn answers, push (own key or gateway) and the clock.
 
 **Calls connect but there is no audio, or they fail on mobile data.** TURN is not reachable. Check
