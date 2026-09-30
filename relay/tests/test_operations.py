@@ -111,6 +111,20 @@ def test_client_ip_without_trust() -> None:
     assert netutil.client_ip("127.0.0.1", "198.51.100.1", False, NETS) == "127.0.0.1"
 
 
+def test_compose_trusts_only_caddy_not_the_bridge_gateway() -> None:
+    deploy = Path(__file__).parents[1] / "deploy"
+    example = tomllib.loads((deploy / "compose" / "relay.toml.example").read_text())
+    trusted = netutil.parse_networks(example["trusted_proxies"])
+    compose = (deploy / "docker-compose.yml").read_text()
+    caddy = compose.split("ipv4_address:", 1)[1].split()[0]
+    subnet = ipaddress.ip_network(compose.split("subnet:", 1)[1].split()[0])
+    assert ipaddress.ip_address(caddy) in subnet
+    assert [str(net) for net in trusted] == [f"{caddy}/32"]
+    assert not netutil.is_trusted(str(subnet.network_address + 1), trusted)  # the gateway
+    # Forged X-Forwarded-For from the host (via the gateway) is not believed.
+    assert netutil.client_ip(str(subnet.network_address + 1), "6.6.6.6", True, trusted) == str(subnet.network_address + 1)
+
+
 # ---- health and metrics ---------------------------------------------------
 
 

@@ -43,7 +43,11 @@ services:
       - caddy-data:/data
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE]
-    networks: [relay]
+    networks:
+      relay:
+        # The only address relay.toml trusts for X-Forwarded-For (trusted_proxies). Not .1: that
+        # is the bridge gateway, the source of Docker's userland proxy and of the host itself.
+        ipv4_address: 172.30.87.10
     depends_on: [relay]
     restart: unless-stopped
 
@@ -62,7 +66,7 @@ services:
 
 networks:
   relay:
-    # Fixed so relay.toml can trust exactly this network's X-Forwarded-For (trusted_proxies).
+    # Fixed so Caddy has a fixed address (172.30.87.10) that relay.toml can trust.
     ipam:
       config:
         - subnet: 172.30.87.0/24

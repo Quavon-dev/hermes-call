@@ -265,9 +265,22 @@ the top of the file: `config/relay.toml` from `compose/relay.toml.example`, `con
 from `compose/turnserver.conf.example` with the same TURN secret as `config/turn_secret`, a push
 gateway key, then `RELAY_DOMAIN=relay.example.com docker compose up -d`.
 
-`trusted_proxies` in `relay.toml` must be the Compose network (`172.30.87.0/24` in the file):
-without it every client would share Caddy's address and one set of rate limits. The same applies
-in Kubernetes (the ingress controller's pod network).
+`trusted_proxies` in `relay.toml` must be Caddy's fixed address (`172.30.87.10/32` in the
+file): without it every client would share Caddy's address and one set of rate limits. Trust only
+that address, not the whole Compose network: `172.30.87.1` is the bridge gateway, i.e. the host
+and anything Docker forwards, and whatever is trusted may set `X-Forwarded-For` to any address.
+The same applies in Kubernetes (the ingress controller's pod network).
+
+**Docker's userland proxy.** Caddy only sees real client addresses when Docker forwards port 443
+with iptables/nftables NAT (the default on Linux). Where Docker uses its userland proxy instead
+(`"userland-proxy": true` together with `"iptables": false` in `/etc/docker/daemon.json`, rootless
+Docker, Docker Desktop), and whenever a client connects over IPv6 to a host whose Compose network
+is IPv4 only, Docker's proxy opens the connection to Caddy itself: every phone and bridge then
+appears as `172.30.87.1` and shares one set of rate limits, pairing lockouts and connection caps.
+If failed pairing attempts from one phone lock out every other client, this is the cause. Then publish 443 with NAT (keep
+`iptables` on), give the Compose network IPv6 (`enable_ipv6: true` with an IPv6 subnet) if clients
+reach the host over IPv6, or run Caddy with `network_mode: host`. Do not add `172.30.87.1` to
+`trusted_proxies`; that would not bring the addresses back and would let the host forge them.
 
 ```bash
 docker compose exec relay python3 -m hermescall_relay.cli --config /etc/hermescall-relay/relay.toml pair

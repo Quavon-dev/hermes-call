@@ -6,8 +6,9 @@ listen_port = 8743
 db_path = "/var/lib/hermescall-relay/relay.db"
 secrets_dir = "/etc/hermescall-relay"
 trust_proxy = true
-# Caddy's network in docker-compose.yml: only its X-Forwarded-For is believed.
-trusted_proxies = ["172.30.87.0/24"]
+# Caddy's fixed address in docker-compose.yml: only its X-Forwarded-For is believed. Never the
+# whole network: 172.30.87.1 is the bridge gateway (the host, and Docker's userland proxy).
+trusted_proxies = ["172.30.87.10/32"]
 log_format = "text"
 
 [turn]
