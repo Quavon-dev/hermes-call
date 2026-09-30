@@ -13,17 +13,33 @@
 import base64
 import binascii
 import http.client
+import importlib
 import json
+import logging
 import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
+log = logging.getLogger(__name__)
+
 DEFAULT_URL = "http://127.0.0.1:8765"
+MIN_HERMES = "0.15"
+# Hermes internals this plugin uses: (module, attribute or None) per feature. A missing one disables
+# only that feature (with a warning) instead of breaking Hermes' startup.
+FEATURES = {
+    "chat platform": (("gateway.platforms.base", "BasePlatformAdapter"), ("gateway.config", "Platform")),
+    "chat approvals": (("tools.approval", "resolve_gateway_approval"),),
+    "task progress": (("gateway.session_context", "get_session_env"),),
+    "tool previews": (("agent.display", "build_tool_preview"),),
+}
+# How often a waiting tool checks whether the owner interrupted the agent.
+INTERRUPT_POLL = 0.5
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 MAX_REASON = 500
 MAX_FIRST_MESSAGE = 1000
@@ -292,7 +308,71 @@ class _BridgeError(Exception):
     pass
 
 
+def probe_features() -> dict[str, bool]:
+    """Which Hermes internals are importable here (see FEATURES)."""
+    available = {}
+    for feature, needs in FEATURES.items():
+        ok = True
+        for module_name, attribute in needs:
+            try:
+                module = importlib.import_module(module_name)
+            except ImportError:
+                ok = False
+                break
+            ok = ok and (attribute is None or hasattr(module, attribute))
+        available[feature] = ok
+    return available
+
+
+def hermes_too_old() -> str | None:
+    """The installed Hermes version if it is older than MIN_HERMES (plugin.yaml's min_hermes is not
+    enforced by Hermes itself), else None (new enough, or not installed as a package)."""
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        installed = version("hermes-agent")
+    except (ImportError, PackageNotFoundError):
+        return None
+    parts = [int(p) for p in re.findall(r"\d+", installed)[:2]]
+    return installed if parts < [int(p) for p in MIN_HERMES.split(".")] else None
+
+
+def _interrupted() -> bool:
+    """Whether the owner stopped the agent (Hermes' per-thread interrupt flag), if this Hermes has one."""
+    try:
+        from tools.interrupt import is_interrupted
+    except ImportError:
+        return False
+    return bool(is_interrupted())
+
+
 def _post(path: str, body: dict, timeout: float) -> dict:
+    """Like _post_blocking, but a stopped agent turn does not wait for the answer.
+
+    Hermes runs tool handlers synchronously on the agent's worker thread (an `is_async` handler is
+    only run on a private event loop in that same thread), so the request runs in a helper thread
+    and this thread polls Hermes' interrupt flag. The bridge finishes the request on its own."""
+    result: dict = {}
+
+    def run() -> None:
+        try:
+            result["value"] = _post_blocking(path, body, timeout)
+        except _BridgeError as exc:
+            result["error"] = exc
+
+    worker = threading.Thread(target=run, name="hermes-call-request", daemon=True)
+    worker.start()
+    deadline = time.monotonic() + timeout + 5
+    while worker.is_alive():
+        worker.join(INTERRUPT_POLL)
+        if worker.is_alive() and (_interrupted() or time.monotonic() > deadline):
+            raise _BridgeError("interrupted: the request was abandoned (the bridge may still complete it)")
+    if "error" in result:
+        raise result["error"]
+    return result["value"]
+
+
+def _post_blocking(path: str, body: dict, timeout: float) -> dict:
     """POST to the local bridge with the Hermes token. Raises _BridgeError with a message for the agent."""
     token = os.environ.get("HERMES_CALL_TOKEN", "")
     if not token:
@@ -454,6 +534,14 @@ def present_to_owner(params: dict, **kwargs) -> str:
 
 
 def register(ctx) -> None:
+    if old := hermes_too_old():
+        log.warning("hermes-call: needs Hermes >= %s, found %s; features Hermes lacks are disabled", MIN_HERMES, old)
+    features = probe_features()
+    for feature, ok in features.items():
+        if not ok:
+            log.warning(
+                "hermes-call: this Hermes lacks what %s needs (Hermes >= %s expected); it is disabled", feature, MIN_HERMES
+            )
     ctx.register_tool(
         name="call_owner",
         toolset="hermes_call",
@@ -476,12 +564,12 @@ def register(ctx) -> None:
             requires_env=["HERMES_CALL_TOKEN"],
             emoji=emoji,
         )
-    if hasattr(ctx, "register_hook"):
+    if hasattr(ctx, "register_hook") and features["task progress"]:
         from . import progress
 
         ctx.register_hook("pre_tool_call", progress.on_pre_tool_call)
         ctx.register_hook("post_tool_call", progress.on_post_tool_call)
-    if hasattr(ctx, "register_platform"):
+    if hasattr(ctx, "register_platform") and features["chat platform"] and features["chat approvals"]:
         from . import adapter
 
         adapter.register(ctx)

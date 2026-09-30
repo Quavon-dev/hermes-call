@@ -148,7 +148,8 @@ async def test_call_owner_rings_the_phone_and_reports_decline(h, monkeypatch) ->
         task.cancel()
 
 
-def test_registers_phone_context_and_present_to_owner() -> None:
+def test_registers_phone_context_and_present_to_owner(monkeypatch) -> None:
+    monkeypatch.setattr(plugin, "probe_features", lambda: dict.fromkeys(plugin.FEATURES, True))
     ctx = Ctx()
     plugin.register(ctx)
     assert set(ctx.tools) >= {"call_owner", "phone_context", "present_to_owner"}

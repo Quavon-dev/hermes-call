@@ -46,6 +46,9 @@ CHAT_NAME = "Hermes Call"
 MAX_MESSAGE_LENGTH = 8000
 MAX_FILE_BYTES = 10 * 1024 * 1024
 POLL_WAIT_SECONDS = 25
+# The bridge forgets a chat approval after 10 minutes; one never answered by then is denied here.
+APPROVAL_TTL = 660.0
+APPROVAL_CHOICES = ("once", "session")
 BACKOFF_SECONDS = (1, 2, 5, 10, 30)
 TYPING_INTERVAL = 4.0
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"}
@@ -112,10 +115,14 @@ class HermesCallAdapter(BasePlatformAdapter):
         self._http: httpx.AsyncClient | None = None
         self._poller: asyncio.Task | None = None
         self._cursor = 0
-        self._approvals: dict[str, str] = {}
+        # The bridge's event store: a different one means our cursor is meaningless (sent along, A1).
+        self._epoch: str | None = None
+        # request id → (Hermes session key, monotonic deadline)
+        self._approvals: dict[str, tuple[str, float]] = {}
         self._last_typing = 0.0
-        # The owner message being answered: its final reply carries `answers` (a voice note gets a spoken reply).
-        self._answering: str | None = None
+        # Owner messages being answered (insertion order = start order): a turn's final reply carries
+        # `answers` = its message id, so a voice note gets a spoken reply.
+        self._answering: dict[str, None] = {}
 
     @property
     def enforces_own_access_policy(self) -> bool:
@@ -152,8 +159,12 @@ class HermesCallAdapter(BasePlatformAdapter):
     async def _poll_loop(self) -> None:
         failures = 0
         while self._running and self._http is not None:
+            self._expire_approvals()
             try:
-                response = await self._http.get("/v1/chat/events", params={"cursor": self._cursor, "wait": POLL_WAIT_SECONDS})
+                params: dict[str, Any] = {"cursor": self._cursor, "wait": POLL_WAIT_SECONDS}
+                if self._epoch:
+                    params["epoch"] = self._epoch
+                response = await self._http.get("/v1/chat/events", params=params)
                 if response.status_code in (401, 403):
                     self._set_fatal_error("auth", "hermes-call-bridge rejected HERMES_CALL_TOKEN", retryable=False)
                     return
@@ -162,6 +173,8 @@ class HermesCallAdapter(BasePlatformAdapter):
                 for event in data.get("events", []):
                     await self._dispatch(event)
                 self._cursor = int(data.get("cursor", self._cursor))
+                if isinstance(data.get("epoch"), str):  # older bridges send none
+                    self._epoch = data["epoch"]
                 failures = 0
             except asyncio.CancelledError:
                 raise
@@ -176,6 +189,12 @@ class HermesCallAdapter(BasePlatformAdapter):
             await self._on_message(event)
         elif kind == "approval":
             self._on_approval(event)
+        elif kind == "delivery_failed":
+            log.warning(
+                "hermes_call: message %s could not be delivered to a phone (%s)",
+                str(event.get("message_id"))[:6],
+                str(event.get("why"))[:60],
+            )
 
     async def _on_message(self, event: dict[str, Any]) -> None:
         text = str(event.get("text") or "")
@@ -221,11 +240,19 @@ class HermesCallAdapter(BasePlatformAdapter):
         )
 
     def _on_approval(self, event: dict[str, Any]) -> None:
-        session_key = self._approvals.pop(str(event.get("request_id")), None)
-        if session_key is None:
+        entry = self._approvals.pop(str(event.get("request_id")), None)
+        if entry is None:
             return
-        choice = "once" if event.get("choice") == "once" else "deny"
-        _resolve(session_key, choice)
+        choice = event.get("choice") if event.get("choice") in APPROVAL_CHOICES else "deny"
+        _resolve(entry[0], choice)
+
+    def _expire_approvals(self) -> None:
+        """Approvals nobody answered in time are denied, so Hermes never waits on them forever."""
+        now = time.monotonic()
+        for request_id in [r for r, (_, until) in self._approvals.items() if until < now]:
+            session_key, _ = self._approvals.pop(request_id)
+            log.info("hermes_call: approval %s expired; denied", request_id[:6])
+            _resolve(session_key, "deny")
 
     # ---- tool progress (tasks ring / Live Activity on the phone) ---------------
 
@@ -234,12 +261,12 @@ class HermesCallAdapter(BasePlatformAdapter):
         return None
 
     async def on_processing_start(self, event: MessageEvent) -> None:
-        self._answering = str(event.message_id) if event.message_id else None
+        if event.message_id:
+            self._answering[str(event.message_id)] = None
 
     async def on_processing_complete(self, event: MessageEvent, outcome: Any) -> None:
         """The reply for this owner message was sent (or the turn failed): the task ends."""
-        if self._answering == event.message_id:
-            self._answering = None
+        self._answering.pop(str(event.message_id), None)
         turn_id = str(event.message_id or DEFAULT_TURN)[:MAX_TURN_ID]
         REPORTER.turn_ended(turn_id, failed=getattr(outcome, "value", outcome) == "failure")
 
@@ -251,8 +278,9 @@ class HermesCallAdapter(BasePlatformAdapter):
         if self._http is None:
             return SendResult(success=False, error="not connected", retryable=True)
         message_id = None
-        # Hermes marks the final response of a turn with metadata notify=True (interim messages are unmarked).
-        answers = self._answering if (metadata or {}).get("notify") is True else None
+        # Hermes marks the final response of a turn with metadata notify=True (interim messages are unmarked)
+        # and replies to the owner message that started the turn (reply_to); older Hermes: the newest turn.
+        answers = self._answers_for(reply_to) if (metadata or {}).get("notify") is True else None
         try:
             for chunk in self.truncate_message(content, MAX_MESSAGE_LENGTH):
                 body = {"text": chunk}
@@ -264,6 +292,11 @@ class HermesCallAdapter(BasePlatformAdapter):
         except httpx.HTTPError as exc:
             return SendResult(success=False, error=f"bridge: {exc.__class__.__name__}", retryable=True)
         return SendResult(success=True, message_id=message_id)
+
+    def _answers_for(self, reply_to: str | None) -> str | None:
+        if reply_to and reply_to in self._answering:
+            return reply_to
+        return next(reversed(self._answering), None) if self._answering else None
 
     async def send_typing(self, chat_id: str, metadata: dict[str, Any] | None = None) -> None:
         now = time.monotonic()
@@ -354,8 +387,9 @@ class HermesCallAdapter(BasePlatformAdapter):
     ) -> SendResult:
         """Face ID sheet on the phone. Anything that fails is denied here rather than returned as a
         failure, which would make Hermes fall back to a typed `/approve` prompt."""
+        self._expire_approvals()
         request_id = secrets.token_urlsafe(16)
-        self._approvals[request_id] = session_key
+        self._approvals[request_id] = (session_key, time.monotonic() + APPROVAL_TTL)
         status = "error"
         if self._http is not None:
             try:
@@ -371,9 +405,12 @@ class HermesCallAdapter(BasePlatformAdapter):
 
 
 def _resolve(session_key: str, choice: str) -> None:
-    from tools.approval import resolve_gateway_approval
+    try:
+        from tools.approval import resolve_gateway_approval
 
-    resolve_gateway_approval(session_key, choice)
+        resolve_gateway_approval(session_key, choice)
+    except Exception:  # a Hermes internal: log it, never let it kill the poll loop
+        log.exception("hermes_call: could not resolve an approval")
 
 
 # ---- registration helpers ----------------------------------------------------
