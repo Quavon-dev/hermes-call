@@ -27,8 +27,8 @@ ssh-keygen -t ed25519 -f ~/.ssh/hermes-call-release -C release@quavon   # use a 
 cat ~/.ssh/hermes-call-release.pub                                       # ssh-ed25519 AAAA… release@quavon
 ```
 
-Put the `ssh-ed25519 AAAA…` part (without the comment) into `RELEASE_SIGNER` in all three files in
-one commit, and publish a release signed with the new key before anything else. Installers refuse to
+Put the `ssh-ed25519 AAAA…` part (without the comment) into `RELEASE_SIGNER` in all three files and
+in "Verify a release by hand" below in one commit, and publish a release signed with the new key before anything else. Installers refuse to
 install when `RELEASE_SIGNER` is empty or not an ed25519 key, with a message pointing here. Keep the
 private key off GitHub and off servers (a hardware key or an offline machine; a backup in your
 password manager). A replaced key means old installers (piped from `main` each time, so they update
@@ -61,6 +61,32 @@ A release without a MANIFEST (0.6.2 and older) is still accepted while nothing n
 so the scripts keep working until the first 0.7 release is *latest*. After that, set
 `HC_REQUIRE_MANIFEST` to 1 in the three scripts (`: "${HC_REQUIRE_MANIFEST:=1}"` next to
 `RELEASE_SIGNER`), so a fresh install can no longer be served an old release either.
+
+### Verify a release by hand
+
+For installs without the helper scripts (a VPS relay, a review before running anything as root).
+The release key (the same `RELEASE_SIGNER` as in `bridge/get.sh` and the Proxmox helper):
+
+```
+release@quavon ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBZcryC9omwjnjag9wJHwPgVH4MH+sfVxJAMs/NeplTx
+```
+
+```bash
+mkdir /tmp/hc && cd /tmp/hc
+for f in hermes-call.tar.gz MANIFEST MANIFEST.sig; do
+  curl -fsSLO "https://github.com/Quavon-dev/hermes-call/releases/latest/download/$f"
+done
+echo 'release@quavon ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBZcryC9omwjnjag9wJHwPgVH4MH+sfVxJAMs/NeplTx' >allowed_signers
+ssh-keygen -Y verify -f allowed_signers -I release@quavon -n hermes-call-manifest -s MANIFEST.sig <MANIFEST
+grep -qx "sha256=$(sha256sum hermes-call.tar.gz | cut -d' ' -f1)" MANIFEST && echo "tarball matches"
+grep '^version=' MANIFEST
+tar -xzf hermes-call.tar.gz -C /opt       # then e.g. /opt/hermes-call/relay/install.sh install --domain …
+```
+
+Releases before 0.7 have no MANIFEST: verify `SHA256SUMS` with `SHA256SUMS.sig` in namespace
+`hermes-call-release` and run `sha256sum -c SHA256SUMS`. Later updates of such a relay:
+download and verify the next release the same way, then `/opt/hermes-call/relay/install.sh update`
+(it refuses older code than the installed one).
 
 ## Cutting a release
 

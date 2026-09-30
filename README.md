@@ -57,37 +57,47 @@ Pushes reach the phone through the Hermes Call push gateway, so no Apple account
 curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/bridge/get.sh | sudo bash
 ```
 
-Or from the Proxmox host into the Hermes container (replace `121` with its ID):
+Or from the Proxmox host into the Hermes container (`<hermes-id>` = its container ID):
 
 ```bash
-pct exec 121 -- bash -c "curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/bridge/get.sh | bash"
+pct exec <hermes-id> -- bash -c "curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/bridge/get.sh | bash"
 ```
 
 It installs the signed release, finds the Hermes user, turns on Hermes' local API and installs the
 `hermes-call` plugin. Run it again to update.
 
+Both installers take the latest **signed release**, never the `main` branch: they check its
+signature against the pinned release key before anything runs and refuse a release older than the
+one installed ([how releases are made](docs/releasing.md)).
+
 **3 · Pair**:
 
 ```bash
 pct exec <relay-id> -- hermescall-relay pair                    # prints a link
-pct exec 121 -- hermes-call-bridge relay add '<link>'
-pct exec 121 -- systemctl restart hermes-call-bridge
-pct exec 121 -- hermes-call-bridge device add --name iPhone     # shows a QR code
+pct exec <hermes-id> -- hermes-call-bridge relay add '<link>'
+pct exec <hermes-id> -- systemctl restart hermes-call-bridge
+pct exec <hermes-id> -- hermes-call-bridge device add --name iPhone   # shows a QR code
 ```
 
 Scan the QR code with the app, then restart Hermes and its gateway once so they load the plugin.
-**App**: TestFlight (public link coming with the review demo) or
-[build it yourself](docs/ios.md#build-your-own-copy).
+
+**4 · App**: Hermes Call is on its way to the App Store (TestFlight until then). No relay yet? The
+app has an offline **demo agent** to try it first. You can also
+[build it yourself](docs/ios.md#build-your-own-copy) with your own Apple team (then your relay
+needs your own APNs key).
+
+Something not working? [Troubleshooting](docs/troubleshooting.md).
 
 <details>
 <summary><b>Not on Proxmox?</b> VPS, other hosts, unattended installs</summary>
 
 | Part | Where | How |
 |---|---|---|
-| Relay | small VPS or LXC with a public address (Debian 12/13, Ubuntu 24.04) | `relay/install.sh install --domain relay.example.com` ([docs](docs/relay.md)) |
+| Relay | small VPS or LXC with a public address (Debian 12/13, Ubuntu 24.04) | [verify the signed release](docs/releasing.md#verify-a-release-by-hand), then `relay/install.sh install --domain relay.example.com` ([docs](docs/relay.md)) |
+| Relay in containers | Docker Compose with coturn and Caddy | signed image `ghcr.io/quavon-dev/hermes-call-relay` ([docs](docs/relay.md#docker-compose)) |
 | Relay behind your proxy | same, TLS by Nginx Proxy Manager/Traefik/Caddy | `relay/install.sh install --domain … --tls proxy --proxy-from <proxy IP>` ([docs](docs/relay.md#behind-your-own-reverse-proxy-nginx-proxy-manager-traefik-caddy)) |
 | Bridge + plugin | next to Hermes | `curl -fsSL …/bridge/get.sh \| sudo bash` ([docs](docs/bridge.md)) |
-| iPhone app | TestFlight, then the App Store | or Xcode with your own team ([docs](docs/ios.md)) |
+| iPhone app | App Store (TestFlight until the release) | or Xcode with your own team ([docs](docs/ios.md)) |
 
 Proxmox helper without questions:
 `var_relay_address=relay.example.com var_relay_tls=proxy var_relay_proxy_from=192.168.0.10 bash -c "$(curl …)"`.
@@ -182,13 +192,16 @@ phone is off until you turn it on. Details, including what is out of scope:
 
 | | |
 |---|---|
-| [Relay](docs/relay.md) | install, ports, reverse proxy, Proxmox isolation, secrets |
+| [Architecture](docs/architecture.md) | components, trust boundaries, pairing/call/chat sequences, capacity |
+| [Troubleshooting](docs/troubleshooting.md) | pairing, rings, audio, pushes, clock, consent, demo mode |
+| [Relay](docs/relay.md) | install, ports, reverse proxy, Proxmox isolation, backup, secrets |
 | [Bridge and plugin](docs/bridge.md) | voice pipeline, Hermes integration, phone context |
 | [iOS app](docs/ios.md) | building, TestFlight, automatic releases, APNs |
 | [Push gateway](docs/push-gateway.md) | what it sees, protocol, running your own |
 | [Wire protocol](docs/protocol.md) · [chat design](docs/chat-design.md) | for implementers |
-| [Threat model](THREAT_MODEL.md) · [security policy](SECURITY.md) | reporting vulnerabilities |
-| [Changelog](CHANGELOG.md) · [contributing](CONTRIBUTING.md) | |
+| [Threat model](THREAT_MODEL.md) · [security policy](SECURITY.md) | reporting vulnerabilities, supported versions |
+| [Releasing](docs/releasing.md) | signed releases, rollback protection, CI, image signing |
+| [Changelog](CHANGELOG.md) · [contributing](CONTRIBUTING.md) · [code of conduct](CODE_OF_CONDUCT.md) | |
 
 <details>
 <summary><b>Repository layout</b></summary>
@@ -202,7 +215,7 @@ phone is off until you turn it on. Details, including what is out of scope:
 | `ios/` | SwiftUI app, extensions, Apple Watch app |
 | `proxmox-helper/` | community-scripts style LXC helper, installs only signed releases |
 | `testclient/` | command-line stand-in for the iPhone |
-| `tools/` | dev stack, release signing, App Store Connect automation |
+| `tools/` | dev stack, release building and signing, CI helpers, App Store Connect automation |
 
 </details>
 
@@ -217,7 +230,8 @@ uv run ruff check . && uv run pytest -q bridge/tests common/tests relay/tests to
 
 Local end-to-end stack (relay + bridge + fake Hermes on your LAN):
 `uv run python tools/dev_stack.py --host <your LAN IP>`. Installer tests in systemd containers:
-`./relay/tests/container_e2e.sh debian:12` and `./bridge/tests/container_e2e.sh`. More in
+`./relay/tests/container_e2e.sh debian:12` and `./bridge/tests/container_e2e.sh`. CI runs all of
+these, the app's unit and UI tests and CodeQL ([overview](docs/releasing.md#ci-overview)). More in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 </details>

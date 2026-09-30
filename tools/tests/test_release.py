@@ -144,6 +144,13 @@ def test_verify_block_is_identical_in_all_installers() -> None:
         assert BLOCK.search(get_sh).group(0) == blocks[0].group(0)
 
 
+def test_release_key_is_the_same_everywhere() -> None:
+    signer = re.compile(r'^RELEASE_SIGNER="\$\{RELEASE_SIGNER:-(ssh-ed25519 [A-Za-z0-9+/=]+)\}"$', re.M)
+    keys = {signer.search(path.read_text()).group(1) for path in [*HELPERS, GET_SH]}
+    assert len(keys) == 1
+    assert keys.pop() in (ROOT / "docs" / "releasing.md").read_text()
+
+
 class Verifier:
     def __init__(self, tmp_path: Path, dist: Path, public: str) -> None:
         self.tmp_path, self.dist, self.public = tmp_path, dist, public

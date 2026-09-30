@@ -21,7 +21,7 @@ On Linux, `apt install libsodium-dev` plus `uv sync` is enough for the Python si
 
 ```bash
 uv run ruff check . && uv run ruff format --check .
-uv run pytest -q bridge/tests common/tests relay/tests
+uv run pytest -q bridge/tests common/tests relay/tests tools/tests
 shellcheck -e SC1090,SC1091 $(git ls-files '*.sh')
 (cd ios/HermesCallKit && swift test)           # Swift core; InteropTests run it against the Python relay/bridge in .venv
 cd ios && xcodebuild test -project HermesCall.xcodeproj -scheme HermesCall \
@@ -32,9 +32,15 @@ cd ios && xcodebuild test -project HermesCall.xcodeproj -scheme HermesCall \
 Heavier checks, when you touch installers or the voice pipeline: `./relay/tests/container_e2e.sh
 debian:12` and `./bridge/tests/container_e2e.sh` (Docker; the bridge test needs a running Kokoro
 container), and `uv run python tools/dev_stack.py --host <LAN IP>` for a local relay + bridge.
-CI runs the Python checks, the Swift core tests and an unsigned simulator build of the app.
+CI runs the Python checks with a coverage floor, a dependency audit, the relay installer in
+systemd containers, the Swift core tests, the app's unit and UI tests on a simulator and CodeQL;
+the bridge end-to-end test and the Hermes compatibility test run when you touch those parts
+([overview](docs/releasing.md#ci-overview)).
 
-New behaviour comes with tests; bug fixes with a test that failed before.
+New behaviour comes with tests; bug fixes with a test that failed before. New source files start
+with an SPDX line (`# SPDX-License-Identifier: MIT`, `//` in Swift); CI checks it for added files
+(`python3 tools/check_spdx.py FILE…`). Third-party actions in workflows are pinned by commit SHA
+with the version in a comment.
 
 ## Code style
 
