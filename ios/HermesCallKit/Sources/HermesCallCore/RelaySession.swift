@@ -8,6 +8,9 @@ public actor RelaySession {
     public nonisolated let messages: AsyncStream<[String: JSON]>
     private let messageSink: AsyncStream<[String: JSON]>.Continuation
     private let onStatus: @Sendable (Status) -> Void
+    private let onReady: @Sendable (RelayInfo) -> Void
+    /// What the relay said about itself on the last connect (version, caps); nil before the first one.
+    public private(set) var relayInfo: RelayInfo?
     private let channel: E2EChannel
     private let bridgeKey: Data
     private var socket: RelaySocket?
@@ -27,9 +30,11 @@ public actor RelaySession {
     private let acceptsMail: Bool
 
     public init(profile: RelayProfile, replayStore: UserDefaults? = nil, mailStore: UserDefaults? = SharedContainer.defaults,
-                acceptsMail: Bool = true, onStatus: @escaping @Sendable (Status) -> Void = { _ in }) throws {
+                acceptsMail: Bool = true, onStatus: @escaping @Sendable (Status) -> Void = { _ in },
+                onReady: @escaping @Sendable (RelayInfo) -> Void = { _ in }) throws {
         self.profile = profile
         self.onStatus = onStatus
+        self.onReady = onReady
         self.acceptsMail = acceptsMail
         channel = try profile.channel(seenStore: replayStore, mailStore: mailStore)
         bridgeKey = try Base64URL.decode(profile.bridgeBoxKey, length: 32)
@@ -108,10 +113,13 @@ public actor RelaySession {
         waiters.removeValue(forKey: id)?.resume()
     }
 
-    /// Relay request/response (`turn`, `register_push`, …).
-    public func request(_ message: [String: JSON], timeout: TimeInterval = 15) async throws -> JSON {
+    /// Relay request/response (`turn`, `register_push`, …). `requires`: a relay cap without which the request is
+    /// not sent (relays up to 0.6.2 drop the connection on unknown types); it then fails with `.relay("unsupported")`,
+    /// like the answer of a newer relay that does not know the type.
+    public func request(_ message: [String: JSON], requires cap: String? = nil, timeout: TimeInterval = 15) async throws -> JSON {
         try await waitUntilConnected(timeout: timeout)
         guard let socket else { throw ProtocolError.notConnected }
+        if let missing = (relayInfo ?? RelayInfo(ready: [:])).check(requires: cap) { throw missing }
         let rid = nextRID
         nextRID += 1
         var body = message
@@ -165,19 +173,36 @@ public actor RelaySession {
         var request = try blobRequest(blobID, token: token)
         request.httpMethod = "PUT"
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        let (_, response) = try await blobSession().upload(for: request, from: sealed)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw ProtocolError.unexpected("blob upload") }
+        let session = blobSession()
+        defer { session.finishTasksAndInvalidate() }
+        // A busy relay (503) keeps the ticket: the same PUT again after a pause.
+        _ = try await BlobRetry.run(maxAttempts: BlobRetry.maxUploadAttempts) { [request] in
+            let (_, response) = try await session.upload(for: request, from: sealed)
+            return (Data(), (response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
         return blobID
     }
 
+    /// A download ticket works three times; a relay still busy (503) after that gets one more ticket.
     public func downloadBlob(_ blobID: String, maxSize: Int = Blob.maxSealedSize) async throws -> Data {
-        let ticket = try await request(["t": "blob_get", "blob_id": .string(blobID)])
-        guard let token = ticket["token"]?.string else { throw ProtocolError.unexpected("blob ticket") }
-        let (data, response) = try await blobSession().data(for: try blobRequest(blobID, token: token))
-        guard (response as? HTTPURLResponse)?.statusCode == 200, data.count <= maxSize else {
-            throw ProtocolError.unexpected("blob download")
+        let session = blobSession()
+        defer { session.finishTasksAndInvalidate() }
+        for ticketNumber in 1...BlobRetry.maxDownloadTickets {
+            let ticket = try await request(["t": "blob_get", "blob_id": .string(blobID)])
+            guard let token = ticket["token"]?.string else { throw ProtocolError.unexpected("blob ticket") }
+            let request = try blobRequest(blobID, token: token)
+            do {
+                let data = try await BlobRetry.run(maxAttempts: BlobRetry.downloadUsesPerTicket) {
+                    let (data, response) = try await session.data(for: request)
+                    return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+                }
+                guard data.count <= maxSize else { throw ProtocolError.unexpected("blob download") }
+                return data
+            } catch ProtocolError.relay("busy") where ticketNumber < BlobRetry.maxDownloadTickets {
+                try await Task.sleep(for: BlobRetry.pause(before: BlobRetry.downloadUsesPerTicket + 1))
+            }
         }
-        return data
+        throw ProtocolError.relay("busy")
     }
 
     public func deleteBlob(_ blobID: String) async throws {
@@ -187,7 +212,7 @@ public actor RelaySession {
     private func blobRequest(_ blobID: String, token: String) throws -> URLRequest {
         guard (try? Base64URL.decode(blobID, length: 16)) != nil,
               let url = URL(string: "https://\(profile.relay.authority)/v1/blobs/\(blobID)") else { throw ProtocolError.invalidField }
-        var request = URLRequest(url: url, timeoutInterval: 120)
+        var request = URLRequest(url: url, timeoutInterval: BlobRetry.deadline)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return request
     }
@@ -196,6 +221,7 @@ public actor RelaySession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieAcceptPolicy = .never
         configuration.urlCache = nil
+        configuration.timeoutIntervalForResource = BlobRetry.deadline
         let trust = RelayTrust(profile.pin.isEmpty ? .webPKI : .pinned(profile.pin))
         return URLSession(configuration: configuration, delegate: trust, delegateQueue: nil)
     }
@@ -227,6 +253,7 @@ public actor RelaySession {
         var backoff: Double = 1
         while !Task.isCancelled {
             onStatus(.connecting)
+            var closeCode: Int?
             do {
                 let socket = try await authenticate()
                 guard !stopped else { return socket.close() }
@@ -238,6 +265,7 @@ public actor RelaySession {
                 ready.values.forEach { $0.resume() }
                 try await readLoop(socket)
             } catch {
+                closeCode = self.socket?.closeCode
                 failPending(error)
             }
             socket?.close()
@@ -249,7 +277,8 @@ public actor RelaySession {
                 backoff = 1
                 continue
             }
-            let pause = backoff + Double.random(in: 0...(backoff / 2))
+            let step = RelayBackoff.after(closeCode: closeCode, backoff: backoff)
+            let pause = step.pause
             let sleep = Task { _ = try? await Task.sleep(for: .seconds(pause)) }
             backoffSleep = sleep
             await sleep.value
@@ -258,7 +287,7 @@ public actor RelaySession {
                 skipBackoff = false
                 backoff = 1
             } else {
-                backoff = min(backoff * 2, 30)
+                backoff = step.next
             }
         }
     }
@@ -272,10 +301,11 @@ public actor RelaySession {
             let message = RelayAuth.message(authority: profile.relay.authority, role: "device",
                                             identity: profile.deviceID, nonce: nonce)
             let signature = try Sodium.sign(message, secretKey: try Base64URL.decode(profile.keys.signSecret, length: 64))
-            try await socket.send([
-                "t": "auth", "role": "device", "id": .string(profile.deviceID), "sig": .string(Base64URL.encode(signature)),
-            ])
-            _ = try await socket.expect("ready")
+            try await socket.send(.object(RelayAuth.body(role: "device", identity: profile.deviceID,
+                                                         signature: Base64URL.encode(signature))))
+            let info = RelayInfo(ready: try await socket.expect("ready"))
+            relayInfo = info
+            onReady(info)
             return socket
         } catch {
             socket.close()
@@ -287,8 +317,8 @@ public actor RelaySession {
         while !Task.isCancelled {
             let message = try await socket.receive(timeout: 3600, throwingRelayErrors: false)
             if let rid = message["rid"]?.int {
-                let isError = message["t"]?.string == "error"
-                resolve(rid, isError ? .failure(ProtocolError.relay(message["code"]?.string ?? "unknown")) : .success(message))
+                // `unsupported` included: the relay did not know the request and stays connected.
+                resolve(rid, RelayReply.error(in: message).map { .failure($0) } ?? .success(message))
             } else if message["t"]?.string == "e2e", let data = message["data"]?.string,
                       let body = try? channel.open(from: profile.bridgeID, peerKey: bridgeKey, data: data) {
                 messageSink.yield(body)

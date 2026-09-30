@@ -56,9 +56,11 @@ public enum JSON: Sendable, Hashable, Codable {
     public static func decode(_ data: Data) throws -> JSON { try JSONDecoder().decode(JSON.self, from: data) }
 }
 
-extension JSON: ExpressibleByStringLiteral, ExpressibleByDictionaryLiteral, ExpressibleByBooleanLiteral, ExpressibleByIntegerLiteral {
+extension JSON: ExpressibleByStringLiteral, ExpressibleByDictionaryLiteral, ExpressibleByBooleanLiteral, ExpressibleByIntegerLiteral,
+    ExpressibleByArrayLiteral {
     public init(stringLiteral value: String) { self = .string(value) }
     public init(dictionaryLiteral elements: (String, JSON)...) { self = .object(Dictionary(uniqueKeysWithValues: elements)) }
     public init(booleanLiteral value: Bool) { self = .bool(value) }
     public init(integerLiteral value: Int64) { self = .int(value) }
+    public init(arrayLiteral elements: JSON...) { self = .array(elements) }
 }

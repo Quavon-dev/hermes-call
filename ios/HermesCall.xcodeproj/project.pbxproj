@@ -59,6 +59,7 @@
 		59092C943A2A9C36F6E98341 /* AppIconPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 874F9816CDB7F7C65050D4EF /* AppIconPicker.swift */; };
 		594478F278A7DD7E654B9B39 /* LookCamera.swift in Sources */ = {isa = PBXBuildFile; fileRef = 485AED7B5EDDF23A1A3C8802 /* LookCamera.swift */; };
 		5EEBB2C91E1F39519D4E30E0 /* PhoneAndTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B65AFE29F0E2D63B68B204EB /* PhoneAndTaskTests.swift */; };
+		60F553B91DC3FAF9009985A0 /* RelayClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 198029FAD108D3DFFFA9E9D5 /* RelayClientTests.swift */; };
 		6583B0C13810DA2DEFF34B2F /* AcknowledgementsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 857DAD0FB16BC816A60260D3 /* AcknowledgementsView.swift */; };
 		68E0E8112CF66633EB8875B8 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 606A4C5C83183366D9329287 /* PrivacyInfo.xcprivacy */; };
 		6AB0C865B170C12438EC62AD /* HermesCallTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6EC0C66622260736F15B2E3 /* HermesCallTests.swift */; };
@@ -233,6 +234,7 @@
 		1620BEB62C3C2D6FB214CCB1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		165397810A35A62F40CAAB6D /* AppIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIntents.swift; sourceTree = "<group>"; };
 		1729919051F407DF1C703D5C /* MessageRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageRouter.swift; sourceTree = "<group>"; };
+		198029FAD108D3DFFFA9E9D5 /* RelayClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayClientTests.swift; sourceTree = "<group>"; };
 		1A8B67C46F10324E8FC57E08 /* CallAudioRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallAudioRoute.swift; sourceTree = "<group>"; };
 		1C5E5C0B5E04DB59062E65B0 /* PresentationViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationViews.swift; sourceTree = "<group>"; };
 		224D76AD722AC12683172DBF /* OneShotInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneShotInput.swift; sourceTree = "<group>"; };
@@ -708,6 +710,7 @@
 				9C02379D36544A0F8F66C74E /* DemoAndRoutingTests.swift */,
 				D6EC0C66622260736F15B2E3 /* HermesCallTests.swift */,
 				B65AFE29F0E2D63B68B204EB /* PhoneAndTaskTests.swift */,
+				198029FAD108D3DFFFA9E9D5 /* RelayClientTests.swift */,
 				A81CFE4F75F7A79DA9ADD811 /* WatchLogicTests.swift */,
 			);
 			path = HermesCallTests;
@@ -1038,6 +1041,7 @@
 				0F6B8974B5B45DF507CCF525 /* DemoAndRoutingTests.swift in Sources */,
 				6AB0C865B170C12438EC62AD /* HermesCallTests.swift in Sources */,
 				5EEBB2C91E1F39519D4E30E0 /* PhoneAndTaskTests.swift in Sources */,
+				60F553B91DC3FAF9009985A0 /* RelayClientTests.swift in Sources */,
 				DDA520F6BBCB5C5E9F910C70 /* WatchLogicTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

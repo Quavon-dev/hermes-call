@@ -215,6 +215,8 @@ final class TaskActivityModel {
                 _ = try await session.request(["t": "register_push", "token": .string(token), "env": .string(PushEnvironment.current),
                                                "kind": .string(kind)])
                 if kind == "liveactivity" { registeredTokens[profile.id] = token } else { registeredStartTokens[profile.id] = token }
+            } catch let error as ProtocolError where error.isUnsupported {
+                log.notice("\(kind, privacy: .public) tokens: this relay does not support them")
             } catch {
                 log.error("\(kind, privacy: .public) token not registered: \(String(describing: error), privacy: .public)")
             }

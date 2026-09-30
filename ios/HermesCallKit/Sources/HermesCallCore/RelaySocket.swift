@@ -85,6 +85,12 @@ final class RelaySocket: @unchecked Sendable {
         return clock.now - start
     }
 
+    /// The close code the relay sent (1001: going away), nil while open or when it just dropped.
+    var closeCode: Int? {
+        let code = task.closeCode
+        return code == .invalid ? nil : code.rawValue
+    }
+
     func close() {
         task.cancel(with: .normalClosure, reason: nil)
         session.invalidateAndCancel()

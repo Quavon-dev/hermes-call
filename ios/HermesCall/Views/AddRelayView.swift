@@ -201,6 +201,9 @@ struct AddRelayView: View {
             "Too many pairing attempts from this network. Wait 15 minutes, then try again with a new code."
         case .relayBusy:
             "The relay is busy right now. Try again in a minute."
+        case .tooManyDevices:
+            "This agent already has as many phones as its relay allows. Remove a phone you no longer use on the bridge "
+                + "(hermes-call-bridge device list, then device revoke), then create a new code."
         case .wrongOrExpiredCode:
             "Wrong or expired code. Codes work only for a few minutes and a few tries: create a new one on the bridge."
         case .other:

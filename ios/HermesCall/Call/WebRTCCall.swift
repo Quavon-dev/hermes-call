@@ -36,13 +36,7 @@ final class WebRTCCall: NSObject {
     var onStateChange: ((State) -> Void)?
 
     /// Only TURN on the relay's own host: a relay must not route the phone's media (and IP) elsewhere.
-    static func isRelayTURN(_ url: String, host: String) -> Bool {
-        let parts = url.split(separator: "?", maxSplits: 1)[0].split(separator: ":", maxSplits: 1)
-        guard parts.count == 2, parts[0] == "turn" || parts[0] == "turns" else { return false }
-        let rest = String(parts[1])
-        let urlHost = rest.hasPrefix("[") ? String(rest.dropFirst().prefix { $0 != "]" }) : String(rest.prefix { $0 != ":" })
-        return urlHost.lowercased() == host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-    }
+    static func isRelayTURN(_ url: String, host: String) -> Bool { TURNServers.isRelayTURN(url, host: host) }
 
     /// Whether this call's audio runs through `EngineAudioDevice` (so the spectrum is real).
     let usesEngineAudio: Bool
@@ -52,13 +46,10 @@ final class WebRTCCall: NSObject {
     init(turn: JSON, relayHost: String, onDeviceSpeech: Bool = false) throws {
         usesEngineAudio = onDeviceSpeech || Self.engineAudioEnabled
         let factory = usesEngineAudio ? Self.engineFactory : Self.factory
-        guard case .array(let urls)? = turn["urls"], let username = turn["username"]?.string,
-              let credential = turn["credential"]?.string
-        else { throw ProtocolError.unexpected("relay returned no TURN credentials") }
-        let allowed = urls.compactMap(\.string).filter { Self.isRelayTURN($0, host: relayHost) }
-        guard !allowed.isEmpty else { throw ProtocolError.unexpected("relay offered no TURN server on its own host") }
+        // Every URL on the relay's host: `turn:` over UDP and TCP and, where offered, `turns:` (TLS on 5349).
+        let servers = try TURNServers(reply: turn, relayHost: relayHost)
         let config = RTCConfiguration()
-        config.iceServers = [RTCIceServer(urlStrings: allowed, username: username, credential: credential)]
+        config.iceServers = [RTCIceServer(urlStrings: servers.urls, username: servers.username, credential: servers.credential)]
         config.iceTransportPolicy = .relay
         config.sdpSemantics = .unifiedPlan
         config.bundlePolicy = .maxBundle

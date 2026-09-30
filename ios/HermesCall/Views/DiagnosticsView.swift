@@ -50,6 +50,7 @@ struct DiagnosticsView: View {
     private func agentSection(_ profile: RelayProfile) -> some View {
         Section(profile.bridgeName) {
             LabeledContent("Relay", value: profile.relay.authority)
+            LabeledContent("Relay version", value: app.relayInfo[profile.id]?.displayVersion ?? "Not connected yet")
             LabeledContent("Connection", value: connection(profile))
             LabeledContent("Round trip", value: roundTrip[profile.id] ?? "–")
             LabeledContent("Incoming calls", value: registered(app.preferences.pushRegistrations[profile.id.uuidString]))

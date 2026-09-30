@@ -12,6 +12,8 @@ public enum PairingFailure: Equatable, Sendable {
     case rateLimited
     /// The relay is at its connection limit (HTTP 503).
     case relayBusy
+    /// The bridge already has as many phones as its relay allows (`too_many_devices`).
+    case tooManyDevices
     /// The code is wrong, already used or expired (key agreement failed).
     case wrongOrExpiredCode
     case other
@@ -32,6 +34,7 @@ public enum PairingFailure: Equatable, Sendable {
             switch code {
             case "rate_limited": .rateLimited
             case "busy": .relayBusy
+            case "too_many_devices": .tooManyDevices
             case "pairing_failed", "protocol_error": .wrongOrExpiredCode
             default: .other
             }

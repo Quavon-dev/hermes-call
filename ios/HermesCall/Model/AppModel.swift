@@ -22,6 +22,9 @@ final class AppModel {
     var route: AppRoute?
     /// When the active relay connection last came up, and the last connection problem (Diagnostics).
     private(set) var connectedSince: Date?
+    /// What each agent's relay said about itself on its last connect (version, caps), for Diagnostics and
+    /// for requests that need a cap.
+    private(set) var relayInfo: [UUID: RelayInfo] = [:]
     /// Lets the call coordinator listen to every relay connection the app opens.
     var onSessionCreated: ((RelaySession) -> Void)?
     /// A relay connection (the app's own or a borrowed one) is up: fetch mail, resend the outbox.
@@ -274,7 +277,7 @@ final class AppModel {
 
     private func makeSession(_ profile: RelayProfile) throws -> RelaySession {
         let id = profile.id
-        return try RelaySession(profile: profile, replayStore: .standard) { [weak self] status in
+        return try RelaySession(profile: profile, replayStore: .standard, onStatus: { [weak self] status in
             Task { @MainActor in
                 guard let self else { return }
                 if status == .connected, let open = self.openSession(for: id) { self.onConnected?(open) }
@@ -282,7 +285,9 @@ final class AppModel {
                 self.relayStatus = status
                 self.connectedSince = status == .connected ? Date() : nil
             }
-        }
+        }, onReady: { [weak self] info in
+            Task { @MainActor in self?.relayInfo[id] = info }
+        })
     }
 
     // MARK: VoIP push registration

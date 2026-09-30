@@ -49,6 +49,15 @@ import Testing
         try await session.waitUntilConnected()
         let turn = try await session.request(["t": "turn"])
         #expect(turn["urls"] != nil)
+        // The relay names its version and caps and answers unknown request types without dropping the session.
+        let info = await session.relayInfo
+        #expect(info?.relayVersion != nil)
+        #expect(info?.supports("unsupported") == true)
+        await #expect(throws: ProtocolError.relay("unsupported")) { try await session.request(["t": "no_such_request"]) }
+        await #expect(throws: ProtocolError.relay("unsupported")) {
+            try await session.request(["t": "turn"], requires: "no_such_cap")
+        }
+        #expect(await session.isConnected)
         let callID = Base64URL.encode(Sodium.randomBytes(16))
         try await session.send(["type": "invite_query", "call_id": .string(callID)])
         var reply: [String: JSON]?
