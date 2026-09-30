@@ -263,7 +263,8 @@ speaks them.
 ### Live Activity
 
 `HermesTaskAttributes` (ios/Shared) + `TaskLiveActivity` (widget extension). While the
-app runs it starts/updates the activity itself; it registers the activity push token
+app runs it starts/updates the activity itself, with the agent's id, name and colour in the
+attributes (a push-to-start carries `{}`, then the widget shows the active agent); it registers the activity push token
 (`register_push kind: liveactivity`) and the push-to-start token (`liveactivity_start`)
 with every relay. Debug: `-TaskDemo YES` plays a fake five-step task.
 
@@ -273,14 +274,57 @@ with every relay. Debug: `-TaskDemo YES` plays a fake five-step task.
 while the app is closed; asked when the first reminder is added. Settings › Phone
 access › Place reminders lists them (swipe to delete).
 
+### Chat history, share sheet and notifications
+
+- **History** lives in one SQLite database in the app group (`Chats/chat.sqlite`, system SQLite, WAL,
+  iOS data protection "until first unlock" like the attachments next to it; "Delete all data" removes
+  the folder). Every operation opens a short connection and writes in `BEGIN IMMEDIATE`
+  transactions, so the app and the extensions can write at the same time and no process holds a
+  lock while suspended. The JSON files of older versions are moved in once (call entries from
+  "Outgoing call · 2:31" text into structured entries). There is no message limit any more.
+- The chat screen loads the newest 50 messages and older pages while scrolling up; **search**
+  (magnifier) queries the database (text, transcripts, file names, card titles; case and accents
+  ignored) and jumps to a hit; long-press → **Delete on This iPhone**. Agent messages render
+  headings, lists (nested, numbered, task lists), code blocks, quotes, tables and rules. The
+  composer takes up to 4 photos or files at once and photos from the camera; voice notes show a
+  waveform, can be scrubbed and played at 1×/1.5×/2×; a denied microphone offers Settings.
+- **Outbox**: owner messages not yet confirmed by the bridge (also those the share sheet wrote).
+  A sender *claims* a message in the database while sending it, so the app and the share
+  extension never send the same one twice.
+- **Share sheet**: the relay keeps one connection per device and drops the older one, so the
+  extension must not connect while the app has a connection (for example during a call). It
+  stores the message in the outbox and pings the app (Darwin notification); a running app answers
+  within a second and sends it itself. Only without an answer (app suspended or not running) does
+  the extension connect, holding the claim. It defaults to the agent active in the app and names
+  items it leaves out (more than 4 files, over 10 MB).
+- **Notifications**: agent messages are communication notifications (`INSendMessageIntent`: the
+  agent's name and presence as the sender, so Focus can let them through; needs the
+  communication-notifications entitlement and `NSUserActivityTypes`), count on the app badge, and
+  show a photo when message text is shown and the app is not running (the extension then fetches
+  the blob itself; the relay copy stays for the app). Phone-context "Ask" notifications have
+  **Answer…** (opens the app at the question) and **Deny** (answers without opening).
+- **Widget**: pick the agent in the widget's settings (default: the active one); the Call and chat
+  buttons run their intent in the app. `hermescall://chat?agent=<id>` and `…/call?agent=<id>`
+  switch to that agent. The app writes agent names and colours (no keys) to the app group for this.
+- Debug builds: `-ChatDemo YES` seeds a demo agent and history for screenshots
+  (`-ChatDemoQuery <text>`, `-ChatDemoPlay YES`, `-ChatDemoReveal <text>`).
+
 ### Apple Watch
 
 Targets `HermesCallWatch` (`<HC_BUNDLE_ID>.watchkitapp`) and
 `HermesCallWatchWidget` (complications). There is no WebRTC for watchOS, so the
 watch is a remote: tap the presence to start the call **on the iPhone** (audio on the
-iPhone or AirPods), dictate a message, read the latest messages. It holds no keys;
-everything goes through WatchConnectivity to the iPhone (`WatchBridge`). Message
+iPhone or AirPods), dictate a message or record a voice note, read the latest messages. It holds
+no keys; everything goes through WatchConnectivity to the iPhone (`WatchBridge`). Message
 text reaches the watch only when "Show message text in notifications" is on.
+
+- Messages and denials wait in WatchConnectivity's queue (`transferUserInfo`) while the iPhone is
+  out of reach; voice notes travel as file transfers. Every request has an id, so one that arrives
+  live and queued runs once.
+- A pending approval shows on the watch with **Deny** only: approving needs Face ID or the passcode
+  on the iPhone, which the watch cannot give.
+- The iPhone updates the watch whenever the chat history changes (also in the background), and on
+  approvals and call state; the watch taps the wrist when a call rings, starts and ends.
 
 ### CarPlay
 

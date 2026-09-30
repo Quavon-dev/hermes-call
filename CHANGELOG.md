@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 and iOS app share one version; the Hermes plugin (`hermes-integration/hermes-call`) is
 versioned separately and is at **0.7.0** in this release.
 
+## [Unreleased]
+
+- iOS chat history in SQLite (app group, WAL, data protection as before), moved over from the JSON
+  files once; no 3000-message limit, and the app and share extension can write at the same time.
+- Chat: paging, search, delete on this iPhone, full Markdown for agent messages (headings, lists,
+  code, quotes, tables), several files at once, camera photos, voice notes with waveform,
+  scrubbing and speed, and a way to Settings when the microphone is off.
+- Fixed: retrying a failed message sent it through the active agent instead of the chat's own.
+- Fixed: the share sheet took the relay connection away from the running app (e.g. during a call);
+  it now hands messages to the app and connects itself only when the app is not running. It
+  defaults to the active agent and says which items it left out.
+- Call entries in the chat are stored structured, not as English text.
+- Notifications: communication notifications with the agent as sender, app badge, photo previews;
+  Answer and Deny on phone-context questions.
+- Widgets: agent picker, Call and chat buttons; the Live Activity shows the agent that started it
+  and clears a lost task after 11 minutes (was 15).
+- Apple Watch: messages queue while the iPhone is out of reach, voice notes, deny approvals, call
+  haptics; updates follow new messages also in the background.
+- Fixed: voice note playback could stop the app (audio callbacks ran as main-actor code).
+
 ## [0.6.2]
 
 - Relay and bridge commands work through `pct exec` (no login shell): the relay command lives in
