@@ -10,10 +10,13 @@ label (generic unless the owner allows details), and the relay checks exactly
 those keys.
 """
 
+import asyncio
 import enum
 import json
 import logging
 import time
+import uuid
+from collections import Counter
 from typing import Protocol
 
 import httpx
@@ -41,12 +44,52 @@ LIVE_START_ALERT = {"title": "Working…", "body": ""}
 LIVE_DISMISS_SECONDS = 900
 LIVE_EXPIRY_SECONDS = {"start": 3600, "update": 600, "end": 3600}
 _INVALID_TOKEN_REASONS = {"BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"}
+# Transient failures are retried after these pauses (a VoIP push expires after 30 s, so the whole
+# budget stays short). APNs 400/403/404/410/413 and gateway refusals are final and never retried.
+RETRY_DELAYS = (0.25, 1.0)
+APNS_RETRY_STATUSES = frozenset({429, 500, 503})
+GATEWAY_RETRY_STATUSES = frozenset({500, 502, 503, 504})
+# A Retry-After longer than this means "not now": give up instead of holding the ring.
+MAX_RETRY_AFTER = 5.0
 
 
 class PushResult(enum.Enum):
     OK = "ok"
     INVALID_TOKEN = "invalid_token"  # noqa: S105
     FAILED = "failed"
+
+
+def _retry_after(response: httpx.Response, default: float) -> float | None:
+    """The pause before the next attempt, or None when the server asks for more than we can wait."""
+    header = response.headers.get("retry-after", "")
+    if not header.isdigit():
+        return default
+    delay = float(header)
+    return delay if delay <= MAX_RETRY_AFTER else None
+
+
+class _Retrying:
+    """Shared retry loop; subclasses send one attempt and say whether it may be repeated."""
+
+    def __init__(self, retry_delays: tuple[float, ...]) -> None:
+        self._delays = retry_delays
+        # Outcome counters for /metrics: result names, plus "retry" per repeated attempt.
+        self.stats: Counter[str] = Counter()
+        # Last-attempt HTTP status (or "error") per push, for /metrics.
+        self.statuses: Counter[str] = Counter()
+
+    async def _with_retries(self, attempt) -> PushResult:
+        for index in range(len(self._delays) + 1):
+            result, retry_in = await attempt()
+            if result is not None:
+                self.stats[result.value] += 1
+                return result
+            if index == len(self._delays) or retry_in is None:
+                break
+            self.stats["retry"] += 1
+            await asyncio.sleep(max(retry_in, self._delays[index]) if retry_in else self._delays[index])
+        self.stats[PushResult.FAILED.value] += 1
+        return PushResult.FAILED
 
 
 class PushSender(Protocol):
@@ -89,8 +132,15 @@ def live_activity_payload(event: str, content_state: dict, now: int | None = Non
     return json.dumps({"aps": aps}, separators=(",", ":"), ensure_ascii=False).encode()
 
 
-class DirectApns:
-    def __init__(self, config: ApnsConfig, key_pem: bytes, client: httpx.AsyncClient | None = None) -> None:
+class DirectApns(_Retrying):
+    def __init__(
+        self,
+        config: ApnsConfig,
+        key_pem: bytes,
+        client: httpx.AsyncClient | None = None,
+        retry_delays: tuple[float, ...] = RETRY_DELAYS,
+    ) -> None:
+        super().__init__(retry_delays)
         key = serialization.load_pem_private_key(key_pem, password=None)
         if not isinstance(key, ec.EllipticCurvePrivateKey) or key.curve.name != "secp256r1":
             raise ValueError("APNs key must be an ES256 (.p8) key")
@@ -129,35 +179,54 @@ class DirectApns:
     async def _post(
         self, token: str, env: str, payload: bytes, kind: str, topic: str, expiry: int, priority: int = 10
     ) -> PushResult:
-        headers = {
-            "authorization": f"bearer {self._token()}",
-            "apns-topic": topic,
-            "apns-push-type": kind,
-            "apns-priority": str(priority),
-            "apns-expiration": str(int(time.time()) + expiry),
-        }
-        try:
-            url = f"{APNS_HOSTS[env]}/3/device/{token}"
-            response = await self._client.post(url, content=payload, headers=headers)
-        except httpx.HTTPError as exc:
-            log.warning("apns request failed: %s", type(exc).__name__)
-            return PushResult.FAILED
-        if response.status_code == 200:
-            return PushResult.OK
-        reason = _reason(response)
-        log.warning("apns rejected push: status=%s reason=%s", response.status_code, reason)
-        if response.status_code == 410 or reason in _INVALID_TOKEN_REASONS:
-            return PushResult.INVALID_TOKEN
-        return PushResult.FAILED
+        # The same apns-id on every attempt: Apple reports it back, and logs can match retries.
+        push_id = str(uuid.uuid4())
+        expiration = str(int(time.time()) + expiry)
+        url = f"{APNS_HOSTS[env]}/3/device/{token}"
+
+        async def attempt() -> tuple[PushResult | None, float | None]:
+            headers = {
+                "authorization": f"bearer {self._token()}",
+                "apns-id": push_id,
+                "apns-topic": topic,
+                "apns-push-type": kind,
+                "apns-priority": str(priority),
+                "apns-expiration": expiration,
+            }
+            try:
+                response = await self._client.post(url, content=payload, headers=headers)
+            except httpx.HTTPError as exc:
+                log.warning("apns request failed: %s", type(exc).__name__)
+                self.statuses["error"] += 1
+                return None, 0.0
+            self.statuses[str(response.status_code)] += 1
+            if response.status_code == 200:
+                return PushResult.OK, None
+            reason = _reason(response)
+            log.warning("apns rejected push: status=%s reason=%s", response.status_code, reason)
+            if response.status_code in APNS_RETRY_STATUSES:
+                return None, _retry_after(response, 0.0)
+            if response.status_code == 410 or reason in _INVALID_TOKEN_REASONS:
+                return PushResult.INVALID_TOKEN, None
+            return PushResult.FAILED, None
+
+        return await self._with_retries(attempt)
 
     async def close(self) -> None:
         await self._client.aclose()
 
 
-class GatewayPush:
+class GatewayPush(_Retrying):
     """Sends pushes through the push gateway, each request signed with the relay's gateway key."""
 
-    def __init__(self, url: str, key_pem: bytes, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        url: str,
+        key_pem: bytes,
+        client: httpx.AsyncClient | None = None,
+        retry_delays: tuple[float, ...] = RETRY_DELAYS,
+    ) -> None:
+        super().__init__(retry_delays)
         self._url = f"{url.rstrip('/')}/v1/push"
         self._key = pushauth.load_key(key_pem)
         self._client = client or httpx.AsyncClient(http2=True, timeout=10.0)
@@ -178,22 +247,32 @@ class GatewayPush:
 
     async def _post(self, body: dict) -> PushResult:
         data = json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode()
-        headers = {"authorization": pushauth.sign(self._key, data), "content-type": "application/json"}
-        try:
-            response = await self._client.post(self._url, content=data, headers=headers)
-        except httpx.HTTPError as exc:
-            log.warning("push gateway request failed: %s", type(exc).__name__)
-            return PushResult.FAILED
-        if response.status_code != 200:
-            error = _gateway_error(response)
-            log.warning("push gateway rejected push: status=%s error=%s", response.status_code, error)
-            if error == "unauthorized":
-                log.warning("check this relay's clock: the gateway accepts requests within 60 s")
-            return PushResult.FAILED
-        try:
-            return PushResult(response.json().get("result"))
-        except (ValueError, AttributeError):
-            return PushResult.FAILED
+
+        async def attempt() -> tuple[PushResult | None, float | None]:
+            # A fresh signature per attempt: the gateway refuses one it has seen before.
+            headers = {"authorization": pushauth.sign(self._key, data), "content-type": "application/json"}
+            try:
+                response = await self._client.post(self._url, content=data, headers=headers)
+            except httpx.HTTPError as exc:
+                log.warning("push gateway request failed: %s", type(exc).__name__)
+                self.statuses["error"] += 1
+                return None, 0.0
+            self.statuses[str(response.status_code)] += 1
+            if response.status_code in GATEWAY_RETRY_STATUSES:
+                log.warning("push gateway unavailable: status=%s", response.status_code)
+                return None, _retry_after(response, 0.0)
+            if response.status_code != 200:
+                error = _gateway_error(response)
+                log.warning("push gateway rejected push: status=%s error=%s", response.status_code, error)
+                if error == "unauthorized":
+                    log.warning("check this relay's clock: the gateway accepts requests within 60 s")
+                return PushResult.FAILED, None
+            try:
+                return PushResult(response.json().get("result")), None
+            except (ValueError, AttributeError):
+                return PushResult.FAILED, None
+
+        return await self._with_retries(attempt)
 
     async def close(self) -> None:
         await self._client.aclose()
