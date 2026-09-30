@@ -293,7 +293,10 @@ docker compose exec relay python3 -m hermescall_relay.cli --config /etc/hermesca
 ```
 
 `restore` runs with the relay stopped (`docker compose run --rm relay -m hermescall_relay.cli
---config … restore FILE`). Pin the image digests once it works.
+--config … restore FILE`). The relay image is pinned to a release: the compose file defaults to the
+version it shipped with, `HERMESCALL_RELAY_VERSION=X.Y.Z docker compose up -d` moves to another
+one. `:latest` is the newest release and `:edge` follows `main` (not for production); neither is
+used by the compose file. Pin the image digests once it works.
 
 ## Install on a home server (Proxmox or any LXC/VM host)
 

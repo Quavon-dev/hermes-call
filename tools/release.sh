@@ -47,6 +47,12 @@ check_versions() {
   bridge=$(git -C "$root" show "$tag:bridge/pyproject.toml" | sed -n 's/^version = "\(.*\)"$/\1/p' | head -1)
   [[ $relay == "$want" ]] || die "$tag: relay/hermescall_relay/version.py says '$relay', not $want"
   [[ $bridge == "$want" ]] || die "$tag: bridge/pyproject.toml says '$bridge', not $want"
+  # Compose pins the relay image to the release it ships with (never :latest or :edge).
+  local compose
+  if compose=$(git -C "$root" show "$tag:relay/deploy/docker-compose.yml" 2>/dev/null); then
+    grep -qF "hermes-call-relay:\${HERMESCALL_RELAY_VERSION:-$want}" <<<"$compose" ||
+      die "$tag: relay/deploy/docker-compose.yml must default to image tag $want (HERMESCALL_RELAY_VERSION)"
+  fi
 }
 
 # Deterministic for a given tag: RELEASE has no time stamp, and git gives every entry the commit time.

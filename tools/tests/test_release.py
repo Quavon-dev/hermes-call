@@ -135,6 +135,32 @@ def test_version_must_match_tag(repo: Path) -> None:
     assert release(repo, "1.2.3", check=False).returncode == 2
 
 
+def test_compose_must_pin_the_released_image(repo: Path) -> None:
+    env = git_env()
+    compose = repo / "relay" / "deploy" / "docker-compose.yml"
+    compose.parent.mkdir(parents=True)
+    compose.write_text("services:\n  relay:\n    image: ghcr.io/quavon-dev/hermes-call-relay:latest\n")
+    run("git", "add", "-A", cwd=repo, env=env)
+    run("git", "commit", "-qm", "compose", cwd=repo, env=env)
+    run("git", "tag", "-f", "v1.2.3", cwd=repo, env=env)
+    failed = release(repo, "v1.2.3", check=False)
+    assert failed.returncode == 2 and "must default to image tag 1.2.3" in failed.stderr
+    compose.write_text("services:\n  relay:\n    image: ghcr.io/quavon-dev/hermes-call-relay:${HERMESCALL_RELAY_VERSION:-1.2.3}\n")
+    run("git", "commit", "-qam", "pin", cwd=repo, env=env)
+    run("git", "tag", "-f", "v1.2.3", cwd=repo, env=env)
+    assert release(repo, "v1.2.3").returncode == 0
+
+
+def test_this_checkout_pins_its_own_version_and_main_never_publishes_latest() -> None:
+    version = re.search(r'^VERSION = "(.*)"$', (ROOT / "relay" / "hermescall_relay" / "version.py").read_text(), re.M)
+    compose = (ROOT / "relay" / "deploy" / "docker-compose.yml").read_text()
+    assert f"hermes-call-relay:${{HERMESCALL_RELAY_VERSION:-{version.group(1)}}}" in compose
+    workflow = (ROOT / ".github" / "workflows" / "relay-image.yml").read_text()
+    assert "flavor: latest=false" in workflow
+    latest = [line for line in workflow.splitlines() if "value=latest" in line]
+    assert latest and all("refs/tags/v" in line for line in latest)
+
+
 def test_verify_block_is_identical_in_all_installers() -> None:
     blocks = [BLOCK.search(path.read_text()) for path in HELPERS]
     assert all(blocks), "every Proxmox helper script must contain the verify_release block"

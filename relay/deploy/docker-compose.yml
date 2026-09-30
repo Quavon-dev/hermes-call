@@ -10,13 +10,15 @@
 #   RELAY_DOMAIN=relay.example.com docker compose up -d
 #   docker compose exec relay python3 -m hermescall_relay.cli --config /etc/hermescall-relay/relay.toml pair
 #
-# Ports: 443/tcp (Caddy), 3478/udp+tcp and 49160-49200/udp (coturn, host network). Pin the image
-# digests (image: name@sha256:...) once it works; updates are then a deliberate edit.
+# Ports: 443/tcp (Caddy), 3478/udp+tcp and 49160-49200/udp (coturn, host network).
+# The relay image is pinned to a release (HERMESCALL_RELAY_VERSION, default: the release this file
+# came with), never :latest or :edge. Update: HERMESCALL_RELAY_VERSION=X.Y.Z docker compose up -d.
+# Pin the image digests (image: name@sha256:...) once it works; updates are then a deliberate edit.
 name: hermes-call
 
 services:
   relay:
-    image: ghcr.io/quavon-dev/hermes-call-relay:latest
+    image: ghcr.io/quavon-dev/hermes-call-relay:${HERMESCALL_RELAY_VERSION:-0.6.2}
     command: ["-m", "hermescall_relay.cli", "--config", "/etc/hermescall-relay/relay.toml", "serve"]
     environment:
       HEALTH_PORT: "8743"

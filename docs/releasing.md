@@ -129,8 +129,12 @@ convenient but moves the key into GitHub; the offline way above is the default.
 
 ## Container image
 
-`relay-image.yml` pushes `ghcr.io/quavon-dev/hermes-call-relay` with `:latest` and `:sha-<commit>`
-from `main`, `:X.Y.Z` and `:X.Y` from tags, and rebuilds weekly for Debian security updates. Before
+`relay-image.yml` pushes `ghcr.io/quavon-dev/hermes-call-relay` with `:edge` and `:sha-<commit>`
+from `main`, and `:X.Y.Z`, `:X.Y` and `:latest` from release tags (`vX.Y.Z`; a pre-release tag
+such as `v1.2.3-rc1` gets only its own tag), so `:latest` is always a release. The weekly rebuild
+for Debian security updates runs on `main` and refreshes `:edge`. `relay/deploy/docker-compose.yml`
+pins the image to `${HERMESCALL_RELAY_VERSION:-X.Y.Z}`; `tools/release.sh` refuses a tag whose
+compose file does not default to the tag's version, so bump it together with `version.py`. Before
 the push, Trivy scans the image and fails the run on a CRITICAL vulnerability that has a fix. The
 pushed digest is signed keylessly with cosign and carries an SBOM and provenance. The job summary
 shows the digest and the verification command:

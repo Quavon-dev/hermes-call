@@ -2,8 +2,8 @@ name: Relay image
 
 # Builds ghcr.io/quavon-dev/hermes-call-relay (push gateway by default, relay with another
 # command; relay/Dockerfile):
-#   push to main    :latest and :sha-<commit>
-#   tag v1.2.3      :1.2.3, :1.2 and :sha-<commit> (:latest stays with main)
+#   push to main    :edge and :sha-<commit> (never :latest: main is not a release)
+#   tag v1.2.3      :1.2.3, :1.2, :latest and :sha-<commit> (no :1.2 or :latest for v1.2.3-rc1)
 # Every image is scanned with Trivy before it is pushed (a CRITICAL finding that has a fix fails the
 # run), signed keylessly with cosign (Sigstore, this workflow's GitHub identity) and carries SBOM and
 # provenance attestations. Deployments pin the digest from the job summary; this workflow holds no
@@ -74,10 +74,12 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.IMAGE }}
+          flavor: latest=false
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=edge,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
             type=sha,format=long
           labels: |
             org.opencontainers.image.licenses=MIT
