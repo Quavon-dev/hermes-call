@@ -13,7 +13,7 @@ public struct ChatMessage: Codable, Sendable, Identifiable, Hashable {
 
     public let id: String
     public var role: Role
-    /// `text`, `missed_call`, `declined_call`, `call` (local call summary), `approval`.
+    /// `text`, `missed_call`, `declined_call`, `call` (local call summary, see `call`), `presentation`.
     public var kind: String
     public var text: String
     public var attachments: [ChatAttachment]
@@ -24,10 +24,12 @@ public struct ChatMessage: Codable, Sendable, Identifiable, Hashable {
     public var replyTo: String?
     /// Result cards (`kind == "presentation"`).
     public var presentation: Presentation?
+    /// Call entries (`kind == "call"`): what happened, rendered into words only when shown.
+    public var call: CallSummary?
 
     public init(id: String, role: Role, kind: String = "text", text: String, attachments: [ChatAttachment] = [],
                 date: Date = Date(), status: Status, transcript: String? = nil, replyTo: String? = nil,
-                presentation: Presentation? = nil) {
+                presentation: Presentation? = nil, call: CallSummary? = nil) {
         self.id = id
         self.role = role
         self.kind = kind
@@ -38,11 +40,30 @@ public struct ChatMessage: Codable, Sendable, Identifiable, Hashable {
         self.transcript = transcript
         self.replyTo = replyTo
         self.presentation = presentation
+        self.call = call
     }
+
+    /// A local call entry (never sent): no text is stored, `CallSummary.text` renders it.
+    public static func callEntry(_ summary: CallSummary, id: String, date: Date = Date()) -> ChatMessage {
+        ChatMessage(id: id, role: .system, kind: "call", text: "", date: date, status: .received, call: summary)
+    }
+
+    /// Older versions stored call entries as English text ("Outgoing call · 2:31"): read it back into a summary.
+    public func migratingLegacyCall() -> ChatMessage {
+        guard kind == "call", call == nil, let summary = CallSummary(legacyText: text) else { return self }
+        var migrated = self
+        migrated.call = summary
+        migrated.text = ""
+        return migrated
+    }
+
+    /// What the chat shows for a system entry.
+    public var systemText: String { call?.text ?? text }
 
     /// One line for notifications, the widget and Siri.
     public var preview: String {
         switch kind {
+        case "call" where call != nil: return call?.text ?? ""
         case "missed_call": return "Missed call: \(text)"
         case "declined_call": return "Declined call: \(text)"
         case "presentation" where presentation != nil:
@@ -58,6 +79,45 @@ public struct ChatMessage: Codable, Sendable, Identifiable, Hashable {
         case .voice: return "🎙 Voice note"
         case .file: return "📎 \(first.name)"
         }
+    }
+}
+
+/// A call with the agent, as a chat entry.
+public struct CallSummary: Codable, Sendable, Hashable {
+    public enum Direction: String, Codable, Sendable { case incoming, outgoing }
+
+    public var direction: Direction
+    /// Seconds the call was connected.
+    public var duration: TimeInterval
+
+    public init(direction: Direction, duration: TimeInterval) {
+        self.direction = direction
+        self.duration = max(0, duration)
+    }
+
+    /// "Outgoing call · 2:31".
+    public var text: String {
+        let seconds = Int(duration.rounded(.down))
+        let clock = seconds >= 3600
+            ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+            : String(format: "%d:%02d", seconds / 60, seconds % 60)
+        return "\(direction == .incoming ? "Incoming" : "Outgoing") call · \(clock)"
+    }
+
+    /// Parses the English text older versions stored; nil for anything else.
+    public init?(legacyText: String) {
+        let parts = legacyText.components(separatedBy: " call · ")
+        guard parts.count == 2 else { return nil }
+        let direction: Direction
+        switch parts[0] {
+        case "Incoming": direction = .incoming
+        case "Outgoing": direction = .outgoing
+        default: return nil
+        }
+        let fields = parts[1].split(separator: ":").map { Int($0) }
+        guard (2...3).contains(fields.count), fields.allSatisfy({ ($0 ?? -1) >= 0 }) else { return nil }
+        let seconds = fields.compactMap { $0 }.reduce(0) { $0 * 60 + $1 }
+        self.init(direction: direction, duration: TimeInterval(seconds))
     }
 }
 
@@ -97,103 +157,6 @@ public enum ChatText {
         let text = (try? AttributedString(markdown: markdown, options: options)).map { String($0.characters) } ?? markdown
         let line = text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
         return line.count > limit ? String(line.prefix(limit - 1)) + "…" : line
-    }
-}
-
-/// History and attachments of each relay profile's chat, in the app group (readable by the
-/// extensions), protected by iOS data protection until the first unlock after boot.
-public actor ChatStore {
-    public static let maxMessages = 3000
-    public static let shared = ChatStore()
-
-    private let root: URL
-    /// Messages and the file's modification date when read: the share extension writes too.
-    private var cache: [UUID: (messages: [ChatMessage], modified: Date?)] = [:]
-
-    public init(root: URL = SharedContainer.directory.appendingPathComponent("Chats", isDirectory: true)) {
-        self.root = root
-    }
-
-    private func file(_ profile: UUID) -> URL { root.appendingPathComponent("\(profile.uuidString).json") }
-
-    public func attachmentDirectory(_ profile: UUID) -> URL {
-        root.appendingPathComponent(profile.uuidString, isDirectory: true)
-    }
-
-    public func messages(_ profile: UUID) -> [ChatMessage] {
-        let modified = modificationDate(profile)
-        if let cached = cache[profile], cached.modified == modified { return cached.messages }
-        let loaded = (try? Data(contentsOf: file(profile))).flatMap { try? JSONDecoder().decode([ChatMessage].self, from: $0) } ?? []
-        cache[profile] = (loaded, modified)
-        return loaded
-    }
-
-    private func modificationDate(_ profile: UUID) -> Date? {
-        (try? FileManager.default.attributesOfItem(atPath: file(profile).path))?[.modificationDate] as? Date
-    }
-
-    /// Inserts or replaces by id, keeping date order. Returns false when the id was already stored.
-    @discardableResult
-    public func upsert(_ message: ChatMessage, in profile: UUID) throws -> Bool {
-        var all = messages(profile)
-        let isNew: Bool
-        if let index = all.firstIndex(where: { $0.id == message.id }) {
-            all[index] = message
-            isNew = false
-        } else {
-            let index = all.lastIndex { $0.date <= message.date }.map { $0 + 1 } ?? 0
-            all.insert(message, at: index)
-            isNew = true
-        }
-        try write(trimmed(all, profile: profile), profile: profile)
-        return isNew
-    }
-
-    public func update(_ id: String, in profile: UUID, _ change: @Sendable (inout ChatMessage) -> Void) throws {
-        var all = messages(profile)
-        guard let index = all.firstIndex(where: { $0.id == id }) else { return }
-        change(&all[index])
-        try write(all, profile: profile)
-    }
-
-    /// Stores attachment bytes; returns the file name to put in `ChatAttachment.localFile`.
-    public func saveAttachment(_ data: Data, id: String, name: String, in profile: UUID) throws -> String {
-        let directory = attachmentDirectory(profile)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
-                                                attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
-        let ext = (name as NSString).pathExtension.filter { $0.isLetter || $0.isNumber }.prefix(8)
-        let fileName = ext.isEmpty ? id : "\(id).\(ext)"
-        try data.write(to: directory.appendingPathComponent(fileName),
-                       options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-        return fileName
-    }
-
-    public func deleteChat(_ profile: UUID) {
-        cache[profile] = nil
-        try? FileManager.default.removeItem(at: file(profile))
-        try? FileManager.default.removeItem(at: attachmentDirectory(profile))
-    }
-
-    public func deleteAll() {
-        cache = [:]
-        try? FileManager.default.removeItem(at: root)
-    }
-
-    private func trimmed(_ all: [ChatMessage], profile: UUID) -> [ChatMessage] {
-        guard all.count > Self.maxMessages else { return all }
-        let dropped = all.prefix(all.count - Self.maxMessages)
-        let directory = attachmentDirectory(profile)
-        for file in dropped.flatMap(\.attachments).compactMap(\.localFile) {
-            try? FileManager.default.removeItem(at: directory.appendingPathComponent(file))
-        }
-        return Array(all.suffix(Self.maxMessages))
-    }
-
-    private func write(_ all: [ChatMessage], profile: UUID) throws {
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true,
-                                                attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
-        try JSONEncoder().encode(all).write(to: file(profile), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-        cache[profile] = (all, modificationDate(profile))
     }
 }
 
