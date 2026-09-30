@@ -23,7 +23,7 @@ from .hermes import APPROVAL_CHOICES, MAX_APPROVAL_TEXT, ApprovalRequest
 from .metrics import METRICS
 from .present import to_jpeg
 from .state import Device, State
-from .transport import TRANSPORT_ERRORS
+from .transport import Transport
 from .webrtc import peer_connection
 
 log = logging.getLogger(__name__)
@@ -150,6 +150,7 @@ class CallManager:
         self._relay = relay
         self._channel = channel
         self._make_conversation = conversation_factory
+        self._transport = Transport(state, relay, channel)
         self._rings: dict[str, Ring] = {}
         self._ring_times: deque[float] = deque(maxlen=max(n for _, n in RING_LIMITS))
         self._offer_lock = asyncio.Lock()
@@ -554,13 +555,4 @@ class CallManager:
     # ---- transport -----------------------------------------------------
 
     async def _send(self, device_id: str, body: dict[str, Any]) -> bool:
-        device = self._state.devices.get(device_id)
-        if device is None:
-            return False
-        sealed = self._channel.seal(device.id, device.box_key, body)
-        try:
-            await self._relay.send({"t": "e2e", "to": device.id, "data": sealed})
-        except TRANSPORT_ERRORS as exc:
-            log.warning("could not reach device %s: %s", device.id[:6], exc.__class__.__name__)
-            return False
-        return True
+        return await self._transport.live(device_id, body)
