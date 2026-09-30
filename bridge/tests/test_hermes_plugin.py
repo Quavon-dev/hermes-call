@@ -155,7 +155,7 @@ def test_registers_phone_context_and_present_to_owner() -> None:
     phone, present = ctx.tools["phone_context"], ctx.tools["present_to_owner"]
     assert phone["toolset"] == present["toolset"] == "hermes_call"
     schema = phone["schema"]["parameters"]
-    assert len(schema["properties"]["capability"]["enum"]) == 15 and schema["required"] == ["capability", "reason"]
+    assert len(schema["properties"]["capability"]["enum"]) == 17 and schema["required"] == ["capability", "reason"]
     assert "geofence" in schema["properties"]["capability"]["enum"]
     options = schema["properties"]["params"]["properties"]
     assert options["action"]["enum"] == ["add", "remove", "list"] and options["trigger"]["enum"] == ["enter", "exit"]

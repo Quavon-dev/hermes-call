@@ -10,6 +10,7 @@ import json
 import logging
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -18,9 +19,10 @@ from hermescall_common.client import RelaySession
 from hermescall_common.e2e import Channel
 from hermescall_common.errors import CryptoError, ProtocolError
 
-from . import geofence
+from . import geofence, phone_write
 from .chat import _clean_mime, _clean_name
 from .state import Device, State
+from .transport import Transport
 
 log = logging.getLogger(__name__)
 
@@ -52,8 +54,13 @@ DATA_KEYS: dict[str, frozenset[str]] = {
     "photos": frozenset({"files"}),
     "files": frozenset({"files"}),
     "geofence": frozenset({"id", "resolved_name", "removed", "reminders"}),
+    "reminder_create": phone_write.ANSWER_KEYS,
+    "calendar_create": phone_write.ANSWER_KEYS,
 }
 CAPABILITIES = tuple(DATA_KEYS)
+# With several phones, an `ok` from a phone that was not the most recently active one waits this
+# long for that phone's answer (the owner is probably holding it).
+PREFER_WAIT = 3.0
 
 
 def _int_param(params: dict, name: str, low: int, high: int, default: int) -> int:
@@ -71,6 +78,8 @@ def parse_params(capability: str, params: object) -> dict[str, Any]:
         raise ValueError("params must be an object")
     if capability == "geofence":
         return geofence.parse_params(params)
+    if capability in phone_write.WRITE_CAPABILITIES:
+        return phone_write.parse_params(capability, params)
     allowed: dict[str, tuple[str, ...]] = {
         "location": ("accuracy",),
         "calendar": ("days", "limit"),
@@ -137,6 +146,8 @@ def check_data(capability: str, params: dict, data: object) -> tuple[dict, list[
         raise ProtocolError("clipboard text too long")
     if capability == "geofence":
         return geofence.check_data(params, data), []
+    if capability in phone_write.WRITE_CAPABILITIES:
+        return phone_write.check_data(data), []
     return data, []
 
 
@@ -149,6 +160,10 @@ class Query:
     expires: int
     answers: dict[str, str] = field(default_factory=dict)
     outcome: asyncio.Future = field(default_factory=lambda: asyncio.get_running_loop().create_future())
+    preferred: str | None = None
+    # an `ok` from another phone, held back briefly for the preferred phone's answer
+    candidate: tuple[dict, list] | None = None
+    fallback: asyncio.TimerHandle | None = None
 
 
 class PhoneService:
@@ -156,6 +171,9 @@ class PhoneService:
         self._state = state
         self._relay = relay
         self._channel = channel
+        self._transport = Transport(state, relay, channel)
+        # device id → monotonic time of its last message (set by the daemon from the call manager)
+        self.recent_activity: Callable[[str], float] | None = None
         self._open: dict[str, Query] = {}
         self._times: deque[float] = deque(maxlen=max(n for _, n in QUERY_LIMITS))
         self.ttl_ms, self.picker_ttl_ms, self.grace_ms = TTL_MS, PICKER_TTL_MS, GRACE_MS
@@ -169,7 +187,10 @@ class PhoneService:
         if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= MAX_REASON:
             raise ValueError(f"reason: required, 1–{MAX_REASON} chars")
         params = parse_params(capability, params)
+        preferred = self._most_recent(set(self._state.devices))
         targets = set(self._state.devices)
+        if capability in phone_write.WRITE_CAPABILITIES and preferred is not None:
+            targets = {preferred}  # a write happens on one phone only
         if not targets:
             return {"status": "no_devices"}
         if len(self._open) >= MAX_OPEN:
@@ -180,6 +201,8 @@ class PhoneService:
         self._times.append(now)
         ttl = self.picker_ttl_ms if capability in PICKERS else self.ttl_ms
         query = Query(wire.b64e(sodium.random_bytes(16)), capability, params, targets, int(time.time() * 1000) + ttl)
+        if len(targets) > 1 and capability not in PICKERS:
+            query.preferred = preferred
         self._open[query.query_id] = query
         try:
             result = await self._ask(query, reason.strip(), (ttl + self.grace_ms) / 1000)
@@ -254,14 +277,42 @@ class PhoneService:
                 status = "unavailable"
             else:
                 query.answers[device.id] = "ok"
-                query.outcome.set_result((data, files))
+                self._accept_ok(query, device.id, (data, files))
                 return
         query.answers[device.id] = status
         self._settle(query)
 
-    @staticmethod
-    def _settle(query: Query) -> None:
-        if not query.outcome.done() and set(query.answers) >= query.targets:
+    def _most_recent(self, device_ids: set[str]) -> str | None:
+        """The phone that sent the newest message (None: no phone has been active since the start)."""
+        if self.recent_activity is None or not device_ids:
+            return None
+        times = {device_id: self.recent_activity(device_id) for device_id in device_ids}
+        best = max(sorted(times), key=lambda d: times[d])
+        return best if times[best] > float("-inf") else None
+
+    def _accept_ok(self, query: Query, device_id: str, result: tuple[dict, list]) -> None:
+        """The most recently active phone's `ok` wins; another phone's `ok` waits PREFER_WAIT for it."""
+        if query.preferred is None or device_id == query.preferred:
+            self._resolve(query, result)
+            return
+        if query.candidate is None:
+            query.candidate = result
+            query.fallback = asyncio.get_running_loop().call_later(PREFER_WAIT, self._resolve, query, result)
+        if query.preferred in query.answers:
+            self._resolve(query, query.candidate)
+
+    def _resolve(self, query: Query, result: tuple[dict, list]) -> None:
+        if query.fallback is not None:
+            query.fallback.cancel()
+        if not query.outcome.done():
+            query.outcome.set_result(result)
+
+    def _settle(self, query: Query) -> None:
+        if query.outcome.done():
+            return
+        if query.candidate is not None and (query.preferred in query.answers or set(query.answers) >= query.targets):
+            self._resolve(query, query.candidate)
+        elif set(query.answers) >= query.targets:
             query.outcome.set_result((None, []))
 
     def _drop(self, query: Query, device_id: str) -> None:
@@ -290,22 +341,8 @@ class PhoneService:
             await blobs.delete(self._relay, blob_id)
 
     async def _mail(self, device_id: str, body: dict[str, Any]) -> bool:
-        device = self._state.devices.get(device_id)
-        if device is None:
-            return False
-        mid = wire.b64e(sodium.random_bytes(16))
-        sealed = self._channel.seal(device.id, device.box_key, body, mid=mid)
-        try:
-            await self._relay.request({"t": "mail", "to": device.id, "id": mid, "data": sealed, "alert": True})
-        except (ProtocolError, TimeoutError) as exc:
-            log.warning("phone query for %s not stored: %s", device.id[:6], exc)
-            return False
-        return True
+        """One attempt only: a query is useless after it expires, so it never waits in an outbox."""
+        return await self._transport.mail(device_id, body, alert=True)
 
     async def _live(self, device_id: str, body: dict[str, Any]) -> None:
-        device = self._state.devices.get(device_id)
-        if device is None:
-            return
-        sealed = self._channel.seal(device.id, device.box_key, body)
-        with contextlib.suppress(ProtocolError):
-            await self._relay.send({"t": "e2e", "to": device.id, "data": sealed})
+        await self._transport.live(device_id, body)

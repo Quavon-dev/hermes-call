@@ -49,6 +49,8 @@ CAPABILITIES = (
     "photos",
     "files",
     "geofence",
+    "reminder_create",
+    "calendar_create",
 )
 STATUS_NOTES = {
     "denied": "The owner declined. This is final: do not ask again for this; continue without it.",
@@ -110,7 +112,9 @@ PHONE_SCHEMA = {
         "itself and fires a local notification there; the phone's location is never returned to you. Prefer "
         "coordinates you found with your web tools (place: {lat, lon, radius_m}); otherwise give a place query "
         "(place: {query}) that the phone resolves near the owner. Results: add → {id, resolved_name}; "
-        "remove → {removed}; list → {reminders: [{id, title, place_name, trigger, repeat}]} (at most 20)."
+        "remove → {removed}; list → {reminders: [{id, title, place_name, trigger, repeat}]} (at most 20). "
+        "reminder_create / calendar_create add a reminder or calendar event on the owner's phone (off by default; "
+        "the owner confirms each one); only do this when the owner asked for it. Result: {ok, id}."
     ),
     "parameters": {
         "type": "object",
@@ -125,7 +129,9 @@ PHONE_SCHEMA = {
                     "activity, steps. focus: whether a Focus is on (never which). now_playing: current Apple Music "
                     "track. health: steps, active energy, sleep, resting heart rate. home: HomeKit accessories and "
                     "their state. clipboard: current clipboard text (always asks). photos/files: the owner picks "
-                    "files to share (always asks). geofence: add, remove or list place reminders (see params)."
+                    "files to share (always asks). geofence: add, remove or list place reminders (see params). "
+                    "reminder_create: create a reminder (title, due?, notes?). calendar_create: create an event "
+                    "(title, start, end, location?, notes?)."
                 ),
             },
             "reason": {
@@ -156,7 +162,13 @@ PHONE_SCHEMA = {
                         "description": "geofence (required): add a reminder, remove one by id, or list them.",
                     },
                     "id": {"type": "string", "description": "geofence remove (required): the reminder id (≤ 64 chars)."},
-                    "title": {"type": "string", "description": "geofence add (required): what to remind of, 1–120 chars."},
+                    "title": {
+                        "type": "string",
+                        "description": (
+                            "geofence add (required): what to remind of, 1–120 chars; "
+                            "reminder_create / calendar_create (required): 1–200 chars."
+                        ),
+                    },
                     "note": {"type": "string", "description": "geofence add: optional details, ≤ 500 chars."},
                     "place": {
                         "type": "object",
@@ -178,6 +190,17 @@ PHONE_SCHEMA = {
                         "description": "geofence add: remind when arriving (enter, default) or leaving (exit).",
                     },
                     "repeat": {"type": "boolean", "description": "geofence add: every time (true) or once (false, default)."},
+                    "due": {
+                        "type": "string",
+                        "description": "reminder_create: due date-time, ISO 8601 with offset (e.g. 2026-10-01T09:00:00+02:00).",
+                    },
+                    "notes": {"type": "string", "description": "reminder_create / calendar_create: details, ≤ 1000 chars."},
+                    "start": {"type": "string", "description": "calendar_create (required): start, ISO 8601 with offset."},
+                    "end": {
+                        "type": "string",
+                        "description": "calendar_create (required): end, ISO 8601 with offset, after start, ≤ 14 days later.",
+                    },
+                    "location": {"type": "string", "description": "calendar_create: where, ≤ 200 chars."},
                 },
                 "additionalProperties": False,
             },
