@@ -16,14 +16,14 @@ struct CallTelemetry: Sendable, Equatable {
 final class WebRTCCall: NSObject {
     enum State: Equatable { case connecting, connected, failed, closed }
 
-    nonisolated(unsafe) private static let factory: RTCPeerConnectionFactory = {
+    private static let factory: RTCPeerConnectionFactory = {
         RTCInitializeSSL()
         return RTCPeerConnectionFactory()
     }()
 
     /// Audio through `EngineAudioDevice` (voice spectrum, on-device speech recognition). The default for
     /// every call; launch with `-legacyAudioDevice YES` to fall back to WebRTC's own audio unit.
-    nonisolated(unsafe) private static let engineFactory: RTCPeerConnectionFactory = {
+    private static let engineFactory: RTCPeerConnectionFactory = {
         RTCInitializeSSL()
         return RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil, audioDevice: EngineAudioDevice.shared)
     }()
@@ -99,20 +99,26 @@ final class WebRTCCall: NSObject {
     /// Live levels (0…1) of the microphone and the agent's voice, and the link round-trip time.
     func telemetry() async -> CallTelemetry {
         await withCheckedContinuation { continuation in
-            peer.statistics { report in
-                var telemetry = CallTelemetry()
-                for stat in report.statistics.values {
-                    let level = (stat.values["audioLevel"] as? NSNumber)?.doubleValue
-                    switch stat.type {
-                    case "media-source": telemetry.mic = level ?? telemetry.mic
-                    case "inbound-rtp" where stat.values["kind"] as? String == "audio": telemetry.agent = level ?? telemetry.agent
-                    case "candidate-pair" where stat.values["state"] as? String == "succeeded":
-                        if let rtt = (stat.values["currentRoundTripTime"] as? NSNumber)?.doubleValue { telemetry.rttMs = rtt * 1000 }
-                    default: break
-                    }
+            Self.statistics(of: peer) { continuation.resume(returning: $0) }
+        }
+    }
+
+    /// libwebrtc answers on its signaling thread: the callback is made outside the main actor, so Swift never
+    /// treats it as main-actor code (which traps when another thread runs it).
+    private nonisolated static func statistics(of peer: RTCPeerConnection, done: @escaping @Sendable (CallTelemetry) -> Void) {
+        peer.statistics { report in
+            var telemetry = CallTelemetry()
+            for stat in report.statistics.values {
+                let level = (stat.values["audioLevel"] as? NSNumber)?.doubleValue
+                switch stat.type {
+                case "media-source": telemetry.mic = level ?? telemetry.mic
+                case "inbound-rtp" where stat.values["kind"] as? String == "audio": telemetry.agent = level ?? telemetry.agent
+                case "candidate-pair" where stat.values["state"] as? String == "succeeded":
+                    if let rtt = (stat.values["currentRoundTripTime"] as? NSNumber)?.doubleValue { telemetry.rttMs = rtt * 1000 }
+                default: break
                 }
-                continuation.resume(returning: telemetry)
             }
+            done(telemetry)
         }
     }
 

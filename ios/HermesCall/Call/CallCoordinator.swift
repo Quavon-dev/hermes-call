@@ -156,16 +156,14 @@ final class CallCoordinator: NSObject {
     func hangUp() {
         guard let call else { return }
         let uuid = call.uuid
-        controller.request(CXTransaction(action: CXEndCallAction(call: uuid))) { [weak self] error in
-            guard error != nil else { return }
+        Self.request(controller, CXEndCallAction(call: uuid)) { [weak self] in
             Task { @MainActor in self?.end(uuid: uuid, reason: "Call ended.", notify: true) }
         }
     }
 
     func setMuted(_ muted: Bool) {
         guard let call else { return }
-        controller.request(CXTransaction(action: CXSetMutedCallAction(call: call.uuid, muted: muted))) { [weak self] error in
-            guard error != nil else { return }
+        Self.request(controller, CXSetMutedCallAction(call: call.uuid, muted: muted)) { [weak self] in
             Task { @MainActor in self?.applyMute(muted) }
         }
     }
@@ -213,7 +211,7 @@ final class CallCoordinator: NSObject {
     func showImage(_ jpeg: Data) async -> Bool {
         guard let current = call, isConnected, let session = current.session else { return false }
         let before = imagesSent
-        var sent = imagesSent?.callID == current.callID ? imagesSent! : (current.callID, 0, .distantPast)
+        var sent = imagesSent.flatMap { $0.callID == current.callID ? $0 : nil } ?? (current.callID, 0, .distantPast)
         guard sent.count < Self.maxImagesPerCall, Date().timeIntervalSince(sent.last) >= 1 else { return false }
         sent.count += 1
         sent.last = Date()
@@ -236,7 +234,8 @@ final class CallCoordinator: NSObject {
 
     var imagesLeft: Int {
         guard let current = call else { return 0 }
-        return Self.maxImagesPerCall - (imagesSent?.callID == current.callID ? imagesSent!.count : 0)
+        let used = imagesSent.flatMap { $0.callID == current.callID ? $0.count : nil } ?? 0
+        return Self.maxImagesPerCall - used
     }
 
     /// Push-to-talk: the microphone is live only while the button is held.
@@ -338,7 +337,7 @@ final class CallCoordinator: NSObject {
             callReason = ""
             phase = .ringing
         }
-        provider.reportNewIncomingCall(with: uuid, update: Self.update(caller: name)) { [weak self] error in
+        Self.report(provider, incoming: uuid, update: Self.update(caller: name)) { [weak self] error in
             completion()
             Task { @MainActor in self?.incomingReported(uuid: uuid, accepted: accepted, error: error) }
         }
@@ -360,7 +359,7 @@ final class CallCoordinator: NSObject {
         show(session.profile)
         callReason = String(reason.prefix(200))
         phase = .ringing
-        provider.reportNewIncomingCall(with: uuid, update: Self.update(caller: session.profile.bridgeName)) { [weak self] error in
+        Self.report(provider, incoming: uuid, update: Self.update(caller: session.profile.bridgeName)) { [weak self] error in
             guard let error else { return }
             Task { @MainActor in self?.incomingReported(uuid: uuid, accepted: true, error: error) }
         }
@@ -423,6 +422,19 @@ final class CallCoordinator: NSObject {
         profileID = profile.id
         peerName = profile.bridgeName
         relayLabel = profile.label
+    }
+
+    // CallKit's completions: made outside the main actor, so they never run as main-actor code on
+    // CallKit's queue (Swift 6 traps there); they hop to the main actor themselves.
+
+    private nonisolated static func report(_ provider: CXProvider, incoming uuid: UUID, update: CXCallUpdate,
+                                           done: @escaping @Sendable (Error?) -> Void) {
+        provider.reportNewIncomingCall(with: uuid, update: update) { error in done(error) }
+    }
+
+    /// `failed` runs only when CallKit refused the transaction.
+    private nonisolated static func request(_ controller: CXCallController, _ action: CXAction, failed: @escaping @Sendable () -> Void) {
+        controller.request(CXTransaction(action: action)) { error in if error != nil { failed() } }
     }
 
     private static func update(caller: String) -> CXCallUpdate {

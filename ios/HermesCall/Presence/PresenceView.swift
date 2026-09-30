@@ -636,13 +636,14 @@ struct PresenceView: View {
     }
 }
 
-/// Loads dropped items (NSItemProvider calls back on its own queue).
+/// Loads dropped items. NSItemProvider calls back on its own queue, so those callbacks are made outside
+/// the main actor (Swift would otherwise treat them as main-actor code and trap on that queue).
 @MainActor
 enum DropLoader {
     static func data(_ provider: NSItemProvider, type: UTType) async -> Data? {
         guard provider.hasItemConformingToTypeIdentifier(type.identifier) else { return nil }
         return await withCheckedContinuation { continuation in
-            _ = provider.loadDataRepresentation(for: type) { data, _ in continuation.resume(returning: data) }
+            Self.loadData(provider, type: type) { continuation.resume(returning: $0) }
         }
     }
 
@@ -650,14 +651,22 @@ enum DropLoader {
         guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) || provider.hasItemConformingToTypeIdentifier(UTType.data.identifier)
         else { return nil }
         return await withCheckedContinuation { continuation in
-            _ = provider.loadFileRepresentation(for: .data, openInPlace: false) { url, _, _ in
-                continuation.resume(returning: url.flatMap { try? OutgoingFile.from(url: $0) })
-            }
+            Self.loadFile(provider) { continuation.resume(returning: $0) }
         }
     }
 
     static func text(_ provider: NSItemProvider) async -> String? {
         if let url = await data(provider, type: .url).flatMap({ URL(dataRepresentation: $0, relativeTo: nil) }) { return url.absoluteString }
         return await data(provider, type: .plainText).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    private nonisolated static func loadData(_ provider: NSItemProvider, type: UTType, done: @escaping @Sendable (Data?) -> Void) {
+        _ = provider.loadDataRepresentation(for: type) { data, _ in done(data) }
+    }
+
+    private nonisolated static func loadFile(_ provider: NSItemProvider, done: @escaping @Sendable (OutgoingFile?) -> Void) {
+        _ = provider.loadFileRepresentation(for: .data, openInPlace: false) { url, _, _ in
+            done(url.flatMap { try? OutgoingFile.from(url: $0) })
+        }
     }
 }

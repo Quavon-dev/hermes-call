@@ -62,7 +62,7 @@ final class PresenceRenderer: NSObject, MTKViewDelegate {
             let descriptor = MTLRenderPipelineDescriptor()
             descriptor.vertexFunction = library.makeFunction(name: vertex)
             descriptor.fragmentFunction = library.makeFunction(name: fragment)
-            let color = descriptor.colorAttachments[0]!
+            guard let color = descriptor.colorAttachments[0] else { return nil }
             color.pixelFormat = format
             if additive {
                 color.isBlendingEnabled = true
@@ -157,9 +157,10 @@ final class PresenceRenderer: NSObject, MTKViewDelegate {
                 bytes[index + 3] = max(bytes[index], bytes[index + 1], bytes[index + 2])
             }
         }
-        guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData), let space = CGColorSpace(name: CGColorSpace.sRGB)
+        else { return nil }
         return CGImage(width: pixels, height: pixels, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: pixels * 4,
-                       space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                       space: space,
                        bitmapInfo: CGBitmapInfo(rawValue: (transparent ? CGImageAlphaInfo.premultipliedFirst : .noneSkipFirst).rawValue | CGBitmapInfo.byteOrder32Little.rawValue),
                        provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
     }

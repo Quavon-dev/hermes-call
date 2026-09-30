@@ -145,8 +145,13 @@ enum PhoneSources {
     static func reminders(limit: Int) async throws -> [String: JSON] {
         let store = EKEventStore()
         guard try await store.requestFullAccessToReminders() else { throw PhoneSourceUnavailable() }
+        return ["reminders": .array(await openReminders(store, limit: limit))]
+    }
+
+    /// EventKit calls back on its own queue: made outside the main actor (see AudioThreadTests).
+    nonisolated static func openReminders(_ store: EKEventStore, limit: Int) async -> [JSON] {
         let predicate = store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: nil)
-        let items: [JSON] = await withCheckedContinuation { continuation in
+        return await withCheckedContinuation { continuation in
             store.fetchReminders(matching: predicate) { reminders in
                 let sorted = (reminders ?? []).sorted {
                     ($0.dueDateComponents?.date ?? .distantFuture) < ($1.dueDateComponents?.date ?? .distantFuture)
@@ -159,7 +164,6 @@ enum PhoneSources {
                 })
             }
         }
-        return ["reminders": .array(items)]
     }
 
     // MARK: contacts
@@ -212,18 +216,21 @@ enum PhoneSources {
         guard let latest else { throw PhoneSourceUnavailable() }
         var data: [String: JSON] = ["activity": .string(latest.activity), "confidence": .string(latest.confidence)]
         if CMPedometer.isStepCountingAvailable() {
-            let pedometer = CMPedometer()
-            let today: (steps: Int64, meters: Double?)? = await withCheckedContinuation { continuation in
-                pedometer.queryPedometerData(from: Calendar.current.startOfDay(for: now), to: now) { data, _ in
-                    continuation.resume(returning: data.map { ($0.numberOfSteps.int64Value, $0.distance?.doubleValue) })
-                }
-            }
-            if let today {
+            if let today = await stepsToday(CMPedometer(), now: now) {
                 data["steps_today"] = .int(today.steps)
                 if let meters = today.meters { data["distance_today_m"] = .int(Int64(meters.rounded())) }
             }
         }
         return data
+    }
+
+    /// CoreMotion calls back on its own queue: made outside the main actor.
+    nonisolated static func stepsToday(_ pedometer: CMPedometer, now: Date) async -> (steps: Int64, meters: Double?)? {
+        await withCheckedContinuation { continuation in
+            pedometer.queryPedometerData(from: Calendar.current.startOfDay(for: now), to: now) { data, _ in
+                continuation.resume(returning: data.map { ($0.numberOfSteps.int64Value, $0.distance?.doubleValue) })
+            }
+        }
     }
 
     private nonisolated static func describe(_ last: CMMotionActivity) -> (activity: String, confidence: String) {
@@ -239,11 +246,7 @@ enum PhoneSources {
 
     static func focus() async throws -> [String: JSON] {
         let center = INFocusStatusCenter.default
-        if center.authorizationStatus == .notDetermined {
-            _ = await withCheckedContinuation { continuation in
-                center.requestAuthorization { continuation.resume(returning: $0) }
-            }
-        }
+        if center.authorizationStatus == .notDetermined { await requestFocusAuthorization() }
         guard center.authorizationStatus == .authorized, let focused = center.focusStatus.isFocused else {
             throw PhoneSourceUnavailable()
         }
@@ -251,11 +254,7 @@ enum PhoneSources {
     }
 
     static func nowPlaying() async throws -> [String: JSON] {
-        if MPMediaLibrary.authorizationStatus() == .notDetermined {
-            _ = await withCheckedContinuation { continuation in
-                MPMediaLibrary.requestAuthorization { continuation.resume(returning: $0) }
-            }
-        }
+        if MPMediaLibrary.authorizationStatus() == .notDetermined { await requestMusicAuthorization() }
         guard MPMediaLibrary.authorizationStatus() == .authorized else { throw PhoneSourceUnavailable() }
         let player = MPMusicPlayerController.systemMusicPlayer
         var data: [String: JSON] = ["playing": .bool(player.playbackState == .playing)]
@@ -265,6 +264,20 @@ enum PhoneSources {
             if let album = item.albumTitle { data["album"] = .string(album) }
         }
         return data
+    }
+
+    // iOS answers these permission requests on its own queues: made outside the main actor.
+
+    private nonisolated static func requestFocusAuthorization() async {
+        await withCheckedContinuation { continuation in
+            INFocusStatusCenter.default.requestAuthorization { _ in continuation.resume() }
+        }
+    }
+
+    private nonisolated static func requestMusicAuthorization() async {
+        await withCheckedContinuation { continuation in
+            MPMediaLibrary.requestAuthorization { _ in continuation.resume() }
+        }
     }
 
     /// Read only after the owner tapped Allow; iOS shows its own paste notice as well.

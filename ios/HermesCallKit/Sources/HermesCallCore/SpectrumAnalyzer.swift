@@ -16,7 +16,7 @@ public final class SpectrumAnalyzer: @unchecked Sendable {
     public let sampleRate: Float
     public let size: Int
     private let log2n: vDSP_Length
-    private let fft: FFTSetup
+    private let fft: FFTSetup?
     private let window: [Float]
     private let lock = OSAllocatedUnfairLock()
     // Guarded by `lock`.
@@ -35,12 +35,12 @@ public final class SpectrumAnalyzer: @unchecked Sendable {
         self.sampleRate = Float(sampleRate)
         self.size = size
         log2n = vDSP_Length(log2(Double(size)))
-        fft = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))!
+        fft = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))
         window = vDSP.window(ofType: Float.self, usingSequence: .hanningNormalized, count: size, isHalfWindow: false)
         ring = [Float](repeating: 0, count: size)
     }
 
-    deinit { vDSP_destroy_fftsetup(fft) }
+    deinit { if let fft { vDSP_destroy_fftsetup(fft) } }
 
     // MARK: writer (audio thread)
 
@@ -112,11 +112,15 @@ public final class SpectrumAnalyzer: @unchecked Sendable {
         var windowed = vDSP.multiply(samples, window)
         var real = [Float](repeating: 0, count: half), imaginary = [Float](repeating: 0, count: half)
         var result = [Float](repeating: 0, count: half)
+        // No FFT setup (out of memory at init): silence rather than a crash.
+        guard let fft else { return result }
         real.withUnsafeMutableBufferPointer { realPointer in
             imaginary.withUnsafeMutableBufferPointer { imaginaryPointer in
-                var split = DSPSplitComplex(realp: realPointer.baseAddress!, imagp: imaginaryPointer.baseAddress!)
+                guard let realBase = realPointer.baseAddress, let imaginaryBase = imaginaryPointer.baseAddress else { return }
+                var split = DSPSplitComplex(realp: realBase, imagp: imaginaryBase)
                 windowed.withUnsafeMutableBytes { raw in
-                    vDSP_ctoz(raw.bindMemory(to: DSPComplex.self).baseAddress!, 2, &split, 1, vDSP_Length(half))
+                    guard let complex = raw.bindMemory(to: DSPComplex.self).baseAddress else { return }
+                    vDSP_ctoz(complex, 2, &split, 1, vDSP_Length(half))
                 }
                 vDSP_fft_zrip(fft, &split, 1, log2n, FFTDirection(kFFTDirection_Forward))
                 split.imagp[0] = 0  // packed Nyquist term

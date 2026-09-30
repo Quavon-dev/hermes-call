@@ -93,8 +93,8 @@ struct LookPreview: UIViewRepresentable {
 
     func makeUIView(context: Context) -> PreviewView {
         let view = PreviewView()
-        view.preview.session = session
-        view.preview.videoGravity = .resizeAspectFill
+        view.preview?.session = session
+        view.preview?.videoGravity = .resizeAspectFill
         return view
     }
 
@@ -102,7 +102,7 @@ struct LookPreview: UIViewRepresentable {
 
     final class PreviewView: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
-        var preview: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+        var preview: AVCaptureVideoPreviewLayer? { layer as? AVCaptureVideoPreviewLayer }
     }
 }
 

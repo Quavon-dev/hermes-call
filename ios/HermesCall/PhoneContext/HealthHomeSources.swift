@@ -100,13 +100,18 @@ final class HomeSource: NSObject, HMHomeManagerDelegate {
         let once = ResumeOnce()
         await withCheckedContinuation { continuation in
             once.continuation = continuation
-            characteristic.readValue { _ in Task { @MainActor in once.resume() } }
+            Self.read(characteristic) { Task { @MainActor in once.resume() } }
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(2))
                 once.resume()
             }
         }
         return characteristic.value as? Bool
+    }
+
+    /// HomeKit answers on its own queue: made outside the main actor.
+    private nonisolated static func read(_ characteristic: HMCharacteristic, done: @escaping @Sendable () -> Void) {
+        characteristic.readValue { _ in done() }
     }
 
     private func finish() {

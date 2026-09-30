@@ -21,7 +21,8 @@ final class EngineAudioDevice: NSObject, RTCAudioDevice, @unchecked Sendable {
     private let log = Logger(subsystem: "de.quavon.hermescall", category: "audio")
     private let lock = NSLock()
     private let engine = AVAudioEngine()
-    private let ioFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: rate, channels: 1, interleaved: true)!
+    /// WebRTC's side of the engine: 16-bit mono at 48 kHz (nil only if iOS refused the format; then no audio).
+    private let ioFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: rate, channels: 1, interleaved: true)
     private var delegate: RTCAudioDeviceDelegate?
     private var converter: AVAudioConverter?
     private var source: AVAudioSourceNode?
@@ -124,7 +125,7 @@ final class EngineAudioDevice: NSObject, RTCAudioDevice, @unchecked Sendable {
         let input = engine.inputNode
         try input.setVoiceProcessingEnabled(true)
         let inputFormat = input.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0 else { throw PhoneTranscriberError.unavailable }
+        guard inputFormat.sampleRate > 0, let ioFormat else { throw PhoneTranscriberError.unavailable }
         converter = AVAudioConverter(from: inputFormat, to: ioFormat)
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(inputFormat.sampleRate / 100), format: inputFormat) {
@@ -160,7 +161,7 @@ final class EngineAudioDevice: NSObject, RTCAudioDevice, @unchecked Sendable {
     private func recorded(_ buffer: AVAudioPCMBuffer, at time: AVAudioTime) {
         onMicBuffer?(buffer, time)
 
-        guard let delegate = lock.withLock({ wantsRecording ? delegate : nil }), let converter,
+        guard let delegate = lock.withLock({ wantsRecording ? delegate : nil }), let converter, let ioFormat,
               let converted = AVAudioPCMBuffer(pcmFormat: ioFormat,
                                                frameCapacity: AVAudioFrameCount(Double(buffer.frameLength) * Self.rate
                                                    / buffer.format.sampleRate) + 32)

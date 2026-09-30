@@ -47,7 +47,8 @@ final class RelaySocket: @unchecked Sendable {
                 throw ProtocolError.timeout
             }
             defer { group.cancelAll() }
-            return try await group.next()!
+            guard let first = try await group.next() else { throw ProtocolError.notConnected }
+            return first
         }
         guard case .string(let text) = message, text.utf8.count <= 64 * 1024,
               case .object(let body) = try JSON.decode(Data(text.utf8)), body["t"]?.string != nil
