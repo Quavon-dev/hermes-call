@@ -73,24 +73,43 @@ Payload fields beyond `sign_pk` are defined by the bridge/app (M2/M3).
 
 ```
 relay  → client {"t":"challenge","nonce":32 bytes,"v":1}
-client → relay  {"t":"auth","role":"bridge"|"device","id":ID,"sig":Ed25519(msg)}
-relay  → client {"t":"ready"}
+client → relay  {"t":"auth","role":"bridge"|"device","id":ID,"sig":Ed25519(msg)[,"v":N,"caps":[…]]}
+relay  → client {"t":"ready","v":1,"relay":"0.6.2","caps":["unsupported","mail","blobs","live_activity","turns"]}
 msg = "hermescall/v1/auth" | authority | role | id | nonce     (joined with "|")
 ```
 
 A new session for the same identity closes the old one. Revoked identities are
-disconnected within 15 s.
+disconnected within 15 s. On shutdown the relay closes sessions with WebSocket code 1001
+(going away); clients reconnect with their usual backoff.
+
+### Versions and capabilities
+
+`v` and `caps` in `auth` are optional (clients up to 0.6.2 send neither): `v` is the client's
+protocol version, `caps` up to 32 names (`[a-z0-9_]{1,32}`) of features it supports. The relay
+records them, ignores names it does not know and never requires them; they are not covered by the
+signature and grant nothing. `ready` carries the relay's protocol version, its software version
+(`relay`) and its own caps. Older relays send a bare `{"t":"ready"}`: a client treats missing caps
+as "none of the optional features".
+
+Relay caps: `unsupported` (unknown request types are answered, see below), `mail`, `blobs`,
+`live_activity`, `turns` (the TURN reply may contain `turns:` URLs).
+
+A request type the relay does not know is answered with
+`{"t":"error","code":"unsupported","type":<t>[,"rid":…]}` (`type` only when it matches
+`[a-z0-9_]{1,32}`) and the session stays open. Relays up to 0.6.2 closed the connection instead
+(`protocol_error`), so a client should send new request types only when the relay listed the
+matching cap.
 
 ### Bridge requests
 
 | `t` | Fields | Reply |
 |---|---|---|
-| `open_slot` / `close_slot` | `slot` | `slot_opened` / `slot_closed` (max 5 open) |
+| `open_slot` / `close_slot` | `slot` | `slot_opened` / `slot_closed` (max 5 open), or `error: too_many_slots/too_many_devices` (20 devices per bridge by default) |
 | `list_devices` | – | `devices: [{device_id, push, online, created}]` |
 | `revoke_device` | `device_id` | `revoked` |
 | `e2e` | `to`, `data` (≤ 48 KiB) | none, or `error: offline/unknown_device` |
 | `ring` | `call_id` (16 bytes), `devices`: `"all"` or `[ids]` | `rang: {call_id, pushed:[ids]}` (10/min) |
-| `turn` | – | `turn: {urls, username, credential, ttl}` |
+| `turn` | – | `turn: {urls, username, credential, ttl}`; `urls` holds `turn:` (UDP and TCP) and, when the relay offers TURN over TLS, `turns:host:5349?transport=tcp`; `ttl` is 5400 s by default (longer than the longest call) |
 | `live_update` | `to` (device id), `event`: `start`/`update`/`end`, `content_state` (see "Live Activity push") | `live_updated`, or `error: no_token/unknown_device/rate_limited/invalid_content_state/push_disabled/push_failed` |
 
 ### Device requests
@@ -186,7 +205,9 @@ is real, and ends it at once when no bridge confirms it within 15 s. Pairing pay
 ### Mailbox (relay)
 
 Chat messages to phones go through a per-device ciphertext mailbox (500 messages,
-20 MiB, 7 days per device; duplicates by id are ignored).
+20 MiB, 7 days per device by default, configurable on the relay; duplicates by id are ignored,
+also when the mailbox is full). `mailbox_full` is also returned when the relay's total storage
+budget or free-disk floor is reached.
 
 | From | `t` | Fields | Reply |
 |---|---|---|---|
@@ -204,8 +225,12 @@ acked within 3 s: `{"aps":{"alert":{"title":"New message","body":"Open Hermes Ca
 
 `blob_put {size, to?}` → `blob_ticket {blob_id, token, ttl: 300}`; then
 `PUT /v1/blobs/<blob_id>` with `Authorization: Bearer <token>` (single use, exact size,
-≤ 10 MiB + 64). The recipient asks `blob_get {blob_id}` for a download ticket and uses
-`GET /v1/blobs/<blob_id>`; `blob_delete` by sender or recipient. Blob bytes are
+≤ 10 MiB + 64, whole upload within 300 s). A relay that is busy with other transfers answers
+`503` without using up the ticket: retry the same PUT after a short pause. The recipient asks
+`blob_get {blob_id}` for a download ticket and uses `GET /v1/blobs/<blob_id>`; a download ticket
+works three times within its ttl (a retry after a dropped connection), `503` again means busy;
+`blob_delete` by sender or recipient. `quota_exceeded` also covers the relay's total storage
+budget. Blob bytes are
 `XChaCha20-Poly1305(key, file, ad="hermescall/v1/blob")` with a random key that only
 travels inside the E2E message. Quota: 20 blobs / 50 MiB per recipient, 7 days.
 Clients reuse the relay's pinned certificate (checked on the WebSocket) for these requests.
