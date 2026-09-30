@@ -52,6 +52,8 @@ class Config:
     metrics_port: int = 0
     log_level: str = "info"
     log_format: str = "text"
+    # /healthz shows the exact version to everyone, not only to local requests ([health]).
+    public_version: bool = False
 
     @property
     def authority(self) -> str:
@@ -130,6 +132,12 @@ def _merged(path: Path) -> dict:
     return merged
 
 
+def _bool(value: object, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be true or false")
+    return value
+
+
 def load(path: Path = DEFAULT_CONFIG) -> Config:
     try:
         raw = _merged(path)
@@ -157,6 +165,7 @@ def load(path: Path = DEFAULT_CONFIG) -> Config:
             metrics_port=_port(metrics.get("port", 0)),
             log_level=log_level,
             log_format=log_format,
+            public_version=_bool(raw.get("health", {}).get("public_version", False), "health.public_version"),
         )
     except (OSError, AttributeError, KeyError, TypeError, ValueError, ProtocolError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"invalid config {path}: {exc}") from exc

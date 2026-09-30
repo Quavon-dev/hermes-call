@@ -3,7 +3,10 @@
 /healthz is public (the installer, Docker and monitoring use it): 200 with {"status": "ok"} or
 "degraded" (push gateway unreachable: calls still work while the app is open), 503 "unhealthy"
 when the relay cannot do its job (database not writable, disk below the free-space floor). It
-carries the version and check names, nothing about bridges or devices.
+carries check names, nothing about bridges or devices. The exact version only goes to local
+requests (loopback, not through a proxy: installer, doctor, Docker health check) unless
+`[health] public_version` is on. The result is cached for HEALTH_CACHE_SECONDS (the database check
+takes the write lock) and each client address may ask HEALTH_RATE times per minute.
 
 /metrics (Prometheus text) is served only on the separate metrics listener; see docs/relay.md.
 """
@@ -11,10 +14,12 @@ carries the version and check names, nothing about bridges or devices.
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING
 
 import httpx
 
+from . import netutil
 from .metrics import Registry
 from .push import DirectApns, GatewayPush
 from .version import VERSION
@@ -25,6 +30,8 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 GATEWAY_PROBE_SECONDS = 60.0
+HEALTH_CACHE_SECONDS = 5.0
+HEALTH_RATE = (60.0, 60)  # (window seconds, requests) per client address
 GATEWAY_PROBE_TIMEOUT = 5.0
 
 
@@ -55,6 +62,32 @@ class GatewayProbe:
             return self._ok
 
 
+class HealthCache:
+    """The last health result for HEALTH_CACHE_SECONDS; concurrent callers share one check."""
+
+    def __init__(self, seconds: float = HEALTH_CACHE_SECONDS) -> None:
+        self._seconds = seconds
+        self._at = float("-inf")
+        self._result: tuple[int, dict] = (503, {})
+        self._lock = asyncio.Lock()
+
+    async def get(self, check: Callable[[], Awaitable[tuple[int, dict]]]) -> tuple[int, dict]:
+        async with self._lock:
+            if time.monotonic() - self._at >= self._seconds:
+                self._result = await check()
+                self._at = time.monotonic()
+            return self._result
+
+
+def local_request(remote: str | None, headers: Mapping[str, str]) -> bool:
+    """Loopback and not forwarded by a proxy (Caddy on the same host adds X-Forwarded-For)."""
+    return netutil.is_trusted(remote or "", ()) and "X-Forwarded-For" not in headers and "Forwarded" not in headers
+
+
+def with_version(body: dict, show: bool) -> dict:
+    return {"status": body.get("status"), "version": VERSION, **body} if show else body
+
+
 async def health(relay: "Relay") -> tuple[int, dict]:
     checks = {"database": "ok" if relay.store.writable() else "failed"}
     try:
@@ -65,7 +98,7 @@ async def health(relay: "Relay") -> tuple[int, dict]:
     checks["push"] = await _push_check(relay)
     unhealthy = checks["database"] != "ok" or checks["disk"] != "ok"
     status = "unhealthy" if unhealthy else ("degraded" if checks["push"] == "unreachable" else "ok")
-    return (503 if unhealthy else 200), {"status": status, "version": VERSION, "checks": checks}
+    return (503 if unhealthy else 200), {"status": status, "checks": checks}
 
 
 async def _push_check(relay: "Relay") -> str:

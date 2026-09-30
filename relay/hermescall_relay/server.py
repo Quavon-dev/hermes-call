@@ -152,6 +152,8 @@ class Relay(AttachmentsMixin, MailboxMixin):
         self._alert_tasks: set[asyncio.Task] = set()
         self._stopping = asyncio.Event()
         self._shutting_down = False
+        self.health_cache = observability.HealthCache()
+        self.health_rate = RateLimiter(limit=observability.HEALTH_RATE[1], window=observability.HEALTH_RATE[0], evict=True)
         self.gateway_probe = observability.GatewayProbe(config.push_gateway) if isinstance(push, GatewayPush) else None
         self.metrics = observability.relay_metrics(self)
         self.rate_limited = self.metrics.counter("rate_limited_total", "Requests refused by a limit, by limit name.")
@@ -225,8 +227,12 @@ class Relay(AttachmentsMixin, MailboxMixin):
             await self.push.close()
 
     async def healthz(self, request: web.Request) -> web.Response:
-        status, body = await observability.health(self)
-        return web.json_response(body, status=status, headers={"Cache-Control": "no-store"})
+        headers = {"Cache-Control": "no-store"}
+        if not self._allow(self.health_rate, client_key(self.client_ip(request)), "healthz"):
+            return web.json_response({"status": "rate_limited"}, status=429, headers=headers)
+        status, body = await self.health_cache.get(lambda: observability.health(self))
+        show = self.config.public_version or observability.local_request(request.remote, request.headers)
+        return web.json_response(observability.with_version(body, show), status=status, headers=headers)
 
     async def metrics_endpoint(self, request: web.Request) -> web.Response:
         return web.Response(body=self.metrics.render().encode(), headers={"Content-Type": CONTENT_TYPE})

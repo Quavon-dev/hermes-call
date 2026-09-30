@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from hermescall_relay import gateway_state, pushauth
+from hermescall_relay import gateway_state, observability, pushauth
 from hermescall_relay.gateway import PushGateway, load_gateway
 from hermescall_relay.gateway_state import GatewayState
 
@@ -154,7 +154,27 @@ async def test_gateway_health_and_metrics(gw, aiohttp_client, monkeypatch) -> No
     assert 'hermescall_gateway_state_rows{kind="tokens"} 1' in text
     assert (await client.get("/metrics")).status == 404
     monkeypatch.setattr(gateway.state, "writable", lambda: False)
+    assert (await client.get("/healthz")).status == 200  # cached for a few seconds
+    monkeypatch.setattr(gateway, "health_cache", observability.HealthCache())
     assert (await client.get("/healthz")).status == 503
+
+
+async def test_gateway_healthz_is_cached_rate_limited_and_hides_the_version(gw, monkeypatch) -> None:
+    from hermescall_relay import observability
+    from hermescall_relay.version import VERSION
+
+    gateway, client, _ = gw
+    calls = []
+    real = gateway.state.writable
+    monkeypatch.setattr(gateway.state, "writable", lambda: calls.append(1) or real())
+    proxied = {"X-Forwarded-For": "198.51.100.7"}
+    public = await (await client.get("/healthz", headers=proxied)).json()
+    assert public == {"status": "ok", "checks": {"state": "ok"}}
+    assert (await (await client.get("/healthz")).json())["version"] == VERSION  # local probe
+    assert len(calls) == 1
+    limit = observability.HEALTH_RATE[1]
+    statuses = [(await client.get("/healthz", headers={"X-Forwarded-For": "198.51.100.8"})).status for _ in range(limit + 1)]
+    assert statuses == [200] * limit + [429]
 
 
 async def test_unreadable_blocklist_keeps_the_previous_one(tmp_path: Path) -> None:

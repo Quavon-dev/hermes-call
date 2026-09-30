@@ -29,7 +29,7 @@ from aiohttp import web
 from hermescall_common.errors import ProtocolError
 from hermescall_common.wire import b64d
 
-from . import logs, pushauth
+from . import logs, observability, pushauth
 from .config import ApnsConfig, ConfigError
 from .gateway_state import REPLAY_SECONDS, GatewayState
 from .metrics import CONTENT_TYPE, Registry
@@ -210,6 +210,8 @@ class PushGateway:
         self.seen_per_prefix = _limiter((REPLAY_SECONDS, SEEN_PER_PREFIX))
         self.token_limits = {kind: [_limiter(limit) for limit in limits] for kind, limits in TOKEN_LIMITS.items()}
         self.known_relays = ExpiringSet(KNOWN_RELAY_SECONDS, MAX_KNOWN_RELAYS)
+        self.health_cache = observability.HealthCache()
+        self.health_rate = _limiter(observability.HEALTH_RATE)
         self._stamps: tuple = ()
         self.metrics = Registry("hermescall_gateway")
         self.metrics.gauge("build_info", "Gateway version.", lambda: {(("version", VERSION),): 1})
@@ -303,9 +305,17 @@ class PushGateway:
         return True
 
     async def healthz(self, request: web.Request) -> web.Response:
+        """Cached and rate-limited like the relay's; the version only for local probes."""
+        headers = {"Cache-Control": "no-store"}
+        if not self.health_rate.allow(client_key(self.client_ip(request), IPV6_PREFIX)):
+            return web.json_response({"status": "rate_limited"}, status=429, headers=headers)
+        status, body = await self.health_cache.get(self._health)
+        show = observability.local_request(request.remote, request.headers)
+        return web.json_response(observability.with_version(body, show), status=status, headers=headers)
+
+    async def _health(self) -> tuple[int, dict]:
         ok = self.state.writable()
-        body = {"status": "ok" if ok else "unhealthy", "version": VERSION, "checks": {"state": "ok" if ok else "failed"}}
-        return web.json_response(body, status=200 if ok else 503, headers={"Cache-Control": "no-store"})
+        return (200 if ok else 503), {"status": "ok" if ok else "unhealthy", "checks": {"state": "ok" if ok else "failed"}}
 
     async def metrics_endpoint(self, request: web.Request) -> web.Response:
         return web.Response(body=self.metrics.render().encode(), headers={"Content-Type": CONTENT_TYPE})

@@ -160,6 +160,48 @@ async def test_healthz_degraded_when_the_gateway_is_down(client, relay) -> None:
     relay.push = None
 
 
+async def test_healthz_through_a_proxy_hides_the_version(client, relay) -> None:
+    public = await (await client.get("/healthz", headers={"X-Forwarded-For": "198.51.100.7"})).json()
+    assert public["status"] == "ok" and "version" not in public
+    local = await (await client.get("/healthz")).json()  # installer, doctor, Docker health check
+    assert local["version"] == VERSION
+
+
+async def test_healthz_version_can_be_made_public(aiohttp_client, tmp_path, push) -> None:
+    from hermescall_relay.server import Relay
+
+    from .conftest import make_config
+
+    config = dataclasses.replace(make_config(tmp_path), public_version=True)
+    client = await aiohttp_client(Relay(config, Store(config.db_path), push, b"turn-secret").app())
+    body = await (await client.get("/healthz", headers={"X-Forwarded-For": "198.51.100.7"})).json()
+    assert body["version"] == VERSION
+
+
+async def test_healthz_is_cached_and_rate_limited(client, relay, monkeypatch) -> None:
+    from hermescall_relay import observability
+
+    calls = []
+    real = relay.store.writable
+    monkeypatch.setattr(relay.store, "writable", lambda: calls.append(1) or real())
+    for _ in range(3):
+        assert (await client.get("/healthz")).status == 200
+    assert len(calls) == 1  # one BEGIN IMMEDIATE per HEALTH_CACHE_SECONDS, not per request
+    limit = observability.HEALTH_RATE[1]
+    headers = {"X-Forwarded-For": "198.51.100.8"}
+    statuses = [(await client.get("/healthz", headers=headers)).status for _ in range(limit + 1)]
+    assert statuses == [200] * limit + [429]
+    assert (await client.get("/healthz", headers={"X-Forwarded-For": "198.51.100.9"})).status == 200
+
+
+def test_config_public_version(tmp_path) -> None:
+    path = tmp_path / "relay.toml"
+    path.write_text('authority = "relay.test"\n')
+    assert config_mod.load(path).public_version is False
+    path.write_text('authority = "relay.test"\n[health]\npublic_version = true\n')
+    assert config_mod.load(path).public_version is True
+
+
 async def test_metrics_are_only_on_the_metrics_app(aiohttp_client, client, relay) -> None:
     assert (await client.get("/metrics")).status == 404
     bridge = await pair_bridge(client, relay.store.create_relay_code())

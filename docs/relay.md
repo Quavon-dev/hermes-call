@@ -215,9 +215,14 @@ availability. Run more relays rather than a bigger one.
 
 ## Health, metrics, logs
 
-`GET /healthz` (public, also through Caddy): `200 {"status": "ok", "version": …, "checks":
-{"database", "disk", "push"}}`; `"degraded"` (still 200) when the push gateway is unreachable;
-**503** `"unhealthy"` when the database is not writable or the disk is below `min_free_bytes`.
+`GET /healthz` (public, also through Caddy): `200 {"status": "ok", "checks": {"database",
+"disk", "push"}}`; `"degraded"` (still 200) when the push gateway is unreachable; **503**
+`"unhealthy"` when the database is not writable or the disk is below `min_free_bytes`. The answer
+is cached for 5 seconds and each address may ask 60 times a minute (then `429`). The exact
+`"version"` is added only for local requests (from `127.0.0.1` straight to port 8743, as the
+installer, `doctor` and the Docker health check do: `curl -s http://127.0.0.1:8743/healthz`); to
+show it to everyone, set `public_version = true` under `[health]` in `relay.local.toml`. The
+version is also on `/metrics` (`hermescall_relay_build_info`) and in `install.sh status`.
 
 `/metrics` (Prometheus text format) is served only on the separate metrics listener
 (`[metrics] port`, default off, `127.0.0.1`), never on the public port. It has connections by

@@ -124,8 +124,9 @@ the relay and the gateway to change together and is not implemented yet.
 (`push via https://hermes-push.quavon.de as relay abc123`). A relay rotates it with
 `install.sh rotate push-key`.
 
-`/healthz` answers `{"status": "ok", "version": …, "checks": {"state": "ok"}}`, or 503 when the
-state database is not writable. `/metrics` (Prometheus text) is only on the separate metrics
+`/healthz` answers `{"status": "ok", "checks": {"state": "ok"}}`, or 503 when the state database
+is not writable; cached for 5 seconds, 60 requests per minute per address. The `"version"` is
+added only for local probes (loopback, not through the proxy). `/metrics` (Prometheus text) is only on the separate metrics
 listener (`[metrics] port` in `gateway.toml`, off by default) and never routed publicly: requests
 by outcome, APNs results, state rows, blocklist size, version.
 

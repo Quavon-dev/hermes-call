@@ -49,8 +49,9 @@ check "no HTTP/3 or port 80 listener" "! ss -lun | grep -q ':443 ' && ! ss -ltn 
 check "firewall default drop" "nft list chain inet hermescall input | grep -q 'policy drop'"
 check "firewall keeps SSH reachable" "nft list chain inet hermescall input | grep -q 'tcp dport 22'"
 check "HTTPS health through Caddy" "python3 -c \"import ssl,urllib.request; c=ssl._create_unverified_context(); urllib.request.urlopen('https://$IP/healthz', context=c, timeout=5)\""
-check "healthz reports version and checks" "curl -sk https://$IP/healthz | grep -q '\"database\": \"ok\"' &&
-  curl -sk https://$IP/healthz | grep -q \"\$(sed -n 's/^version=//p' /opt/hermescall-relay/VERSION)\""
+check "healthz reports checks, the version only locally" "curl -sk https://$IP/healthz | grep -q '\"database\": \"ok\"' &&
+  ! curl -sk https://$IP/healthz | grep -q '\"version\"' &&
+  curl -s http://127.0.0.1:8743/healthz | grep -q \"\$(sed -n 's/^version=//p' /opt/hermescall-relay/VERSION)\""
 check "metrics are not public" "[[ \$(curl -sk -o /dev/null -w '%{http_code}' https://$IP/metrics) == 404 ]]"
 check "coturn sandboxed (PrivateUsers, no privileged syscalls)" "
   [[ \$(systemctl show -p PrivateUsers --value hermescall-turn) == yes ]] &&
