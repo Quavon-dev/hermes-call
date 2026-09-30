@@ -34,7 +34,17 @@ fetch_verified_release() {
   rm -rf "$tmp"
 }
 
-var_relay_address=$(prompt_input_required "Public domain name (or public IP) of this relay:" "" 300 "var_relay_address")
+# The install script runs inside the container without a terminal, so it cannot ask. A domain comes
+# from the host (var_relay_address=relay.example.com before the one-liner); without one the relay
+# starts on the public IP with a self-signed certificate that the app pins through the pairing QR.
+# Switch to a domain later with: /opt/hermescall-relay/relay/install.sh install --domain <name>
+if [[ -z ${var_relay_address:-} || ${var_relay_address} == CHANGE_ME ]]; then
+  msg_info "Detecting the public IP address"
+  var_relay_address=$(curl -4fsS --max-time 10 https://api.ipify.org || curl -4fsS --max-time 10 https://ifconfig.me || true)
+  [[ $var_relay_address =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] ||
+    { msg_error "Could not detect the public IP; run again with var_relay_address=<domain or IP>"; exit 1; }
+  msg_ok "Public IP: ${var_relay_address} (self-signed certificate; set a domain any time)"
+fi
 
 msg_info "Downloading and verifying the signed release"
 $STD apt-get install -y openssh-client

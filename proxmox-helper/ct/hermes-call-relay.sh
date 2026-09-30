@@ -76,5 +76,9 @@ description
 msg_ok "Completed Successfully!\n"
 echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"
 echo -e "${INFO}${YW}Create a bridge pairing code inside the container with:${CL}"
-echo -e "${TAB}${BGN}hermescall-relay pair${CL}"
+echo -e "${TAB}${BGN}pct exec ${CTID} -- hermescall-relay pair${CL}"
+if [[ -z ${var_relay_address:-} ]]; then
+  echo -e "${INFO}${YW}The relay runs on your public IP. To use a domain instead (Let's Encrypt), point it at your IP, forward TCP 443 and run (then pair the bridge again):${CL}"
+  echo -e "${TAB}${BGN}pct exec ${CTID} -- /opt/hermescall-relay/relay/install.sh install --domain relay.example.com --tls acme${CL}"
+fi
 echo -e "${INFO}${YW}Forward only TCP 443, TCP/UDP 3478 and UDP 49160-49200 to ${IP}${CL}"
