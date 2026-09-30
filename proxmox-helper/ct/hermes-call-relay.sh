@@ -139,6 +139,10 @@ function update_script() {
 start
 build_container
 description
+# `pct exec` runs without a login shell: releases up to 0.6.1 put the command in /usr/local/sbin
+# and call runuser from /usr/sbin, neither in its PATH. A small shim in /usr/local/bin fixes both;
+# newer releases install a wrapper there themselves.
+pct exec "$CTID" -- bash -c '[ -e /usr/local/bin/hermescall-relay ] || printf "%s\n" "#!/bin/sh" "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" "export PATH" "exec /usr/local/sbin/hermescall-relay \"\$@\"" >/usr/local/bin/hermescall-relay && chmod 0755 /usr/local/bin/hermescall-relay' >/dev/null 2>&1 || true
 
 msg_ok "Completed Successfully!\n"
 echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"

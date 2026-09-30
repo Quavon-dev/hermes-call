@@ -15,7 +15,10 @@ readonly PREFIX=/opt/hermescall-relay
 readonly ETC=/etc/hermescall-relay
 readonly SETTINGS=$ETC/install.env
 readonly CADDY_TLS=/etc/caddy/hermescall
-readonly WRAPPER=/usr/local/sbin/hermescall-relay
+# In /usr/local/bin so `pct exec <id> -- hermescall-relay pair` finds it (no login shell, no sbin
+# in PATH); the old sbin path stays as a link.
+readonly WRAPPER=/usr/local/bin/hermescall-relay
+readonly OLD_WRAPPER=/usr/local/sbin/hermescall-relay
 readonly SERVICE_USER=hermescall-relay
 readonly LISTEN_PORT=8743
 readonly TURN_PORT=3478
@@ -249,12 +252,16 @@ deploy_code() {
   cat >"$WRAPPER" <<EOF
 #!/bin/sh
 set -eu
+# pct exec and cron run without a login shell: runuser lives in /usr/sbin.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
 [ "\$(id -u)" -eq 0 ] || { echo "hermescall-relay: run as root" >&2; exit 1; }
 cd /
 exec runuser -u $SERVICE_USER -- env PYTHONPATH=$PREFIX/common:$PREFIX/relay PYTHONDONTWRITEBYTECODE=1 \\
   python3 -m hermescall_relay.cli "\$@"
 EOF
   chmod 0755 "$WRAPPER"
+  ln -sfn "$WRAPPER" "$OLD_WRAPPER"
 }
 
 write_secret() (
@@ -696,7 +703,7 @@ cmd_uninstall() {
   rm -f /etc/systemd/system/hermescall-{relay,turn,ip-refresh}.{service,timer} /etc/systemd/system/caddy.service.d/hermescall.conf
   systemctl daemon-reload
   systemctl unmask coturn.service >/dev/null 2>&1 || true
-  rm -rf "$PREFIX" "$WRAPPER" /etc/fail2ban/jail.d/hermescall.local
+  rm -rf "$PREFIX" "$WRAPPER" "$OLD_WRAPPER" /etc/fail2ban/jail.d/hermescall.local
   if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
     ufw delete allow 443/tcp >/dev/null 2>&1 || true
     ufw delete allow "$TURN_PORT" >/dev/null 2>&1 || true

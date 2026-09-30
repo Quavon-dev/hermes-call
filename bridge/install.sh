@@ -141,6 +141,9 @@ deploy_code() {
   cat >"$WRAPPER" <<EOF
 #!/bin/sh
 set -eu
+# pct exec and cron run without a login shell: runuser lives in /usr/sbin.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
 [ "\$(id -u)" -eq 0 ] || { echo "hermes-call-bridge: run as root" >&2; exit 1; }
 cd /
 exec runuser -u $SERVICE_USER -- env PYTHONPATH=$PREFIX/common:$PREFIX/bridge PYTHONDONTWRITEBYTECODE=1 \\
