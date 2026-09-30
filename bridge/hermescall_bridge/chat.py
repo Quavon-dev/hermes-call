@@ -145,17 +145,17 @@ class ChatService:
         )
         self._call_context = str(self._db.store.get_json("call_context", "") or "")
         self._approvals: dict[str, float] = {}
-        self._resumed = False
+        self._processing: set[str] = set()
         self.last_poll = 0.0
 
     # ---- lifecycle ---------------------------------------------------------
 
     async def on_relay_ready(self) -> None:
-        """After every relay (re)connect: queued mail goes out; after a restart, accepted messages resume."""
+        """After every relay (re)connect: queued mail goes out, and accepted owner messages that are not
+        with Hermes yet (a restart, or a failure while processing) are processed again."""
         self.outbox.kick()
-        if not self._resumed:
-            self._resumed = True
-            for pending in await self._db.call(self._db.store.pending):
+        for pending in await self._db.call(self._db.store.pending):
+            if pending.message_id not in self._processing:
                 await self._resume(pending)
 
     async def _resume(self, pending: Pending) -> None:
@@ -163,7 +163,7 @@ class ChatService:
         if device is None:
             await self._db.call(self._db.store.drop_pending, pending.message_id)
             return
-        log.info("resuming chat message %s from before a restart", pending.message_id[:6])
+        log.info("resuming chat message %s", pending.message_id[:6])
         try:
             await self._process(device, pending.message_id, pending.body)
         except ProtocolError as exc:
@@ -218,7 +218,17 @@ class ChatService:
             await self._process(device, message_id, kept)
 
     async def _process(self, device: Device, message_id: str, body: dict[str, Any]) -> None:
-        """Stored and acked → attachments, transcripts, mirror → an event for Hermes (one transaction with the inbox row)."""
+        """Stored and acked → attachments, transcripts, mirror → an event for Hermes. A store failure leaves
+        the message in the inbox; the next relay reconnect (or restart) processes it again."""
+        self._processing.add(message_id)
+        try:
+            await self._hand_over(device, message_id, body)
+        except (sqlite3.Error, OSError) as exc:
+            log.error("chat message %s kept for a retry: %s", message_id[:6], exc)
+        finally:
+            self._processing.discard(message_id)
+
+    async def _hand_over(self, device: Device, message_id: str, body: dict[str, Any]) -> None:
         text = body.get("text", "")
         attachments = [Attachment.parse(item) for item in body.get("attachments", [])]
         wants_voice = body.get("voice_replies") is True and any(a.kind == "voice" for a in attachments)
@@ -312,6 +322,11 @@ class ChatService:
         store = self._db.store
         if epoch is not None and epoch != self.epoch:
             log.info("chat adapter cursor belongs to another event store; delivering from the start")
+            cursor = 0
+        last_seq = await self._db.call(store.last_seq)
+        if cursor > last_seq:
+            # A cursor from a lost store (an adapter without epoch support): it says nothing about this one.
+            log.info("chat adapter cursor %d is beyond the last event %d; delivering from the start", cursor, last_seq)
             cursor = 0
         await self._db.call(store.ack, cursor)
         async with self._changed:
@@ -425,6 +440,7 @@ class ChatService:
                 blob_id = await blobs.upload(self._relay, sealed, to=device.id)
             except (ProtocolError, OSError, TimeoutError) as exc:
                 log.warning("attachment for %s not uploaded: %s", device.id[:6], exc)
+                await self._delivery_failed(message_id, device.id, "attachment upload failed")
                 continue
             ref = {"kind": kind, "blob_id": blob_id, "key": wire.b64e(key), "name": name, "mime": mime, "size": len(data)}
             body = {
@@ -499,7 +515,9 @@ class ChatService:
             "chat": True,
             "choices": list(APPROVAL_CHOICES),
         }
-        await self._mail_all(body, alert=True)
+        # Queued no longer than the bridge waits for the answer: a late sheet could not be answered anyway.
+        for device in list(self._state.devices.values()):
+            await self.outbox.queue(device.id, request_id, body, alert=True, max_age=APPROVAL_TTL)
         return True
 
     async def missed_call(self, reason: str, first_message: str, status: str) -> bool:

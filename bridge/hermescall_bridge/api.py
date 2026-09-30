@@ -8,6 +8,7 @@ tasks, phone context and presentations (Hermes token), and unauthenticated healt
 import hmac
 import json
 import logging
+import sqlite3
 from collections.abc import Awaitable, Callable
 
 from aiohttp import web
@@ -236,6 +237,11 @@ def add_health_routes(app: web.Application, status: Callable[[], dict], health: 
         return web.json_response(result, status=200 if result["ok"] else 503)
 
     async def metrics(request: web.Request) -> web.Response:
+        if METRICS.refresh is not None:
+            try:
+                await METRICS.refresh()
+            except (sqlite3.Error, RuntimeError) as exc:
+                log.warning("metrics refresh failed: %s", exc.__class__.__name__)
         return web.Response(text=METRICS.render(), content_type="text/plain", charset="utf-8")
 
     app.router.add_get("/healthz", healthz)

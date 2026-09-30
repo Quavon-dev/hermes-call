@@ -80,7 +80,10 @@ class Transcriber:
                 result = exc
             if job.priority == LIVE and len(job.audio):
                 METRICS.stt_rtf.observe((time.monotonic() - started) / (len(job.audio) / RATE))
-            job.loop.call_soon_threadsafe(_settle, job.future, result)
+            try:
+                job.loop.call_soon_threadsafe(_settle, job.future, result)
+            except RuntimeError:  # that event loop is closed (shutdown): nobody waits for this result
+                log.info("speech recognition result dropped: its event loop is closed")
 
     async def _submit(self, audio: np.ndarray, priority: int) -> str:
         loop = asyncio.get_running_loop()

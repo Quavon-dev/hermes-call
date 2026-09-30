@@ -20,10 +20,15 @@ log = logging.getLogger(__name__)
 MAX_AGE = 7 * 86_400.0
 BACKOFF = (1.0, 2.0, 5.0, 15.0, 30.0, 60.0, 300.0)
 CLAIM = 60.0
-# Relay answers that will never succeed for this message.
-PERMANENT = ("unknown_device", "too_large", "invalid")
+# Relay error codes that will never succeed for this message (exact codes, from "relay error: <code>").
+PERMANENT = frozenset({"unknown_device", "too_large"})
 
 FailedHandler = Callable[[str, str, str], Awaitable[None]]  # (message_id, device_id, why)
+
+
+def _log_end(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        log.error("outbox stopped: %r (restarted by the next message or reconnect)", task.exception())
 
 
 def backoff(attempts: int) -> float:
@@ -39,12 +44,13 @@ class Outbox:
         self._task: asyncio.Task | None = None
         self.sent = 0
 
-    async def queue(self, device_id: str, message_id: str, body: dict, alert: bool) -> None:
+    async def queue(self, device_id: str, message_id: str, body: dict, alert: bool, max_age: float | None = None) -> None:
+        """`max_age`: give up earlier than MAX_AGE (e.g. an approval request that times out anyway)."""
         device = self._transport.device(device_id)
         if device is None:
             return
         mid, sealed = self._transport.seal_mail(device, body)
-        expires = time.time() + MAX_AGE
+        expires = time.time() + (MAX_AGE if max_age is None else min(max_age, MAX_AGE))
         # Claimed for CLAIM seconds: the first attempt happens right here, the loop takes over on failure.
         row = await self._store.call(
             self._store.store.queue_mail, device_id, mid, message_id, sealed, alert, expires, time.time() + CLAIM
@@ -60,6 +66,7 @@ class Outbox:
         self._wake.set()
         if self._task is None or self._task.done():
             self._task = asyncio.ensure_future(self._run())
+            self._task.add_done_callback(_log_end)
 
     async def flush(self, timeout: float) -> int:
         """Shutdown: one last attempt for everything due; returns what is still queued."""
@@ -81,6 +88,8 @@ class Outbox:
                 await self._deliver_due()
             except (sqlite3.Error, *TRANSPORT_ERRORS) as exc:
                 log.warning("outbox delivery interrupted: %s", exc.__class__.__name__)
+            except Exception:  # the loop must survive anything (e.g. a failing delivery_failed handler)
+                log.exception("outbox delivery failed")
             next_try = await self._store.call(self._store.store.next_mail_time)
             if next_try is None:
                 await self._wake.wait()
@@ -106,7 +115,7 @@ class Outbox:
                 {"t": "mail", "to": mail.device_id, "id": mail.mid, "data": mail.data, "alert": mail.alert}
             )
         except ProtocolError as exc:
-            if any(code in str(exc) for code in PERMANENT):
+            if str(exc).removeprefix("relay error: ") in PERMANENT:
                 await self._store.call(store.mail_done, mail.row)
                 await self._failed(mail, str(exc))
                 return
@@ -126,4 +135,7 @@ class Outbox:
     async def _failed(self, mail: Mail, why: str) -> None:
         log.warning("chat mail %s for %s given up: %s", mail.message_id[:6], mail.device_id[:6], why)
         if self._on_failed is not None:
-            await self._on_failed(mail.message_id, mail.device_id, why)
+            try:
+                await self._on_failed(mail.message_id, mail.device_id, why)
+            except Exception:  # reporting a give-up must never stop deliveries
+                log.exception("reporting an undeliverable chat message failed")

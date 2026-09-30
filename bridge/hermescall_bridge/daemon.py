@@ -104,9 +104,13 @@ def build_bridge(
             tasks.on_presence(message.get("device_id"), message.get("online"))
 
     async def on_ready() -> None:
-        await devices.flush_revocations()
-        await calls.on_relay_ready()
-        await chat.on_relay_ready()
+        """Each step on its own: one failing must not keep the others (outbox, resumes) from running."""
+        steps = await asyncio.gather(
+            devices.flush_revocations(), calls.on_relay_ready(), chat.on_relay_ready(), return_exceptions=True
+        )
+        for name, result in zip(("revocations", "call", "chat"), steps, strict=True):
+            if isinstance(result, Exception):
+                log.error("after the relay reconnect, %s recovery failed: %r", name, result)
 
     def make_conversation(
         out: SpeechTrack, approve: Callable, ring: Ring | None, caption: Callable, device_id: str | None = None
@@ -184,19 +188,25 @@ def build_bridge(
     )
     phone.recent_activity = calls.last_activity
     devices = DeviceRegistry(state, store, relay, agent_name)
-    _register_gauges(relay, calls, chat_store, state)
+    _register_gauges(relay, calls, chat, state)
     health = HealthChecker(*opts.health_urls, relay.connected.is_set) if opts.health_urls else None
     app = build_app(api_token, calls, devices, status, call_token, chat, phone, presenter, tasks, unpair, health=health)
     return Bridge(relay, calls, devices, chat, phone, presenter, tasks, app, seen)
 
 
-def _register_gauges(relay: RelaySession, calls: CallManager, chat_store: ChatStore, state: State) -> None:
+def _register_gauges(relay: RelaySession, calls: CallManager, chat: ChatService, state: State) -> None:
+    depths: dict[str, int] = {}
+
+    async def refresh() -> None:
+        depths.update(await chat.depths())  # on the chat store's own worker thread
+
+    METRICS.refresh = refresh
     METRICS.gauge("hermescall_bridge_relay_connected", "1 while connected to the relay.", lambda: relay.connected.is_set())
     METRICS.gauge("hermescall_bridge_in_call", "1 during a call.", lambda: calls.active is not None)
     METRICS.gauge("hermescall_bridge_devices", "Paired phones.", lambda: len(state.devices))
-    METRICS.gauge("hermescall_bridge_chat_events_queued", "Chat events Hermes has not taken yet.", chat_store.event_depth)
-    METRICS.gauge("hermescall_bridge_chat_inbox_pending", "Owner messages being processed.", chat_store.inbox_depth)
-    METRICS.gauge("hermescall_bridge_chat_outbox_depth", "Agent messages waiting for the relay.", chat_store.outbox_depth)
+    METRICS.gauge("hermescall_bridge_chat_events_queued", "Chat events Hermes has not taken yet.", lambda: depths["events"])
+    METRICS.gauge("hermescall_bridge_chat_inbox_pending", "Owner messages being processed.", lambda: depths["inbox"])
+    METRICS.gauge("hermescall_bridge_chat_outbox_depth", "Agent messages waiting for the relay.", lambda: depths["outbox"])
 
 
 def options_from(config: Config, transcribe_long: Callable | None) -> BridgeOptions:

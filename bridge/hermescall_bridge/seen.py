@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import IO
@@ -64,6 +65,10 @@ class SeenLog:
         self._segment = 0
         self._count = 0
         self._compacting: asyncio.Future | None = None
+        # Snapshot writes may overlap (a background compaction and close()): the newest generation wins.
+        self._generation = 0
+        self._written = -1
+        self._write_lock = threading.Lock()
 
     def load(self) -> tuple[dict[str, int], dict[str, int]]:
         """(peer → newest timestamp, mail id → timestamp), merged from snapshots and log segments."""
@@ -80,10 +85,16 @@ class SeenLog:
         if kind not in KINDS or any(ch.isspace() for ch in key):
             return
         self._merge(kind, key, ts)
-        if self._file is None:
-            self._file = self._open_segment()
-        self._file.write(f"{kind} {key} {ts}\n")
-        self._file.flush()
+        try:
+            if self._file is None:
+                self._file = self._open_segment()
+            self._file.write(f"{kind} {key} {ts}\n")
+            self._file.flush()
+        except OSError as exc:
+            # The message is still accepted (the mark is kept in memory); only a crash before the next
+            # successful write could reopen the replay window for it.
+            log.error("replay mark not persisted: %s", exc)
+            return
         self._count += 1
         if self._count >= self._compact_every:
             self.compact()
@@ -97,19 +108,22 @@ class SeenLog:
         self._prune_mail()
         snapshot = {kind: dict(marks) for kind, marks in self._marks.items()}
         self._count = 0
+        self._generation += 1
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            self._write_snapshot(snapshot, done)
+            self._write_snapshot(snapshot, done, self._generation)
             return
-        self._compacting = loop.run_in_executor(None, self._write_snapshot, snapshot, done)
+        self._compacting = loop.run_in_executor(None, self._write_snapshot, snapshot, done, self._generation)
         self._compacting.add_done_callback(self._compaction_done)
 
     def close(self) -> None:
         """Clean shutdown: everything into the snapshots, no segments left."""
         self._close_file()
         self._prune_mail()
-        self._write_snapshot({kind: dict(marks) for kind, marks in self._marks.items()}, list(self._segments()))
+        self._generation += 1
+        snapshot = {kind: dict(marks) for kind, marks in self._marks.items()}
+        self._write_snapshot(snapshot, list(self._segments()), self._generation)
 
     # ---- internals ---------------------------------------------------------
 
@@ -146,11 +160,15 @@ class SeenLog:
             self._file = None
             self._segment += 1
 
-    def _write_snapshot(self, snapshot: dict[str, dict[str, int]], done: list[Path]) -> None:
-        for kind, name in _SNAPSHOTS.items():
-            _write_json(self._dir / name, snapshot[kind])
-        for path in done:
-            path.unlink(missing_ok=True)
+    def _write_snapshot(self, snapshot: dict[str, dict[str, int]], done: list[Path], generation: int) -> None:
+        """An older snapshot never replaces a newer one; its segments are covered by the newer one either way."""
+        with self._write_lock:
+            if generation > self._written:
+                for kind, name in _SNAPSHOTS.items():
+                    _write_json(self._dir / name, snapshot[kind])
+                self._written = generation
+            for path in done:
+                path.unlink(missing_ok=True)
 
     @staticmethod
     def _compaction_done(future: asyncio.Future) -> None:

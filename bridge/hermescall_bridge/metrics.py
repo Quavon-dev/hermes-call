@@ -6,7 +6,7 @@ Only counts, timings and queue depths; never ids, names or content.
 import math
 import sqlite3
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 
 LATENCY_BUCKETS = (0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 6.0, 10.0)
 RTF_BUCKETS = (0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0, 2.0)
@@ -109,6 +109,8 @@ class Registry:
         self.calls = Counter("hermescall_bridge_calls_total", "Calls started, by direction.", ("direction",))
         self.chat_messages = Counter("hermescall_bridge_chat_messages_total", "Chat messages, by direction.", ("direction",))
         self.gauges: dict[str, Gauge] = {}
+        # Awaited before a scrape (reads that belong on another thread, e.g. SQLite queue depths).
+        self.refresh: Callable[[], Awaitable[None]] | None = None
 
     def gauge(self, name: str, help_text: str, read: Callable[[], float]) -> None:
         self.gauges[name] = Gauge(name, help_text, read)
@@ -120,8 +122,8 @@ class Registry:
         for gauge in self.gauges.values():
             try:
                 lines.extend(gauge.render())
-            except (sqlite3.Error, OSError, RuntimeError, ValueError, AttributeError):
-                continue  # a broken gauge must not break the scrape
+            except (sqlite3.Error, OSError, RuntimeError, ValueError, AttributeError, KeyError):
+                continue  # a broken gauge (or one not refreshed yet) must not break the scrape
         return "\n".join(lines) + "\n"
 
 

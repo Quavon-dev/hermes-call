@@ -250,13 +250,14 @@ class CallManager:
 
     async def _on_offer(self, device: Device, body: dict) -> None:
         call_id = body.get("call_id")
-        if isinstance(call_id, str):
-            self._starting.setdefault(call_id, device.id)
+        mine = isinstance(call_id, str) and call_id not in self._starting
+        if mine:
+            self._starting[call_id] = device.id
         try:
             async with self._offer_lock:
                 await self._accept_offer(device, body)
         finally:
-            if isinstance(call_id, str):
+            if mine:  # a second offer with the same id must not clear the first one's state
                 self._starting.pop(call_id, None)
                 self._hung_up.discard(call_id)
 

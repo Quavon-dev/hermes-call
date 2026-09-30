@@ -41,6 +41,8 @@ class DeviceRegistry:
         self._relay = relay
         self._invitations: dict[str, Invitation] = {}
         self._handshakes: dict[str, Handshake] = {}
+        # revoke() and flush_revocations() read-modify-write revocations.json: one at a time
+        self._revocations = asyncio.Lock()
 
     def _ctx(self) -> pairing.Context:
         e = self._state.endpoint
@@ -154,13 +156,18 @@ class DeviceRegistry:
             return False
         del self._state.devices[device_id]
         self._store.save(self._state)
-        self._store.save_revocations(sorted({*self._store.load_revocations(), device_id}))
+        async with self._revocations:
+            self._store.save_revocations(sorted({*self._store.load_revocations(), device_id}))
         log.info("device revoked: %s", device_id[:6])
         await self.flush_revocations()
         return True
 
     async def flush_revocations(self) -> None:
         """Tells the relay about revocations it has not confirmed yet (also after every reconnect)."""
+        async with self._revocations:
+            await self._flush_revocations()
+
+    async def _flush_revocations(self) -> None:
         pending = self._store.load_revocations()
         if pending and not self._relay.connected.is_set():
             log.info("relay offline: %d revocation(s) are sent after it reconnects", len(pending))
@@ -173,7 +180,7 @@ class DeviceRegistry:
                 if "unknown_device" not in str(exc):
                     log.warning("relay not told about revoked device %s yet (%s); retrying after reconnect", device_id[:6], exc)
                     continue
-            except TimeoutError:
+            except (TimeoutError, ConnectionError, RuntimeError):
                 log.warning("relay unreachable; revocation of %s is sent after it reconnects", device_id[:6])
                 continue
             done.add(device_id)
