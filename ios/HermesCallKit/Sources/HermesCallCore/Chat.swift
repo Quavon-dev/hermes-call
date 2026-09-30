@@ -160,35 +160,6 @@ public enum ChatText {
     }
 }
 
-/// The newest message for the home-screen widget.
-public struct ChatSnapshot: Codable, Sendable, Hashable {
-    public var agentName: String
-    public var preview: String
-    public var date: Date
-    public var fromAgent: Bool
-
-    public init(agentName: String, preview: String, date: Date, fromAgent: Bool) {
-        self.agentName = agentName
-        self.preview = preview
-        self.date = date
-        self.fromAgent = fromAgent
-    }
-
-    static var url: URL { SharedContainer.directory.appendingPathComponent("widget.json") }
-
-    public static func load() -> ChatSnapshot? {
-        (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(ChatSnapshot.self, from: $0) }
-    }
-
-    public func save() {
-        try? JSONEncoder().encode(self).write(to: Self.url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-    }
-
-    public static func clear() {
-        try? FileManager.default.removeItem(at: url)
-    }
-}
-
 /// E2E chat message bodies (docs/protocol.md, "Chat") ⇄ `ChatMessage`.
 public enum ChatWire {
     public static let maxText = 12_000
