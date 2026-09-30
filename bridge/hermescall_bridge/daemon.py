@@ -156,6 +156,7 @@ async def serve(config: Config) -> None:
         transcriber.transcribe,
         config.secret("call_token"),
         config.agent_name,
+        transcribe_long=transcriber.transcribe_background,
     )
     runner = web.AppRunner(bridge.app, access_log=None)
     await runner.setup()
