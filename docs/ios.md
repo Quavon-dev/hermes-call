@@ -76,6 +76,13 @@ account to get incoming calls.
 - **Calls**: interruptions and route changes are followed (`CallAudioRoute`), *Speaker* shows the real
   route, the call screen has iOS' audio route picker and captions, CallKit shows a template icon, and push
   rings with several agents show "Atlas or Nova" until the bridge confirms which one rang.
+- **Chats** (several agents): the chat tab lists every agent's conversation, newest first, with its colour,
+  connection dot, last message and its own unread count; the badge is the sum (`UnreadCounts`, app group).
+  Opening a chat makes that agent active. While the app is open every agent (up to five, the active one
+  first) keeps its relay connection (`AppModel.standby`), so switching agents (also the presence swipe)
+  tears nothing down and other agents' messages and rings arrive at once; in the background only pushes and
+  borrowed connections remain. A notification tap opens the chat of the agent that wrote. With one agent the
+  tab shows its chat directly. UI tests: `-UITestAgents YES` seeds two agents on `relay.invalid`.
 - **Settings**: agents first (each with its own page), then calls, appearance, chat and tasks, privacy;
   **Diagnostics** shows network, push tokens and registrations per agent, relay connection and round trip
   (WebSocket ping), and exports the last hour of this app's log with tokens, ids, addresses and e-mail

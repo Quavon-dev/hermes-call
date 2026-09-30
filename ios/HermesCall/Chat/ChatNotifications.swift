@@ -102,7 +102,8 @@ extension ChatNotifications: UNUserNotificationCenterDelegate {
             let profile = await MainActor.run { profileID(content) }
             await chat.send(text: reply, profileID: profile)
         } else if content.categoryIdentifier != Self.phoneInfoCategory {
-            await MainActor.run { app.tab = .chat }
+            // A tap opens the chat of the agent that wrote.
+            await MainActor.run { app.openChat(profileID(content)) }
         }
     }
 

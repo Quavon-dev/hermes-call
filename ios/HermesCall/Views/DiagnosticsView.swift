@@ -61,14 +61,12 @@ struct DiagnosticsView: View {
     }
 
     private func connection(_ profile: RelayProfile) -> String {
-        guard profile.id == app.activeProfile?.id else {
-            return app.openSession(for: profile.id) == nil ? "Not connected (not the active agent)" : "Connected for a call or push"
-        }
-        switch app.relayStatus {
+        switch app.status(of: profile.id) {
         case .connected:
-            return app.connectedSince.map { "Connected since \($0.formatted(date: .omitted, time: .shortened))" } ?? "Connected"
+            return app.upSince(profile.id).map { "Connected since \($0.formatted(date: .omitted, time: .shortened))" } ?? "Connected"
         case .connecting: return "Connecting…"
-        case .disconnected: return "Not connected (retrying)"
+        case .disconnected:
+            return app.openSession(for: profile.id) == nil ? "Not connected (only while the app is open)" : "Not connected (retrying)"
         }
     }
 

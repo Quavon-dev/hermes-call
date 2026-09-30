@@ -283,7 +283,7 @@ struct PresenceView: View {
         Group {
             switch sheet {
             case .history:
-                ChatView().presentationDetents([.medium, .large]).presentationBackground(.black)
+                ChatHome(opensActiveChat: true).presentationDetents([.medium, .large]).presentationBackground(.black)
             case .settings: SettingsView()
             case .relays: ProfilesView()
             case .phoneAccess: NavigationStack { PhoneAccessView() }

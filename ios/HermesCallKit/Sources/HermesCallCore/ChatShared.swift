@@ -55,6 +55,11 @@ public enum ChatBadge {
     public static func reset(defaults: UserDefaults = SharedContainer.defaults) {
         defaults.set(0, forKey: key)
     }
+
+    /// The app's own count (the sum of `UnreadCounts`) replaces what the notification extension added.
+    public static func set(_ count: Int, defaults: UserDefaults = SharedContainer.defaults) {
+        defaults.set(max(count, 0), forKey: key)
+    }
 }
 
 /// The newest message per agent for the widgets (and the newest overall).

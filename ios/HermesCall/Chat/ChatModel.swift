@@ -33,7 +33,11 @@ final class ChatModel {
     private(set) var window = ChatWindow()
     var messages: [ChatMessage] { window.messages }
     private(set) var agentTyping = false
-    private(set) var unread = 0
+    /// Unread agent messages per agent (kept in the app group); their sum is the badge.
+    private(set) var unreadCounts: UnreadCounts
+    var unread: Int { unreadCounts.total }
+    /// The newest message of every agent, for the chat list.
+    private(set) var latestByAgent: [UUID: ChatMessage] = [:]
     var pendingApproval: ChatApproval? { didSet { if pendingApproval?.id != oldValue?.id { approvalStep = .waiting } } }
     private(set) var approvalStep = ApprovalStep.waiting
     /// Face ID / passcode for approvals (a fake in tests).
@@ -47,7 +51,7 @@ final class ChatModel {
     /// Set by the app: voice replies never play over a call.
     var isInCall: () -> Bool = { false }
     /// The chat screen is on screen (no banners for it, no unread count).
-    var isVisible = false { didSet { if isVisible { markRead() } } }
+    var isVisible = false { didSet { if isVisible, let shownProfile { markRead(shownProfile) } } }
     /// A chat's history changed (stored, changed or deleted message): the watch follows.
     var onHistoryChanged: ((UUID) -> Void)?
 
@@ -65,6 +69,7 @@ final class ChatModel {
     private let app: AppModel
     private let store: ChatStore
     private let links: ChatLinkProvider
+    private let unreadDefaults: UserDefaults
     private let log = Logger(subsystem: "de.quavon.hermescall", category: "chat")
     private var shownProfile: UUID?
     private var typingReset: Task<Void, Never>?
@@ -81,9 +86,12 @@ final class ChatModel {
     }
 
     /// `listens`: answer the extensions' pings and follow their writes (off in tests).
-    init(app: AppModel, store: ChatStore = .shared, links: ChatLinkProvider? = nil, listens: Bool = true) {
+    init(app: AppModel, store: ChatStore = .shared, links: ChatLinkProvider? = nil, listens: Bool = true,
+         unreadDefaults: UserDefaults = SharedContainer.defaults) {
         self.app = app
         self.store = store
+        self.unreadDefaults = unreadDefaults
+        unreadCounts = UnreadCounts.load(defaults: unreadDefaults)
         self.links = links ?? RelayLinkProvider(app: app)
         if listens { listen() }
     }
@@ -161,6 +169,7 @@ final class ChatModel {
         var fresh = ChatWindow()
         fresh.showLatest(latest, total: total)
         window = fresh
+        if isVisible { markRead(profile) }
     }
 
     /// The owner scrolled to the top of what is loaded.
@@ -214,20 +223,42 @@ final class ChatModel {
             return
         }
         window.remove(message.id)
+        if latestByAgent[profile]?.id == message.id { latestByAgent[profile] = await store.latest(profile, limit: 1).last }
         searchResults.removeAll { $0.id == message.id }
         if spotlight?.id == message.id { spotlight = nil }
         onHistoryChanged?(profile)
     }
 
-    /// A stored or changed message: into the window when it belongs to the shown chat.
+    /// A stored or changed message: into the window when it belongs to the shown chat, and into the chat list.
     private func apply(_ message: ChatMessage, profile: UUID) {
         if profile == shownProfile { window.apply(message) }
+        if latestByAgent[profile].map({ $0.id == message.id || message.date >= $0.date }) ?? true { latestByAgent[profile] = message }
         onHistoryChanged?(profile)
+    }
+
+    // MARK: chat list
+
+    /// Every agent's conversation, newest first, with its unread count.
+    var inbox: [InboxRow] { ChatInbox.rows(profiles: app.profiles, latest: latestByAgent, unread: unreadCounts) }
+
+    func unread(for profile: UUID) -> Int { unreadCounts.count(profile) }
+
+    /// Loads every agent's newest message (the chat list) and forgets unread counts of removed agents.
+    func refreshInbox() async {
+        var latest: [UUID: ChatMessage] = [:]
+        for profile in app.profiles {
+            latest[profile.id] = await store.latest(profile.id, limit: 1).last
+        }
+        latestByAgent = latest
+        unreadCounts.keep(only: Set(app.profiles.map(\.id)))
+        publishBadge()
     }
 
     /// Another process (the share extension) wrote to the store.
     private func storeChanged() async {
-        guard await store.changedElsewhere(), let profile = shownProfile else { return }
+        guard await store.changedElsewhere() else { return }
+        await refreshInbox()
+        guard let profile = shownProfile else { return }
         onHistoryChanged?(profile)
         guard !window.hasNewer else { return }
         let latest = await store.latest(profile, limit: max(ChatWindow.pageSize, messages.count))
@@ -286,7 +317,7 @@ final class ChatModel {
         autoPlay(message, profile: profile.id)
         if message.presentation != nil, profile.id == app.activeProfile?.id { spotlight = message }
         saveSnapshot(message, profile: profile)
-        if !(isVisible && app.isForeground && profile.id == shownProfile) { countUnread() }
+        if !(isVisible && app.isForeground && profile.id == shownProfile) { countUnread(profile.id) }
         answerWaiters(with: message, profile: profile.id)
     }
 
@@ -356,16 +387,24 @@ final class ChatModel {
         WidgetCenter.shared.reloadTimelines(ofKind: Self.widgetKind)
     }
 
-    private func countUnread() {
-        unread += 1
-        let badge = ChatBadge.increment()
-        Task { try? await UNUserNotificationCenter.current().setBadgeCount(badge) }
+    private func countUnread(_ profile: UUID) {
+        unreadCounts.add(profile)
+        publishBadge()
     }
 
-    private func markRead() {
-        unread = 0
-        ChatBadge.reset()
-        Task { try? await UNUserNotificationCenter.current().setBadgeCount(0) }
+    /// The owner sees this agent's chat.
+    func markRead(_ profile: UUID) {
+        guard unreadCounts.count(profile) > 0 || ChatBadge.count() != unreadCounts.total else { return }
+        unreadCounts.clear(profile)
+        publishBadge()
+    }
+
+    /// Badge = the sum over all agents (replacing what the notification extension counted meanwhile).
+    private func publishBadge() {
+        unreadCounts.save(defaults: unreadDefaults)
+        let total = unreadCounts.total
+        ChatBadge.set(total)
+        Task { try? await UNUserNotificationCenter.current().setBadgeCount(total) }
     }
 
     private func showTyping() {

@@ -103,6 +103,27 @@ final class HermesCallUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '8-character code'")).firstMatch.exists)
     }
 
+    /// Two paired agents: the chat tab lists both (newest first, unread per agent), opens one, and back.
+    func testInboxListsEveryAgent() throws {
+        app.launchArguments += ["-UITestConsent", "YES", "-UITestAgents", "YES"]
+        app.launch()
+        app.tabBars.buttons["Chat"].tap()
+        XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 8))
+        let nova = app.buttons["inbox.Nova"].firstMatch
+        XCTAssertTrue(nova.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["inbox.Iris"].exists)
+        XCTAssertTrue(nova.label.contains("2 unread"), "Nova's unread count: \(nova.label)")
+        XCTAssertLessThan(nova.frame.minY, app.buttons["inbox.Iris"].frame.minY, "the newest conversation comes first")
+        snap("inbox")
+        nova.tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'gate B12'")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.textFields["Message"].exists)
+        snap("inbox-chat")
+        app.navigationBars.buttons["Chats"].firstMatch.tap()
+        XCTAssertTrue(nova.waitForExistence(timeout: 5))
+        XCTAssertFalse(nova.label.contains("unread"), "reading the chat clears its count: \(nova.label)")
+    }
+
     // MARK: helpers
 
     private func tap(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {

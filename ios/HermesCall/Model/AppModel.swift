@@ -8,8 +8,18 @@ enum AppTab: Hashable { case call, chat }
 @MainActor @Observable
 final class AppModel {
     private(set) var profiles: [RelayProfile] = []
-    private(set) var relayStatus: RelaySession.Status = .disconnected
+    /// The active agent's connection.
     private(set) var session: RelaySession?
+    /// While the app is on screen, up to `maxStanding - 1` other agents stay connected too, so their messages
+    /// and rings arrive and switching agents tears nothing down. In the background only pushes and borrowed
+    /// connections remain.
+    private(set) var standby: [UUID: RelaySession] = [:]
+    static let maxStanding = 5
+    /// Connection state per agent.
+    private(set) var statuses: [UUID: RelaySession.Status] = [:]
+    private var connectedAt: [UUID: Date] = [:]
+    /// The session each agent's status callbacks belong to (a stopped predecessor must not overwrite it).
+    private var sessionTokens: [UUID: UUID] = [:]
     private(set) var pushToken: String?
     /// The alert on screen (RootView), with its recovery action.
     var error: AppError?
@@ -20,8 +30,17 @@ final class AppModel {
     }
     /// A screen the root view should show (error recovery, `hermescall://pair` links).
     var route: AppRoute?
-    /// When the active relay connection last came up, and the last connection problem (Diagnostics).
-    private(set) var connectedSince: Date?
+    /// The active agent's relay connection (the demo agent runs on this iPhone: always connected).
+    var relayStatus: RelaySession.Status {
+        guard let profile = activeProfile else { return .disconnected }
+        return profile.isDemo ? .connected : status(of: profile.id)
+    }
+
+    func status(of id: UUID) -> RelaySession.Status { openSession(for: id) == nil ? .disconnected : statuses[id] ?? .disconnected }
+
+    /// When the active relay connection last came up (Diagnostics, presence).
+    var connectedSince: Date? { activeProfile.flatMap { connectedAt[$0.id] } }
+    func upSince(_ id: UUID) -> Date? { status(of: id) == .connected ? connectedAt[id] : nil }
     /// What each agent's relay said about itself on its last connect (version, caps), for Diagnostics and
     /// for requests that need a cap.
     private(set) var relayInfo: [UUID: RelayInfo] = [:]
@@ -31,6 +50,8 @@ final class AppModel {
     var onConnected: ((RelaySession) -> Void)?
     /// Which tab is shown; notifications and deep links switch to the chat.
     var tab: AppTab = .call
+    /// A chat the chat list should open (notification tap, deep link, intent); the list clears it.
+    var chatRequest: UUID?
     private(set) var alertToken: String?
 
     let preferences: Preferences
@@ -108,12 +129,28 @@ final class AppModel {
         syncPushRegistrations()
     }
 
+    /// Makes `id` the active agent. In the foreground the previous agent's connection stays open (standby).
     func activate(_ id: UUID) {
-        guard profiles.contains(where: { $0.id == id }) else { return }
+        guard profiles.contains(where: { $0.id == id }), id != preferences.activeProfileID || session == nil else { return }
+        let previous = session
+        session = nil
         preferences.activeProfileID = id
         shareActiveAgent()
-        disconnect()
+        if let previous {
+            if isForeground, standingIDs.contains(previous.profile.id) {
+                standby[previous.profile.id] = previous
+            } else if !isInUse(previous) {
+                Task { await previous.stop() }
+            }
+        }
         connect()
+    }
+
+    /// Shows an agent's chat (the active agent's when nil): switches to it and to the chat tab.
+    func openChat(_ id: UUID?) {
+        if let id, id != activeProfile?.id { activate(id) }
+        tab = .chat
+        chatRequest = activeProfile?.id
     }
 
     /// The paired agent `step` places after (or before) the active one, wrapping around; nil with one agent.
@@ -167,6 +204,7 @@ final class AppModel {
         guard !profile.isDemo else { return await removeDemo() }
         await Self.notifyUnpair(profile)
         if preferences.activeProfileID == id { disconnect() }
+        if let other = standby.removeValue(forKey: id) { Task { await other.stop() } }
         profiles.removeAll { $0.id == id }
         preferences.pushRegistrations[id.uuidString] = nil
         preferences.alertRegistrations[id.uuidString] = nil
@@ -187,59 +225,97 @@ final class AppModel {
         ChatBadge.reset()
         disconnect()
         for entry in borrowed.values { await entry.session.stop() }
+        for other in standby.values { await other.stop() }
         borrowed = [:]
+        standby = [:]
         profiles = []
         do { try store.deleteAll() } catch { lastError = error.localizedDescription }
         await ChatStore.shared.deleteChat(DemoAgent.id)
         preferences.reset()
     }
 
+    /// The agents that keep a connection while the app is on screen: the active one first, then the others in
+    /// their order, at most `maxStanding`.
+    static func standing(_ profiles: [RelayProfile], active: UUID?, limit: Int = maxStanding) -> [UUID] {
+        let real = profiles.filter { !$0.isDemo }
+        let first = real.filter { $0.id == active }
+        return (first + real.filter { $0.id != active }).prefix(limit).map(\.id)
+    }
+
+    private var standingIDs: Set<UUID> { Set(Self.standing(profiles, active: activeProfile?.id)) }
+
+    /// Connects the active agent and, in the foreground, the other standing ones.
     func connect() {
-        guard session == nil, let profile = activeProfile else { return }
-        // The demo agent is always "online": it runs on this iPhone.
-        guard !profile.isDemo else {
-            relayStatus = .connected
-            return
+        connectActive()
+        guard isForeground else { return }
+        let wanted = standingIDs
+        for (id, other) in standby where !wanted.contains(id) {
+            standby[id] = nil
+            if !isInUse(other) { Task { await other.stop() } }
         }
-        if let shared = borrowed[profile.id]?.session {
-            session = shared
+        for profile in profiles where wanted.contains(profile.id) && openSession(for: profile.id) == nil {
+            do {
+                standby[profile.id] = try startSession(profile)
+            } catch {
+                log.error("could not connect a standby agent: \(String(describing: error), privacy: .public)")
+            }
+        }
+    }
+
+    private func connectActive() {
+        guard session == nil, let profile = activeProfile, !profile.isDemo else { return }
+        if let waiting = standby.removeValue(forKey: profile.id) ?? borrowed[profile.id]?.session {
+            session = waiting
             return
         }
         do {
-            let session = try makeSession(profile)
-            self.session = session
-            onSessionCreated?(session)
-            Task { await session.start() }
+            session = try startSession(profile)
         } catch {
             self.error = .profileDamaged(agent: profile.bridgeName)
         }
     }
 
-    /// The network came back: try the relay now instead of waiting for the backoff.
+    private func startSession(_ profile: RelayProfile) throws -> RelaySession {
+        let session = try makeSession(profile)
+        onSessionCreated?(session)
+        Task { await session.start() }
+        return session
+    }
+
+    /// The network came back: try every relay now instead of waiting for the backoff.
     func reconnectNow() {
-        guard let session else { return connect() }
-        Task { await session.reconnectNow() }
+        guard session != nil else { return connect() }
+        for open in [session].compactMap({ $0 }) + Array(standby.values) { Task { await open.reconnectNow() } }
     }
 
     var isBorrowed: Bool { borrowed.values.contains { $0.session === session } }
 
+    private func isInUse(_ candidate: RelaySession) -> Bool { borrowed.values.contains { $0.session === candidate } }
+
     /// An open connection to this profile's relay, if the app has one.
     func openSession(for id: UUID) -> RelaySession? {
         if let session, session.profile.id == id { return session }
-        return borrowed[id]?.session
+        return standby[id] ?? borrowed[id]?.session
     }
 
+    /// Stops the active agent's connection (unless borrowed).
     func disconnect() {
-        if activeProfile?.isDemo == true, session == nil { relayStatus = .disconnected }
         guard let session else { return }
         self.session = nil
-        relayStatus = .disconnected
-        if !borrowed.values.contains(where: { $0.session === session }) {
-            Task { await session.stop() }
-        }
+        if !isInUse(session) { Task { await session.stop() } }
     }
 
-    /// A connection to `profile`'s relay (the app's own one for the active relay) that stays open
+    /// The app left the screen: only borrowed connections (a call, a push registration) stay open.
+    func enterBackground() {
+        isForeground = false
+        for (id, other) in standby where !isInUse(other) {
+            standby[id] = nil
+            Task { await other.stop() }
+        }
+        if !isBorrowed { disconnect() }
+    }
+
+    /// A connection to `profile`'s relay (the app's own one when it has one) that stays open
     /// until every borrower has called `releaseSession`.
     func borrowSession(for profile: RelayProfile) throws -> RelaySession {
         guard !profile.isDemo else { throw ProtocolError.notConnected }
@@ -247,16 +323,8 @@ final class AppModel {
             borrowed[profile.id] = (entry.session, entry.users + 1)
             return entry.session
         }
-        let session: RelaySession
-        if profile.id == activeProfile?.id {
-            connect()
-            guard let active = self.session else { throw ProtocolError.notConnected }
-            session = active
-        } else {
-            session = try makeSession(profile)
-            onSessionCreated?(session)
-            Task { await session.start() }
-        }
+        if profile.id == activeProfile?.id { connectActive() }
+        let session = try openSession(for: profile.id) ?? startSession(profile)
         borrowed[profile.id] = (session, 1)
         return session
     }
@@ -268,26 +336,34 @@ final class AppModel {
             return
         }
         borrowed[id] = nil
-        if session !== self.session {
+        if session === self.session {
+            if !isForeground { disconnect() }
+        } else if standby[id] === session {
+            if !isForeground {
+                standby[id] = nil
+                Task { await session.stop() }
+            }
+        } else {
             Task { await session.stop() }
-        } else if !isForeground {
-            disconnect()
         }
     }
 
     private func makeSession(_ profile: RelayProfile) throws -> RelaySession {
         let id = profile.id
-        return try RelaySession(profile: profile, replayStore: .standard, onStatus: { [weak self] status in
+        let token = UUID()
+        let session = try RelaySession(profile: profile, replayStore: .standard, onStatus: { [weak self] status in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.sessionTokens[id] == token else { return }
+                self.statuses[id] = status
+                self.connectedAt[id] = status == .connected ? Date() : nil
                 if status == .connected, let open = self.openSession(for: id) { self.onConnected?(open) }
-                guard self.session?.profile.id == id else { return }
-                self.relayStatus = status
-                self.connectedSince = status == .connected ? Date() : nil
             }
         }, onReady: { [weak self] info in
             Task { @MainActor in self?.relayInfo[id] = info }
         })
+        sessionTokens[id] = token
+        statuses[id] = .disconnected
+        return session
     }
 
     // MARK: VoIP push registration

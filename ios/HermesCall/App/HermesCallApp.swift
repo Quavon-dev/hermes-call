@@ -80,11 +80,12 @@ struct HermesCallApp: App {
                 .onContinueUserActivity(NSStringFromClass(INStartCallIntent.self)) { activity in callBack(activity) }
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
-            app.isForeground = phase == .active
             switch phase {
-            case .active: app.connect()
-            case .background where !app.isBorrowed: app.disconnect()
-            default: break
+            case .active:
+                app.isForeground = true
+                app.connect()
+            case .background: app.enterBackground()
+            default: app.isForeground = false
             }
         }
     }
@@ -95,10 +96,11 @@ struct HermesCallApp: App {
         guard url.scheme == "hermescall" else { return }
         if url.host == "pair" { return app.route = .pair(url.absoluteString) }
         let agent = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "agent" }?.value
-        if let id = agent.flatMap(UUID.init(uuidString:)), id != app.activeProfile?.id { app.activate(id) }
+        let id = agent.flatMap(UUID.init(uuidString:))
         switch url.host {
-        case "chat": app.tab = .chat
+        case "chat": app.openChat(id)
         case "call":
+            if let id, id != app.activeProfile?.id { app.activate(id) }
             app.tab = .call
             Task { await calls.startCall() }
         default: break
@@ -151,7 +153,7 @@ struct RootView: View {
             } else {
                 TabView(selection: $app.tab) {
                     Tab("Call", systemImage: "phone.fill", value: AppTab.call) { HomeView() }
-                    Tab("Chat", systemImage: "bubble.left.and.bubble.right.fill", value: AppTab.chat) { ChatView() }
+                    Tab("Chat", systemImage: "bubble.left.and.bubble.right.fill", value: AppTab.chat) { ChatHome() }
                         .badge(chat.unread)
                 }
             }

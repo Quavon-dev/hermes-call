@@ -18,10 +18,7 @@ final class AppServices {
             app?.tab = .call
             await calls?.startCall()
         }
-        OpenChatIntent.handler = { [weak app] agent in
-            if let agent, agent != app?.activeProfile?.id { app?.activate(agent) }
-            app?.tab = .chat
-        }
+        OpenChatIntent.handler = { [weak app] agent in app?.openChat(agent) }
     }
 }
 

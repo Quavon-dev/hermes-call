@@ -127,7 +127,9 @@ import Testing
         #expect(try model.borrowSession(for: profiles[0]) === active)
         model.releaseSession(active)
         model.releaseSession(active)
-        #expect(try model.borrowSession(for: profiles[0]) !== active)
+        // In the foreground the previous agent stays connected (standby): the same session again.
+        #expect(try model.borrowSession(for: profiles[0]) === active)
+        model.releaseSession(active)
 
         model.isForeground = false
         let background = try #require(model.session)

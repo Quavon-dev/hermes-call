@@ -71,7 +71,7 @@ struct ChatFixture {
         app = AppModel(store: ProfileStore(service: service), preferences: preferences)
         store = ChatStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("chat-\(UUID().uuidString)"),
                           changedSignal: nil)
-        chat = ChatModel(app: app, store: store, links: links, listens: false)
+        chat = ChatModel(app: app, store: store, links: links, listens: false, unreadDefaults: defaults)
         chat.ackTimeout = .milliseconds(300)
         links.chat = chat
         home = profiles[0]

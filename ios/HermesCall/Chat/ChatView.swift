@@ -17,38 +17,17 @@ struct ChatView: View {
     @FocusState private var composing: Bool
     @FocusState private var searchFocused: Bool
 
+    /// Pushed from the chat list (which owns the navigation stack) instead of standing alone.
+    var embedded = false
+
     private var hud: Bool { app.preferences.appearance == .hud }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                if searching { searchBar }
-                ZStack {
-                    messageList
-                    if searching && !query.trimmingCharacters(in: .whitespaces).isEmpty { searchResults }
-                }
-                if chat.agentTyping && !searching {
-                    TypingIndicator(hud: hud)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 4)
-                        .transition(.opacity)
-                }
-                if !searching { ChatComposer(hud: hud, composing: $composing) }
-            }
-            .animation(.easeInOut(duration: 0.2), value: chat.agentTyping)
-            .animation(.easeInOut(duration: 0.2), value: searching)
-            .background { if hud { Color.black.ignoresSafeArea() } }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(hud ? AnyShapeStyle(Color.black) : AnyShapeStyle(.bar), for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbar { toolbar }
-            .quickLookPreview($preview)
-            .confirmationDialog("Delete this message on this iPhone?", isPresented: Binding(
-                get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }), titleVisibility: .visible, presenting: pendingDelete) { message in
-                Button("Delete", role: .destructive) { Task { await chat.delete(message) } }
-            } message: { _ in
-                Text("\(chat.agentName) keeps its own copy of the conversation.")
+        Group {
+            if embedded {
+                screen
+            } else {
+                NavigationStack { screen }
             }
         }
         .onAppear { chat.isVisible = true }
@@ -68,6 +47,38 @@ struct ChatView: View {
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
             await chat.search(query)
+        }
+    }
+
+    private var screen: some View {
+        VStack(spacing: 0) {
+            if searching { searchBar }
+            ZStack {
+                messageList
+                if searching && !query.trimmingCharacters(in: .whitespaces).isEmpty { searchResults }
+            }
+            if chat.agentTyping && !searching {
+                TypingIndicator(hud: hud)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+                    .transition(.opacity)
+            }
+            if !searching { ChatComposer(hud: hud, composing: $composing) }
+        }
+        .animation(.easeInOut(duration: 0.2), value: chat.agentTyping)
+        .animation(.easeInOut(duration: 0.2), value: searching)
+        .background { if hud { Color.black.ignoresSafeArea() } }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(hud ? AnyShapeStyle(Color.black) : AnyShapeStyle(.bar), for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar { toolbar }
+        .quickLookPreview($preview)
+        .confirmationDialog("Delete this message on this iPhone?", isPresented: Binding(
+            get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }), titleVisibility: .visible, presenting: pendingDelete) { message in
+            Button("Delete", role: .destructive) { Task { await chat.delete(message) } }
+        } message: { _ in
+            Text("\(chat.agentName) keeps its own copy of the conversation.")
         }
     }
 
@@ -283,7 +294,7 @@ struct ChatView: View {
             }
             .accessibilityElement(children: .combine)
         }
-        ToolbarItem(placement: .topBarLeading) {
+        ToolbarItem(placement: embedded ? .topBarTrailing : .topBarLeading) {
             Button {
                 composing = false
                 searching = true
