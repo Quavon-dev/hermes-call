@@ -72,11 +72,12 @@ parse_flags() {
   done
 }
 
-toml_value() { sed -n "s/^$1 = \"\\(.*\\)\"\$/\\1/p" "$ETC/bridge.toml" 2>/dev/null | head -1; }
+# Both read files a fresh install does not have yet: never fail (set -e + pipefail).
+toml_value() { { sed -n "s/^$1 = \"\\(.*\\)\"\$/\\1/p" "$ETC/bridge.toml" 2>/dev/null || true; } | head -1; }
 
 # Flags win; otherwise `update` keeps what is installed; defaults only for a first install.
 load_settings() {
-  [[ -n $HERMES_USER ]] || HERMES_USER=$(sed -n 's/^HERMES_USER=//p' "$ETC/install.env" 2>/dev/null | head -1)
+  [[ -n $HERMES_USER ]] || HERMES_USER=$({ sed -n 's/^HERMES_USER=//p' "$ETC/install.env" 2>/dev/null || true; } | head -1)
   [[ -n $AGENT_NAME ]] || AGENT_NAME=$(toml_value agent_name)
   [[ -n $TTS_VOICE ]] || TTS_VOICE=$(toml_value voice)
   [[ -n $STT_MODEL ]] || STT_MODEL=$(toml_value model)
