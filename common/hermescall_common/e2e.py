@@ -24,9 +24,23 @@ MAIL_WINDOW_MS = 8 * 86_400_000
 MAX_SEEN_MAIL = 20_000
 
 
+class ClockSkewError(ProtocolError):
+    """The sender's clock is more than MAX_SKEW_MS off ours (or the message is an old replay)."""
+
+    def __init__(self, skew_ms: int) -> None:
+        self.skew_ms = skew_ms
+        direction = "ahead of" if skew_ms > 0 else "behind"
+        super().__init__(
+            f"message timestamp is {abs(skew_ms) / 1000:.0f} s {direction} this clock (limit ±{MAX_SKEW_MS // 1000} s): "
+            "check the time (NTP) on this machine and on the phone"
+        )
+
+
 class Channel:
     """`seen`/`on_seen` let the owner persist each peer's newest timestamp, so a restart does not
-    reopen the replay window."""
+    reopen the replay window. `on_seen`/`on_seen_mail` get a full copy after every message;
+    `on_mark` gets only the change (`("peer", from_id, ts)` or `("mail", mid, ts)`, mid `""` = the
+    eviction floor), so the owner can append instead of rewriting everything."""
 
     def __init__(
         self,
@@ -36,6 +50,7 @@ class Channel:
         on_seen: Callable[[dict[str, int]], None] | None = None,
         seen_mail: dict[str, int] | None = None,
         on_seen_mail: Callable[[dict[str, int]], None] | None = None,
+        on_mark: Callable[[str, str, int], None] | None = None,
     ) -> None:
         self.my_id = my_id
         self._sk = my_box_sk
@@ -44,6 +59,7 @@ class Channel:
         self._on_seen = on_seen
         self._seen_mail: dict[str, int] = dict(seen_mail or {})
         self._on_seen_mail = on_seen_mail
+        self._on_mark = on_mark
 
     def seal(self, to_id: str, to_pk: bytes, body: dict[str, Any], mid: str | None = None) -> str:
         """`mid` (16 random bytes, base64url) marks a mailbox message, see the module docstring."""
@@ -75,9 +91,14 @@ class Channel:
         if "mid" in body:
             self._accept_mail(body, ts)
             return body
-        if abs(ts - int(time.time() * 1000)) > MAX_SKEW_MS or ts <= self._last_seen.get(from_id, 0):
+        skew = ts - int(time.time() * 1000)
+        if abs(skew) > MAX_SKEW_MS:
+            raise ClockSkewError(skew)
+        if ts <= self._last_seen.get(from_id, 0):
             raise ProtocolError("stale or replayed message")
         self._last_seen[from_id] = ts
+        if self._on_mark is not None:
+            self._on_mark("peer", from_id, ts)
         if self._on_seen is not None:
             self._on_seen(dict(self._last_seen))
         return body
@@ -98,6 +119,10 @@ class Channel:
             seen = dict(ordered[-MAX_SEEN_MAIL:])
         if floor > now - MAIL_WINDOW_MS:
             seen[""] = floor
+        if self._on_mark is not None:
+            self._on_mark("mail", mid, ts)
+            if seen.get("", 0) != self._seen_mail.get("", 0):
+                self._on_mark("mail", "", seen[""])
         self._seen_mail = seen
         if self._on_seen_mail is not None:
             self._on_seen_mail(dict(seen))

@@ -4,6 +4,7 @@ import asyncio
 import itertools
 import logging
 import random
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -19,6 +20,8 @@ log = logging.getLogger(__name__)
 RECV_TIMEOUT = 20.0
 REQUEST_TIMEOUT = 15.0
 MAX_BACKOFF = 30.0
+# End-to-end timestamps must be within ±120 s (e2e.MAX_SKEW_MS); warn well before that.
+SKEW_WARNING_MS = 30_000
 
 
 @dataclass(frozen=True)
@@ -85,18 +88,38 @@ async def pair_as_initiator(
 
 
 Handler = Callable[[dict[str, Any]], Awaitable[None]]
+ReadyHandler = Callable[[], Awaitable[None]]
+
+
+def clock_offset_ms(challenge: dict[str, Any], now_ms: int) -> int | None:
+    """Relay clock minus ours, if the relay's challenge carries its time (`time`, ms since epoch)."""
+    relay_time = challenge.get("time")
+    if isinstance(relay_time, bool) or not isinstance(relay_time, int):
+        return None
+    return relay_time - now_ms
 
 
 class RelaySession:
     """Keeps one authenticated connection to the relay alive and multiplexes
     request/response (via `rid`) with unsolicited events."""
 
-    def __init__(self, endpoint: RelayEndpoint, role: str, identity: str, sign_sk: bytes, on_event: Handler) -> None:
+    def __init__(
+        self,
+        endpoint: RelayEndpoint,
+        role: str,
+        identity: str,
+        sign_sk: bytes,
+        on_event: Handler,
+        on_ready: ReadyHandler | None = None,
+    ) -> None:
+        """`on_ready` runs (as its own task) after every successful (re)connect."""
         self.endpoint = endpoint
         self.role = role
         self.identity = identity
         self._sign_sk = sign_sk
         self._on_event = on_event
+        self._on_ready = on_ready
+        self.clock_offset_ms: int | None = None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._pending: dict[int, asyncio.Future] = {}
         self._rids = itertools.count(1)
@@ -140,6 +163,7 @@ class RelaySession:
             self.cert_fingerprint = tls.cert_fingerprint(ws)
         try:
             challenge = await expect(ws, "challenge")
+            self._check_clock(challenge)
             nonce = wire.b64d(challenge.get("nonce"), length=auth.NONCE_BYTES)
             sig = auth.sign_auth(self._sign_sk, e.authority, self.role, self.identity, nonce)
             await send(ws, {"t": "auth", "role": self.role, "id": self.identity, "sig": wire.b64e(sig)})
@@ -147,12 +171,24 @@ class RelaySession:
             self._ws = ws
             self.connected.set()
             log.info("connected to relay %s", e.authority)
+            if self._on_ready is not None:
+                self._spawn(self._on_ready(), "ready")
             async for msg in ws:
                 if msg.type != aiohttp.WSMsgType.TEXT:
                     break
                 self._dispatch(wire.decode(msg.data))
         finally:
             await ws.close()
+
+    def _check_clock(self, challenge: dict[str, Any]) -> None:
+        offset = clock_offset_ms(challenge, int(time.time() * 1000))
+        self.clock_offset_ms = offset
+        if offset is not None and abs(offset) > SKEW_WARNING_MS:
+            log.warning(
+                "this clock is %.0f s %s the relay's; end-to-end messages fail beyond 120 s: check NTP here and on the phone",
+                abs(offset) / 1000,
+                "behind" if offset > 0 else "ahead of",
+            )
 
     def _dispatch(self, message: dict[str, Any]) -> None:
         rid = message.get("rid")
@@ -161,15 +197,19 @@ class RelaySession:
             if not future.done():
                 future.set_result(message)
             return
-        task = asyncio.ensure_future(self._handle_event(message))
+        self._spawn(self._on_event(message), message.get("t"))
+
+    def _spawn(self, coro: Awaitable[None], what: object) -> None:
+        task = asyncio.ensure_future(self._guarded(coro, what))
         self._event_tasks.add(task)
         task.add_done_callback(self._event_tasks.discard)
 
-    async def _handle_event(self, message: dict[str, Any]) -> None:
+    @staticmethod
+    async def _guarded(coro: Awaitable[None], what: object) -> None:
         try:
-            await self._on_event(message)
+            await coro
         except Exception:
-            log.exception("relay event handler failed for %s", message.get("t"))
+            log.exception("relay event handler failed for %s", what)
 
     async def send(self, message: dict[str, Any]) -> None:
         if self._ws is None:
