@@ -245,6 +245,5 @@ async def test_images_stay_pending_when_hermes_fails() -> None:
     hermes, progress = DownHermes(), []
     conversation = conversation_with(hermes, progress)
     conversation.add_image(b"1")
-    with pytest.raises(OSError):
-        await run_turn(conversation, "what is this?")
+    await run_turn(conversation, "what is this?")  # the owner hears the fallback line (A3)
     assert list(conversation._images) == [b"1"]

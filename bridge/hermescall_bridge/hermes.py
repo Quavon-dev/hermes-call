@@ -4,6 +4,7 @@ The session id makes Hermes load and persist the call history in its own
 session store, so calls continue one conversation with full agent context.
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -17,7 +18,10 @@ log = logging.getLogger(__name__)
 
 # Longer approval texts are denied, never shown cut off on the phone.
 MAX_APPROVAL_TEXT = 4000
-APPROVAL_CHOICES = ("once", "deny")
+# "session": allow this command pattern for the rest of the Hermes session (Hermes ≥ 0.15).
+APPROVAL_CHOICES = ("once", "session", "deny")
+# Answering an approval: retries, then a deny, so a Hermes run never waits on a lost answer.
+APPROVAL_RETRIES = (0.5, 1.0, 2.0)
 
 
 @dataclass(frozen=True)
@@ -57,8 +61,11 @@ class HermesClient:
         self._session_id = session_id
         self._model = model
 
-    async def turn(self, system: str, user_text: str, images: Sequence[bytes] = ()) -> AsyncIterator[Event]:
-        """One user turn; `images` (JPEG) go along as OpenAI-style `image_url` parts with data URLs."""
+    async def turn(
+        self, system: str, user_text: str, images: Sequence[bytes] = (), session_id: str | None = None
+    ) -> AsyncIterator[Event]:
+        """One user turn; `images` (JPEG) go along as OpenAI-style `image_url` parts with data URLs.
+        `session_id` overrides the configured Hermes session (calls use one per phone, sessions.py)."""
         content: str | list[dict[str, Any]] = user_text
         if images:
             content = [{"type": "text", "text": user_text}] + [
@@ -70,7 +77,7 @@ class HermesClient:
             "stream": True,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
         }
-        headers = {"X-Hermes-Session-Id": self._session_id}
+        headers = {"X-Hermes-Session-Id": session_id or self._session_id}
         async with self._client.stream("POST", "/v1/chat/completions", json=body, headers=headers) as response:
             response.raise_for_status()
             completion_id = ""
@@ -91,15 +98,37 @@ class HermesClient:
                     if text := _delta_text(payload):
                         yield TextDelta(text)
 
-    async def answer_approval(self, request: ApprovalRequest, choice: str) -> None:
+    async def answer_approval(self, request: ApprovalRequest, choice: str) -> str | None:
+        """Answers with retries; if `choice` cannot be delivered, a deny is tried last.
+        Returns the choice Hermes accepted, or None (Hermes' own approval timeout then denies)."""
         if choice not in APPROVAL_CHOICES:
             raise ValueError("unsupported approval choice")
+        for attempt in (choice, "deny") if choice != "deny" else ("deny",):
+            if await self._post_approval(request, attempt):
+                if attempt != choice:
+                    log.warning("approval answer '%s' not accepted; denied instead", choice)
+                return attempt
+        log.error("approval answer could not be delivered to Hermes")
+        return None
+
+    async def _post_approval(self, request: ApprovalRequest, choice: str) -> bool:
         body: dict[str, Any] = {"choice": choice}
         if request.request_id:
             body["request_id"] = request.request_id
-        response = await self._client.post(f"/v1/runs/{request.run_id}/approval", json=body)
-        if response.status_code >= 400:
-            log.warning("approval answer rejected: status=%s", response.status_code)
+        for delay in (*APPROVAL_RETRIES, None):
+            try:
+                response = await self._client.post(f"/v1/runs/{request.run_id}/approval", json=body)
+            except httpx.HTTPError as exc:
+                log.warning("approval answer failed: %s", exc.__class__.__name__)
+            else:
+                if response.status_code < 400:
+                    return True
+                log.warning("approval answer rejected: status=%s", response.status_code)
+                if response.status_code < 500:
+                    return False  # a 4xx does not get better by retrying
+            if delay is not None:
+                await asyncio.sleep(delay)
+        return False
 
     async def close(self) -> None:
         await self._client.aclose()

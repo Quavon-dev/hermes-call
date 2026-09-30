@@ -124,7 +124,13 @@ class Conversation:
         agent_name: str = "Hermes",
         on_caption: CaptionHandler | None = None,
         on_progress: ProgressHandler | None = None,
+        session_id: str | None = None,
+        on_turn: Callable[[], None] | None = None,
     ) -> None:
+        """`session_id`: the Hermes session for this call (per phone); `on_turn` counts turns for its rollover."""
+        self._session_id = session_id
+        self._on_turn = on_turn
+        self._announcer: asyncio.Task | None = None
         self._hermes = hermes
         self._tts = tts
         self._transcribe = transcribe
@@ -170,6 +176,8 @@ class Conversation:
 
     async def stop(self) -> None:
         self._cancel_captions()
+        if self._announcer is not None:
+            self._announcer.cancel()
         if self._turn is not None:
             self._turn.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -185,6 +193,23 @@ class Conversation:
         if self._turn is not None:
             self._turn.cancel()
         self._turn = asyncio.ensure_future(self._run_turn(None, time.monotonic(), text, stt_ms))
+
+    def announce(self, text: str, wait: float = 30.0) -> None:
+        """Say something on the bridge's own account (e.g. the call's time limit) once the agent is quiet."""
+        self._announcer = asyncio.ensure_future(self._announce(text, wait))
+
+    async def _announce(self, text: str, wait: float) -> None:
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._quiet(), wait)
+        if not self.busy:
+            self.transcript.append((self._agent_name, text))
+            self._turn = asyncio.ensure_future(self._speak_all([text]))
+
+    async def _quiet(self) -> None:
+        while self.busy:
+            if self._turn is not None and not self._turn.done():
+                await asyncio.wait({self._turn})
+            await self._out.drained.wait()
 
     def add_image(self, jpeg: bytes) -> None:
         """A photo the owner showed during the call; it goes to Hermes with the next utterance."""
@@ -352,7 +377,12 @@ class Conversation:
         progress: _TurnProgress,
     ) -> None:
         images = list(self._images)
-        turn = self._hermes.turn(self._system, text, images=images) if images else self._hermes.turn(self._system, text)
+        extra: dict = {"images": images} if images else {}
+        if self._session_id:
+            extra["session_id"] = self._session_id
+        if self._on_turn is not None:
+            self._on_turn()
+        turn = self._hermes.turn(self._system, text, **extra)
         async with contextlib.aclosing(turn) as events:
             async for event in events:
                 if images:  # Hermes answered, so it has them; until then they wait for a retry
@@ -370,8 +400,8 @@ class Conversation:
                     continue
                 await chunks.put(APPROVAL_PROMPT)
                 choice = await self._on_approval(event)
-                await self._hermes.answer_approval(event, choice)
-                if choice == "deny":
+                accepted = await self._hermes.answer_approval(event, choice)
+                if choice == "deny" or accepted in ("deny", None):
                     await chunks.put(APPROVAL_DENIED)
         self._forget_images(images)
         for chunk in chunker.flush():

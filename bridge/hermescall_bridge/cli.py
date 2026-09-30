@@ -21,6 +21,31 @@ from .state import StateStore
 PAIRING_WAIT_SECONDS = 600
 
 
+class JsonFormatter(logging.Formatter):
+    """One JSON object per line (for journald/log shippers); same content as the text format."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        entry = {
+            "ts": round(record.created, 3),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(entry, ensure_ascii=False)
+
+
+def configure_logging(level: str = "INFO", fmt: str = "text") -> None:
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter() if fmt == "json" else logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    root = logging.getLogger()
+    root.handlers[:] = [handler]
+    root.setLevel(level)
+    # httpx logs every request URL at INFO (Hermes run ids, TTS calls): noise, and URLs can carry ids.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
 def _api(config: Config, method: str, path: str, body: dict | None = None, timeout: float = 15) -> dict:
     request = urllib.request.Request(
         f"http://{config.api_host}:{config.api_port}{path}",
@@ -127,11 +152,10 @@ def main(argv: list[str] | None = None) -> int:
     call.add_argument("--device", default="all")
     sub.add_parser("status")
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    # httpx logs every request URL at INFO (Hermes run ids, TTS calls): noise, and URLs can carry ids.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    configure_logging()
     try:
         config = load(args.config)
+        configure_logging(config.log_level, config.log_format)
         if args.command == "serve":
             from .daemon import run
 

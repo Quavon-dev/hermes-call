@@ -146,7 +146,7 @@ def call_manager(relay) -> tuple[CallManager, object]:
 
 async def test_a2_hangup_during_turn_fetch_ends_the_pending_call(monkeypatch) -> None:
     pcs: list[FakePc] = []
-    monkeypatch.setattr(calls_mod, "peer_connection", lambda turn: pcs.append(FakePc()) or pcs[-1])
+    monkeypatch.setattr(calls_mod, "peer_connection", lambda turn, *_: pcs.append(FakePc()) or pcs[-1])
     relay = SlowTurnRelay()
     manager, device = call_manager(relay)
     call_id = new_call_id()
@@ -161,7 +161,7 @@ async def test_a2_hangup_during_turn_fetch_ends_the_pending_call(monkeypatch) ->
 
 
 async def test_a2_hangup_for_another_call_id_does_not_cancel_the_offer(monkeypatch) -> None:
-    monkeypatch.setattr(calls_mod, "peer_connection", lambda turn: FakePc())
+    monkeypatch.setattr(calls_mod, "peer_connection", lambda turn, *_: FakePc())
     relay = SlowTurnRelay()
     manager, device = call_manager(relay)
     call_id = new_call_id()

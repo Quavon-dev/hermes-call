@@ -497,6 +497,7 @@ class ChatService:
             "command": command,
             "description": description,
             "chat": True,
+            "choices": list(APPROVAL_CHOICES),
         }
         await self._mail_all(body, alert=True)
         return True

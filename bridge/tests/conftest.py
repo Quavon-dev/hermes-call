@@ -84,9 +84,11 @@ class FakeHermes:
         self.approvals: list[str] = []
         self.ask_approval = False
         self.tools: list[ToolProgress] = []
+        self.sessions: list[str | None] = []
 
-    async def turn(self, system: str, text: str, images: list[bytes] = ()) -> AsyncIterator:
+    async def turn(self, system: str, text: str, images: list[bytes] = (), session_id: str | None = None) -> AsyncIterator:
         self.turns.append((system, text))
+        self.sessions.append(session_id)
         self.images.append(list(images))
         if self.ask_approval:
             yield ApprovalRequest("run1", "req1", "rm -rf /tmp/x", "delete files")
@@ -95,8 +97,9 @@ class FakeHermes:
         for piece in ("Sure, ", "I heard you. ", "Anything else?"):
             yield TextDelta(piece)
 
-    async def answer_approval(self, request: ApprovalRequest, choice: str) -> None:
+    async def answer_approval(self, request: ApprovalRequest, choice: str) -> str:
         self.approvals.append(choice)
+        return choice
 
 
 class FakeTts:

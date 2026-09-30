@@ -1,4 +1,9 @@
-"""Local-only control API (127.0.0.1) used by the Hermes plugin and the CLI."""
+"""Local-only control API (127.0.0.1) used by the Hermes plugin and the CLI.
+
+Route groups: calls and devices (admin token; `POST /v1/calls` also the Hermes token), chat and
+tasks, phone context and presentations (Hermes token), and unauthenticated health/metrics
+(`/healthz`, `/metrics`: states and counts only, loopback only like everything here).
+"""
 
 import hmac
 import json
@@ -13,6 +18,8 @@ from hermescall_common.errors import ProtocolError
 from .calls import MAX_FIRST_MESSAGE, MAX_REASON, CallManager
 from .chat import ATTACHMENT_KINDS, MAX_TEXT, ChatService
 from .devices import DeviceRegistry
+from .health import HealthChecker
+from .metrics import METRICS
 from .phone import PhoneService
 from .present import PresentService
 from .tasks import TaskService
@@ -31,6 +38,7 @@ HERMES_ROUTES = {
     ("POST", "/v1/phone/queries"),
     ("POST", "/v1/present"),
 }
+PUBLIC_ROUTES = {("GET", "/healthz"), ("GET", "/metrics")}
 
 log = logging.getLogger(__name__)
 
@@ -43,22 +51,28 @@ def _matches(supplied: str, token: str) -> bool:
     return bool(token) and hmac.compare_digest(supplied.encode(), token.encode())
 
 
-def build_app(
-    token: str,
-    calls: CallManager,
-    devices: DeviceRegistry,
-    status: callable,
-    call_token: str = "",
-    chat: ChatService | None = None,
-    phone: PhoneService | None = None,
-    presenter: PresentService | None = None,
-    tasks: TaskService | None = None,
-    unpair: Callable[[str], Awaitable[bool]] | None = None,
-) -> web.Application:
-    """`token` may do everything; `call_token` (given to Hermes) may only ring the phone and chat."""
+async def json_body(request: web.Request) -> dict:
+    try:
+        body = await request.json()
+    except ValueError as exc:
+        raise _error(web.HTTPBadRequest, "invalid json") from exc
+    if not isinstance(body, dict):
+        raise _error(web.HTTPBadRequest, "expected an object")
+    return body
 
+
+def text_field(body: dict, name: str, limit: int, required: bool = False) -> str:
+    value = body.get(name, "")
+    if not isinstance(value, str) or len(value) > limit or (required and not value.strip()):
+        raise _error(web.HTTPBadRequest, f"{name}: {'required, ' if required else ''}string of at most {limit} chars")
+    return value
+
+
+def _auth_middleware(token: str, call_token: str):
     @web.middleware
     async def require_token(request: web.Request, handler):
+        if (request.method, request.path) in PUBLIC_ROUTES:
+            return await handler(request)
         supplied = request.headers.get("Authorization", "").removeprefix("Bearer ")
         if _matches(supplied, token):
             return await handler(request)
@@ -68,15 +82,16 @@ def build_app(
             return web.json_response({"error": "forbidden"}, status=403)
         return web.json_response({"error": "unauthorized"}, status=401)
 
-    async def json_body(request: web.Request) -> dict:
-        try:
-            body = await request.json()
-        except ValueError as exc:
-            raise _error(web.HTTPBadRequest, "invalid json") from exc
-        if not isinstance(body, dict):
-            raise _error(web.HTTPBadRequest, "expected an object")
-        return body
+    return require_token
 
+
+def add_call_routes(
+    app: web.Application,
+    calls: CallManager,
+    devices: DeviceRegistry,
+    status: Callable[[], dict],
+    unpair: Callable[[str], Awaitable[bool]] | None,
+) -> None:
     async def start_call(request: web.Request) -> web.Response:
         body = await json_body(request)
         reason, first, device = body.get("reason", ""), body.get("first_message", ""), body.get("device", "all")
@@ -115,12 +130,15 @@ def build_app(
     async def get_status(request: web.Request) -> web.Response:
         return web.json_response(status())
 
-    def text_field(body: dict, name: str, limit: int, required: bool = False) -> str:
-        value = body.get(name, "")
-        if not isinstance(value, str) or len(value) > limit or (required and not value.strip()):
-            raise _error(web.HTTPBadRequest, f"{name}: {'required, ' if required else ''}string of at most {limit} chars")
-        return value
+    app.router.add_post("/v1/calls", start_call)
+    app.router.add_get("/v1/devices", list_devices)
+    app.router.add_post("/v1/devices/pairing", pair_device)
+    app.router.add_get("/v1/devices/pairing/{slot}", pairing_status)
+    app.router.add_delete("/v1/devices/{device_id}", revoke)
+    app.router.add_get("/v1/status", get_status)
 
+
+def add_chat_routes(app: web.Application, chat: ChatService) -> None:
     async def chat_events(request: web.Request) -> web.Response:
         try:
             cursor = int(request.query.get("cursor", "0"))
@@ -170,6 +188,16 @@ def build_app(
             return web.json_response({"status": "denied"})
         return web.json_response({"status": "sent"})
 
+    app.router.add_get("/v1/chat/events", chat_events)
+    app.router.add_post("/v1/chat/messages", chat_message)
+    app.router.add_post("/v1/chat/files", chat_file)
+    app.router.add_post("/v1/chat/typing", chat_typing)
+    app.router.add_post("/v1/chat/approvals", chat_approval)
+
+
+def add_agent_routes(
+    app: web.Application, tasks: TaskService | None, phone: PhoneService | None, presenter: PresentService | None
+) -> None:
     async def chat_progress(request: web.Request) -> web.Response:
         if tasks is None:
             raise _error(web.HTTPServiceUnavailable, "task progress is not available")
@@ -195,22 +223,43 @@ def build_app(
         except ValueError as exc:
             raise _error(web.HTTPBadRequest, str(exc)) from exc
 
-    app = web.Application(middlewares=[require_token], client_max_size=MAX_BODY)
-    app.router.add_post("/v1/calls", start_call)
-    app.router.add_get("/v1/devices", list_devices)
-    app.router.add_post("/v1/devices/pairing", pair_device)
-    app.router.add_get("/v1/devices/pairing/{slot}", pairing_status)
-    app.router.add_delete("/v1/devices/{device_id}", revoke)
-    app.router.add_get("/v1/status", get_status)
-    if chat is not None:
-        app.router.add_get("/v1/chat/events", chat_events)
-        app.router.add_post("/v1/chat/messages", chat_message)
-        app.router.add_post("/v1/chat/files", chat_file)
-        app.router.add_post("/v1/chat/typing", chat_typing)
-        app.router.add_post("/v1/chat/approvals", chat_approval)
     app.router.add_post("/v1/chat/progress", chat_progress)
     if phone is not None:
         app.router.add_post("/v1/phone/queries", phone_query)
     if presenter is not None:
         app.router.add_post("/v1/present", present)
+
+
+def add_health_routes(app: web.Application, status: Callable[[], dict], health: HealthChecker | None) -> None:
+    async def healthz(request: web.Request) -> web.Response:
+        result = await health.check() if health is not None else {"ok": status()["connected"], "relay": status()["connected"]}
+        return web.json_response(result, status=200 if result["ok"] else 503)
+
+    async def metrics(request: web.Request) -> web.Response:
+        return web.Response(text=METRICS.render(), content_type="text/plain", charset="utf-8")
+
+    app.router.add_get("/healthz", healthz)
+    app.router.add_get("/metrics", metrics)
+
+
+def build_app(
+    token: str,
+    calls: CallManager,
+    devices: DeviceRegistry,
+    status: Callable[[], dict],
+    call_token: str = "",
+    chat: ChatService | None = None,
+    phone: PhoneService | None = None,
+    presenter: PresentService | None = None,
+    tasks: TaskService | None = None,
+    unpair: Callable[[str], Awaitable[bool]] | None = None,
+    health: HealthChecker | None = None,
+) -> web.Application:
+    """`token` may do everything; `call_token` (given to Hermes) may only ring the phone and chat."""
+    app = web.Application(middlewares=[_auth_middleware(token, call_token)], client_max_size=MAX_BODY)
+    add_call_routes(app, calls, devices, status, unpair)
+    if chat is not None:
+        add_chat_routes(app, chat)
+    add_agent_routes(app, tasks, phone, presenter)
+    add_health_routes(app, status, health)
     return app

@@ -20,8 +20,10 @@ from hermescall_common.errors import CryptoError, ProtocolError
 from .audio import SpeechTrack, read_16k
 from .conversation import Conversation
 from .hermes import APPROVAL_CHOICES, MAX_APPROVAL_TEXT, ApprovalRequest
+from .metrics import METRICS
 from .present import to_jpeg
 from .state import Device, State
+from .transport import TRANSPORT_ERRORS
 from .webrtc import peer_connection
 
 log = logging.getLogger(__name__)
@@ -29,6 +31,12 @@ log = logging.getLogger(__name__)
 RING_TIMEOUT = 45.0
 APPROVAL_TIMEOUT = 60.0
 MAX_CALL_SECONDS = 3600.0
+CALL_WARNING_SECONDS = 60.0
+# No audio track from the phone this long after the answer: the call never really started.
+MEDIA_TIMEOUT = 20.0
+CALL_ENDING_LINE = "We have about a minute left on this call."
+# Captions that could not be sent while the relay was away; re-sent after it reconnects.
+MAX_UNSENT_CAPTIONS = 3
 MAX_SDP = 16 * 1024
 MAX_REASON = 500
 MAX_FIRST_MESSAGE = 1000
@@ -79,6 +87,17 @@ def valid_call_id(value: object) -> str:
     return value  # type: ignore[return-value]
 
 
+@dataclass(frozen=True)
+class CallTimeouts:
+    """From bridge.toml [calls]; None = the module default."""
+
+    ring: float | None = None
+    approval: float | None = None
+    max_call: float | None = None
+    warning: float | None = None
+    media: float | None = None
+
+
 @dataclass
 class Ring:
     call_id: str
@@ -99,6 +118,10 @@ class ActiveCall:
     device_stt: bool = False
     started: float = field(default_factory=time.monotonic)
     captions: set[asyncio.Task] = field(default_factory=set)
+    # Approval requests still waiting for an answer (re-sent after a relay reconnect).
+    pending_approvals: dict[str, dict] = field(default_factory=dict)
+    unsent_captions: deque = field(default_factory=lambda: deque(maxlen=MAX_UNSENT_CAPTIONS))
+    timers: list[asyncio.TimerHandle] = field(default_factory=list)
     images: int = 0
     last_image: float = -math.inf
 
@@ -114,7 +137,11 @@ class CallManager:
         other_messages: Callable[[Device, dict], Awaitable[None]] | None = None,
         on_missed: Callable[[Ring, str], Awaitable[bool]] | None = None,
         on_call_ended: Callable[[list[tuple[str, str]]], None] | None = None,
+        timeouts: CallTimeouts | None = None,
+        turn_transport: str = "auto",
     ) -> None:
+        self._timeouts = timeouts or CallTimeouts()
+        self._turn_transport = turn_transport
         self._state = state
         self._on_unpair_request = on_unpair
         self._other_messages = other_messages
@@ -127,6 +154,8 @@ class CallManager:
         self._ring_times: deque[float] = deque(maxlen=max(n for _, n in RING_LIMITS))
         self._offer_lock = asyncio.Lock()
         # Offers being set up (call id → device id) and those hung up meanwhile (no ghost calls).
+        # device id → monotonic time of its last authentic message (phone context prefers the most recent)
+        self._activity: dict[str, float] = {}
         self._starting: dict[str, str] = {}
         self._hung_up: set[str] = set()
         self._image_messages: dict[str, deque[float]] = {}
@@ -153,7 +182,7 @@ class CallManager:
                 log.warning("push failed: %s", exc)
             for device_id in targets:
                 await self._send(device_id, {"type": "invite", "call_id": ring.call_id, "reason": ring.reason})
-            status = await asyncio.wait_for(asyncio.shield(ring.outcome), RING_TIMEOUT)
+            status = await asyncio.wait_for(asyncio.shield(ring.outcome), self._timeout("ring", RING_TIMEOUT))
         except TimeoutError:
             status = "no_answer"
             for device_id in ring.targets:
@@ -174,6 +203,7 @@ class CallManager:
             return
         try:
             body = self._channel.open(device.id, device.box_key, data)
+            self._activity[device.id] = time.monotonic()
             if self._other_messages is not None and (
                 body["type"] in ("chat", "phone_answer", "task_prefs") or (body["type"] == "approval" and "call_id" not in body)
             ):
@@ -196,6 +226,10 @@ class CallManager:
             await handler(device, body)
         except ProtocolError as exc:
             log.warning("rejected message from device %s: %s", device.id[:6], exc)
+
+    def last_activity(self, device_id: str) -> float:
+        """Monotonic time of the phone's last authentic message (-inf: none since start)."""
+        return self._activity.get(device_id, -math.inf)
 
     async def _on_invite_query(self, device: Device, body: dict) -> None:
         call_id = valid_call_id(body.get("call_id"))
@@ -260,7 +294,7 @@ class CallManager:
         if self._cancelled(call_id):
             log.info("call hung up while fetching TURN credentials")
             return False
-        pc = peer_connection(turn)
+        pc = peer_connection(turn, self._turn_transport)
         call = ActiveCall(call_id, device, pc, device_stt=device_stt)
         self.active = call
         out = SpeechTrack()
@@ -270,7 +304,11 @@ class CallManager:
         def on_track(track: Any) -> None:
             if track.kind == "audio" and call.task is None:
                 call.conversation = self._make_conversation(
-                    out, lambda req: self._ask_approval(call, req), ring, lambda role, text: self._caption(call, role, text)
+                    out,
+                    lambda req: self._ask_approval(call, req),
+                    ring,
+                    lambda role, text: self._caption(call, role, text),
+                    call.device.id,
                 )
                 if call.device_stt:
                     call.conversation.use_device_stt()
@@ -294,13 +332,21 @@ class CallManager:
             return False
         answer = prefer_constant_bitrate(pc.localDescription.sdp)
         await self._send(device.id, {"type": "answer", "call_id": call_id, "sdp": answer})
+        media = self._timeout("media", MEDIA_TIMEOUT)
+        call.timers.append(asyncio.get_running_loop().call_later(media, self._check_media, call, media))
         log.info("call started (%s) with device %s", "outbound" if ring else "inbound", device.id[:6])
+        METRICS.calls.inc("outbound" if ring else "inbound")
         return True
 
     async def _run_conversation(self, call: ActiveCall, inbound: Any, first_message: str) -> None:
         level = {"seconds": 0.0, "peak": 0.0}
+        limit = self._timeout("max_call", MAX_CALL_SECONDS)
+        warning = self._timeout("warning", CALL_WARNING_SECONDS)
+        if 0 < warning < limit:
+            loop = asyncio.get_running_loop()
+            call.timers.append(loop.call_later(limit - warning, self._warn_ending, call))
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(call.conversation.run(_metered(inbound, level), first_message), MAX_CALL_SECONDS)
+            await asyncio.wait_for(call.conversation.run(_metered(inbound, level), first_message), limit)
         peak_db = 20 * math.log10(level["peak"]) if level["peak"] > 0 else -120.0
         log.info("inbound audio: %.1f s, peak %.0f dBFS", level["seconds"], peak_db)
         await self.end(call.call_id)
@@ -403,16 +449,46 @@ class CallManager:
         task.add_done_callback(call.captions.discard)
 
     async def _send_caption(self, call: ActiveCall, role: str, text: str) -> None:
-        try:
-            await self._send(call.device.id, {"type": "caption", "call_id": call.call_id, "role": role, "text": text})
-        except Exception as exc:
-            log.warning("caption (%s, %d chars) not sent: %s", role, len(text), type(exc).__name__)
+        body = {"type": "caption", "call_id": call.call_id, "role": role, "text": text}
+        if not await self._send(call.device.id, body):
+            log.warning("caption (%s, %d chars) not sent; kept for a relay reconnect", role, len(text))
+            call.unsent_captions.append(body)
+
+    # ---- timeouts and relay reconnects during a call ----------------------
+
+    def _timeout(self, name: str, default: float) -> float:
+        value = getattr(self._timeouts, name)
+        return default if value is None else value
+
+    def _warn_ending(self, call: ActiveCall) -> None:
+        if self.active is call and call.conversation is not None:
+            log.info("call reaches its time limit soon; telling the owner")
+            call.conversation.announce(CALL_ENDING_LINE)
+
+    def _check_media(self, call: ActiveCall, waited: float) -> None:
+        if self.active is call and call.task is None:
+            log.warning("no audio from the phone %.0f s after answering; ending the call", waited)
+            asyncio.ensure_future(self.end(call.call_id))
+
+    async def on_relay_ready(self) -> None:
+        """The relay came back mid-call: what the phone may have missed goes again."""
+        call = self.active
+        if call is None:
+            return
+        for body in list(call.pending_approvals.values()):
+            await self._send(call.device.id, body)
+        while call.unsent_captions and self.active is call:
+            if not await self._send(call.device.id, call.unsent_captions[0]):
+                return
+            call.unsent_captions.popleft()
 
     async def end(self, call_id: str, notify: bool = True) -> None:
         call = self.active
         if call is None or call.call_id != call_id:
             return
         self.active = None
+        for timer in call.timers:
+            timer.cancel()
         for future in call.approvals.values():
             if not future.done():
                 future.set_result("deny")
@@ -447,22 +523,23 @@ class CallManager:
         key = request.request_id or new_call_id()
         future = asyncio.get_running_loop().create_future()
         call.approvals[key] = future
-        await self._send(
-            call.device.id,
-            {
-                "type": "approval_request",
-                "call_id": call.call_id,
-                "request_id": key,
-                "command": request.command,
-                "description": request.description,
-            },
-        )
+        body = {
+            "type": "approval_request",
+            "call_id": call.call_id,
+            "request_id": key,
+            "command": request.command,
+            "description": request.description,
+            "choices": list(APPROVAL_CHOICES),
+        }
+        call.pending_approvals[key] = body
+        await self._send(call.device.id, body)
         try:
-            return await asyncio.wait_for(future, APPROVAL_TIMEOUT)
+            return await asyncio.wait_for(future, self._timeout("approval", APPROVAL_TIMEOUT))
         except TimeoutError:
             return "deny"
         finally:
             call.approvals.pop(key, None)
+            call.pending_approvals.pop(key, None)
 
     async def _on_approval_answer(self, device: Device, body: dict) -> None:
         call = self.active
@@ -476,12 +553,14 @@ class CallManager:
 
     # ---- transport -----------------------------------------------------
 
-    async def _send(self, device_id: str, body: dict[str, Any]) -> None:
+    async def _send(self, device_id: str, body: dict[str, Any]) -> bool:
         device = self._state.devices.get(device_id)
         if device is None:
-            return
+            return False
         sealed = self._channel.seal(device.id, device.box_key, body)
         try:
             await self._relay.send({"t": "e2e", "to": device.id, "data": sealed})
-        except ProtocolError as exc:
-            log.warning("could not reach device %s: %s", device.id[:6], exc)
+        except TRANSPORT_ERRORS as exc:
+            log.warning("could not reach device %s: %s", device.id[:6], exc.__class__.__name__)
+            return False
+        return True
