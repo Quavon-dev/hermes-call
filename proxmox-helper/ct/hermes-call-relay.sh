@@ -48,7 +48,8 @@ Leave empty to use your public IP with a self-signed certificate (the app pins i
   fi
   local public resolved
   public=$(curl -4fsS --max-time 10 https://api.ipify.org 2>/dev/null || true)
-  resolved=$(getent ahostsv4 "$var_relay_address" 2>/dev/null | awk 'NR==1 {print $1}')
+  # The framework runs with set -euo pipefail: a name without a DNS record yet must warn, not exit.
+  resolved=$({ getent ahostsv4 "$var_relay_address" 2>/dev/null || true; } | awk 'NR==1 {print $1}')
   if [[ -n $public && $resolved != "$public" ]]; then
     echo "Warning: $var_relay_address resolves to ${resolved:-nothing}, your public IP is $public." >&2
     echo "The domain only works once its A record points at $public." >&2
