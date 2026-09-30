@@ -81,6 +81,7 @@
 		C22912A9CE3C328D426461EB /* PresenceHaptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4646A34CA3E08ED0B0D222D4 /* PresenceHaptics.swift */; };
 		C7DD8794E4B7D50613925F6F /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 253F8DF158816FD71AA61E83 /* QRScannerView.swift */; };
 		CA6411C2C9F24C2E833FF187 /* HUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCEDED18A1E11A930531AD8D /* HUD.swift */; };
+		CEDBFA1F8EFF13A0182E884E /* OneShotInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 224D76AD722AC12683172DBF /* OneShotInput.swift */; };
 		CFBD5134B509F316A0BE6502 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 306985FC5AB57EFDF36F1E89 /* WidgetKit.framework */; };
 		D1D807037466A7646BC5ACEE /* CarPlaySceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7C028F53EAC94CDCC47AE9A /* CarPlaySceneDelegate.swift */; };
 		D535FE650C919D28B6922ED8 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 66A1D6CBC2CA7794BEEB0322 /* SwiftUI.framework */; };
@@ -197,6 +198,7 @@
 		1620BEB62C3C2D6FB214CCB1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		165397810A35A62F40CAAB6D /* AppIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIntents.swift; sourceTree = "<group>"; };
 		1C5E5C0B5E04DB59062E65B0 /* PresentationViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationViews.swift; sourceTree = "<group>"; };
+		224D76AD722AC12683172DBF /* OneShotInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneShotInput.swift; sourceTree = "<group>"; };
 		253F8DF158816FD71AA61E83 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		2B444D9D2675C02EE191BB57 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		306985FC5AB57EFDF36F1E89 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
@@ -546,6 +548,7 @@
 				DA7A3C6D127F97090BBCCFEE /* CallCoordinator.swift */,
 				E0CE17DE2FD0B7834525AD95 /* EngineAudioDevice.swift */,
 				485AED7B5EDDF23A1A3C8802 /* LookCamera.swift */,
+				224D76AD722AC12683172DBF /* OneShotInput.swift */,
 				B2182CBC7DDEBD1D58814495 /* PhoneTranscriber.swift */,
 				59847A84BD5C3EB19DD1CAA1 /* PushRegistrar.swift */,
 				6CD3DCA5B3774486AC69C1EF /* RingbackTone.swift */,
@@ -960,6 +963,7 @@
 				12829DEF400AD134415B6F3E /* InCallView.swift in Sources */,
 				594478F278A7DD7E654B9B39 /* LookCamera.swift in Sources */,
 				F5B7AD3C1B55D68E7A2D3C07 /* OnboardingView.swift in Sources */,
+				CEDBFA1F8EFF13A0182E884E /* OneShotInput.swift in Sources */,
 				F7C5FF03F8701BC08BD2C612 /* PhoneAccessViews.swift in Sources */,
 				791EF4FA8A95F9735B304413 /* PhoneContextModel.swift in Sources */,
 				14EC6E3E470B08C7654A8159 /* PhoneSources.swift in Sources */,

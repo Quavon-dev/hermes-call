@@ -165,17 +165,9 @@ final class EngineAudioDevice: NSObject, RTCAudioDevice, @unchecked Sendable {
                                                frameCapacity: AVAudioFrameCount(Double(buffer.frameLength) * Self.rate
                                                    / buffer.format.sampleRate) + 32)
         else { return }
-        var consumed = false
+        let input = OneShotInput(buffer)
         var error: NSError?
-        converter.convert(to: converted, error: &error) { _, status in
-            if consumed {
-                status.pointee = .noDataNow
-                return nil
-            }
-            consumed = true
-            status.pointee = .haveData
-            return buffer
-        }
+        converter.convert(to: converted, error: &error) { _, status in input.next(status) }
         guard error == nil, converted.frameLength > 0 else { return }
         if let samples = converted.int16ChannelData?[0] {
             micSpectrum.feed(int16: UnsafeBufferPointer(start: samples, count: Int(converted.frameLength)))
