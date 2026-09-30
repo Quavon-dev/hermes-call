@@ -1,4 +1,5 @@
 import HermesCallCore
+import Intents
 import SwiftUI
 
 @main
@@ -64,6 +65,7 @@ struct HermesCallApp: App {
                     if count > 0 { notifications.requestAuthorization() }
                 }
                 .onOpenURL { url in open(url) }
+                .onContinueUserActivity(NSStringFromClass(INStartCallIntent.self)) { activity in callBack(activity) }
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
             app.isForeground = phase == .active
@@ -85,6 +87,18 @@ struct HermesCallApp: App {
             Task { await calls.startCall() }
         default: break
         }
+    }
+
+    /// A tap on a Hermes Call entry in the Phone app's Recents (CallKit, `includesCallsInRecents`):
+    /// call that agent back. The handle is the bridge name the call was shown with.
+    private func callBack(_ activity: NSUserActivity) {
+        let intent = activity.interaction?.intent as? INStartCallIntent
+        if let name = intent?.contacts?.first?.personHandle?.value,
+           let profile = app.profiles.first(where: { $0.bridgeName == name }) {
+            app.activate(profile.id)
+        }
+        app.tab = .call
+        Task { await calls.startCall() }
     }
 }
 

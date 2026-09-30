@@ -69,6 +69,10 @@
 	<string>When you allow it, your agent can read your open reminders. They are sent end-to-end encrypted to your own bridge only.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>INStartCallIntent</string>
+	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIBackgroundModes</key>
