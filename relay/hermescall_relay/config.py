@@ -1,3 +1,4 @@
+import ipaddress
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +35,9 @@ class Config:
     turn_ttl: int
     apns: ApnsConfig | None
     push_gateway: str | None = None
+    # A reverse proxy in front (NPM, Traefik, ...): whose X-Forwarded-For is believed. Loopback (the
+    # installer's own Caddy) is always trusted when trust_proxy is on.
+    trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = ()
     secrets_dir: Path = field(default=Path("/etc/hermescall-relay"))
 
     @property
@@ -89,6 +93,7 @@ def load(path: Path = DEFAULT_CONFIG) -> Config:
             turn_ttl=int(turn.get("ttl", 600)),
             apns=apns,
             push_gateway=_push_gateway(raw.get("push_gateway"), apns),
+            trusted_proxies=tuple(ipaddress.ip_network(str(net)) for net in raw.get("trusted_proxies", [])),
             secrets_dir=Path(raw.get("secrets_dir", "/etc/hermescall-relay")),
         )
     except (OSError, KeyError, ValueError, ProtocolError, tomllib.TOMLDecodeError) as exc:

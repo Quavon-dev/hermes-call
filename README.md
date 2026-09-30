@@ -76,12 +76,20 @@ code. Pushes to the phone go through the Hermes Call push gateway, so no Apple a
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/proxmox-helper/ct/hermes-call-relay.sh)"
 ```
 
-It asks one thing, also with the default settings: the **domain** for the relay (Let's Encrypt;
-its DNS A record must point at your public IP, and the helper warns if it does not yet). Leave it
-empty and the relay runs on your public IP with a self-signed certificate that the app pins through
-the pairing QR. Unattended: `var_relay_address=relay.example.com` in front of the command.
+It asks on the host, also with the default settings:
 
-Forward TCP 443, TCP/UDP 3478 and UDP 49160–49200 to the container ([details](docs/relay.md)).
+1. The **domain** for the relay. Its DNS A record must point at your public IP (the helper warns if
+   it does not yet). Leave it empty and the relay runs on your public IP with a self-signed
+   certificate that the app pins through the pairing QR.
+2. Who handles **HTTPS** for that domain: the relay itself (Let's Encrypt; forward TCP 443 to the
+   container), or the reverse proxy that already publishes your services (Nginx Proxy Manager,
+   Traefik, Caddy; it forwards to `http://<container>:8743` with Websockets on). For the proxy,
+   optionally its IP: only it may reach port 8743.
+
+Either way, forward TCP/UDP 3478 and UDP 49160–49200 from the router straight to the container
+(TURN cannot go through an HTTP proxy; [details](docs/relay.md)). Unattended:
+`var_relay_address=relay.example.com var_relay_tls=proxy var_relay_proxy_from=192.168.0.10` in
+front of the command.
 
 **Bridge**: into the container that runs Hermes (replace `121` with its ID):
 

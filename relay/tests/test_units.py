@@ -203,3 +203,38 @@ def test_unauthenticated_connections_leave_room_for_paired_clients() -> None:
     admitted = sum(relay._admit(f"10.0.{n // 250}.{n % 250}") for n in range(server.MAX_UNAUTHENTICATED + 50))
     assert admitted == server.MAX_UNAUTHENTICATED
     assert relay.connections < server.MAX_CONNECTIONS
+
+
+def test_client_ip_behind_an_external_proxy(tmp_path) -> None:
+    import ipaddress
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from hermescall_relay.server import Relay
+    from hermescall_relay.store import Store
+
+    from .conftest import FakePush, make_config
+
+    config = replace(make_config(tmp_path), trusted_proxies=(ipaddress.ip_network("192.168.0.0/16"),))
+    relay = Relay(config, Store(config.db_path), FakePush(), b"t")
+
+    def req(remote: str):
+        return SimpleNamespace(remote=remote, headers={"X-Forwarded-For": "6.6.6.6, 203.0.113.9"})
+
+    assert relay.client_ip(req("192.168.0.50")) == "203.0.113.9"  # NPM on the LAN
+    assert relay.client_ip(req("::ffff:192.168.0.50")) == "203.0.113.9"
+    assert relay.client_ip(req("127.0.0.1")) == "203.0.113.9"  # own Caddy
+    assert relay.client_ip(req("10.0.0.7")) == "10.0.0.7"  # not trusted: header ignored
+
+
+def test_config_trusted_proxies(tmp_path) -> None:
+    from hermescall_relay.config import ConfigError, load
+
+    path = tmp_path / "relay.toml"
+    path.write_text('authority = "relay.test"\ntrusted_proxies = ["192.168.0.0/24", "fd00::/8"]\n')
+    assert [str(n) for n in load(path).trusted_proxies] == ["192.168.0.0/24", "fd00::/8"]
+    path.write_text('authority = "relay.test"\ntrusted_proxies = ["nope"]\n')
+    import pytest
+
+    with pytest.raises(ConfigError):
+        load(path)

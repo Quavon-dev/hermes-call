@@ -6,7 +6,17 @@ All notable changes to this project are documented here. The format follows
 and iOS app share one version; the Hermes plugin (`hermes-integration/hermes-call`) is
 versioned separately and is at **0.7.0** in this release.
 
-## [0.6.0] — unreleased
+## [0.6.1]
+
+- Relay: `--tls proxy` for running behind an existing reverse proxy (Nginx Proxy Manager, Traefik,
+  Caddy): plain HTTP on 8743 reachable only from `--proxy-from`, whose `X-Forwarded-For` is
+  believed (`trusted_proxies` in relay.toml).
+- Proxmox helper: asks on the host, also with the default settings, for the domain and who handles
+  HTTPS for it; without a domain it installs on the public IP.
+- Push gateway, release pipeline for internal/external TestFlight and App Review, Recents call-back
+  (`INStartCallIntent`).
+
+## [0.6.0] — 2026-09-30
 
 First public release.
 

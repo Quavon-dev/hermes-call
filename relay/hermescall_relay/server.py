@@ -216,11 +216,21 @@ class Relay:
         return web.Response(text="ok")
 
     def client_ip(self, request: web.Request) -> str:
+        """The address the trusted proxy saw: the last X-Forwarded-For entry is the one it appended."""
         remote = request.remote or ""
         forwarded = request.headers.get("X-Forwarded-For", "")
-        if self.config.trust_proxy and forwarded and remote in ("127.0.0.1", "::1"):
+        if self.config.trust_proxy and forwarded and self._is_trusted_proxy(remote):
             return forwarded.split(",")[-1].strip()
         return remote
+
+    def _is_trusted_proxy(self, remote: str) -> bool:
+        try:
+            address = ipaddress.ip_address(remote)
+        except ValueError:
+            return False
+        if address.version == 6 and address.ipv4_mapped is not None:
+            address = address.ipv4_mapped
+        return address.is_loopback or any(address in net for net in self.config.trusted_proxies)
 
     def _locked_out(self, ip: str) -> bool:
         return self.failures.is_locked(client_key(ip)) or self.wide_failures.is_locked(client_key(ip, 48))

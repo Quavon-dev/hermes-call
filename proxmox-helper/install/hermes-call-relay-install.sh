@@ -52,7 +52,12 @@ fetch_verified_release
 msg_ok "Release signature and checksum verified"
 
 msg_info "Setting up Hermes Call Relay"
-$STD /opt/hermes-call/relay/install.sh install --address "$var_relay_address" --no-apns --non-interactive
+tls_args=()
+if [[ ${var_relay_tls:-} == proxy ]]; then
+  tls_args=(--tls proxy)
+  [[ -z ${var_relay_proxy_from:-} ]] || tls_args+=(--proxy-from "$var_relay_proxy_from")
+fi
+$STD /opt/hermes-call/relay/install.sh install --address "$var_relay_address" "${tls_args[@]}" --no-apns --non-interactive
 msg_ok "Set up Hermes Call Relay"
 
 motd_ssh

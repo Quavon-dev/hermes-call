@@ -23,13 +23,14 @@ readonly TURN_MIN_PORT=49160
 readonly TURN_MAX_PORT=49200
 readonly UNITS=(hermescall-relay.service hermescall-turn.service)
 readonly DEFAULT_PUSH_GATEWAY=https://hermes-push.quavon.de
-readonly SETTING_KEYS=(HC_DOMAIN HC_IP HC_TLS HC_ACME_EMAIL HC_APNS HC_APNS_KEY_ID HC_TEAM_ID HC_BUNDLE_ID HC_PUSH_GATEWAY HC_EXTERNAL_IP HC_FIREWALL HC_HARDEN_SSH)
+readonly SETTING_KEYS=(HC_DOMAIN HC_IP HC_TLS HC_ACME_EMAIL HC_APNS HC_APNS_KEY_ID HC_TEAM_ID HC_BUNDLE_ID HC_PUSH_GATEWAY HC_PROXY_FROM HC_EXTERNAL_IP HC_FIREWALL HC_HARDEN_SSH)
 SRC_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly SRC_ROOT
 
 HC_DOMAIN=${HC_DOMAIN:-}
 HC_IP=${HC_IP:-}
 HC_TLS=${HC_TLS:-}
+HC_PROXY_FROM=${HC_PROXY_FROM:-}
 HC_ACME_EMAIL=${HC_ACME_EMAIL:-}
 HC_APNS=${HC_APNS:-}
 HC_APNS_KEY_FILE=${HC_APNS_KEY_FILE:-}
@@ -54,7 +55,12 @@ Usage: install.sh [install|update|uninstall|pair|status] [options]
   --domain NAME          public DNS name of the relay (Let's Encrypt via TLS-ALPN on 443)
   --ip ADDRESS           public IP instead of a domain (self-signed certificate + pin)
   --address VALUE        domain or IP, detected automatically
-  --tls acme|self-signed TLS mode (default: acme for --domain, self-signed for --ip)
+  --tls acme|self-signed|proxy
+                         TLS mode (default: acme for --domain, self-signed for --ip); proxy = an
+                         external reverse proxy (NPM, Traefik, Caddy) terminates TLS for --domain
+                         and forwards to http://<this host>:8743
+  --proxy-from CIDRS     proxy mode: addresses of the reverse proxy, comma-separated (default: the
+                         private ranges); only they reach port 8743, only their X-Forwarded-For counts
   --acme-email EMAIL     optional contact address for Let's Encrypt
   --apns-key FILE        your own APNs auth key (.p8); only for your own build of the app
   --apns-key-id ID       10-character APNs key ID
@@ -89,6 +95,7 @@ parse_flags() {
       --ip) HC_IP=${2:?}; shift ;;
       --address) if is_ip "${2:?}"; then HC_IP=$2; else HC_DOMAIN=${2,,}; fi; shift ;;
       --tls) HC_TLS=${2:?}; shift ;;
+      --proxy-from) HC_PROXY_FROM=${2:?}; shift ;;
       --acme-email) HC_ACME_EMAIL=${2:?}; shift ;;
       --apns-key) HC_APNS_KEY_FILE=${2:?}; HC_APNS=yes; shift ;;
       --apns-key-id) HC_APNS_KEY_ID=${2:?}; shift ;;
@@ -158,8 +165,15 @@ collect_settings() {
   [[ -z $HC_DOMAIN ]] || is_domain "$HC_DOMAIN" || die "invalid domain: $HC_DOMAIN"
   [[ -z $HC_IP ]] || is_ip "$HC_IP" || die "invalid IP address: $HC_IP"
   [[ -n $HC_TLS ]] || { [[ -n $HC_DOMAIN ]] && HC_TLS=acme || HC_TLS=self-signed; }
-  [[ $HC_TLS == acme || $HC_TLS == self-signed ]] || die "--tls must be acme or self-signed"
-  [[ $HC_TLS == self-signed || -n $HC_DOMAIN ]] || die "Let's Encrypt needs a domain; use --tls self-signed with --ip"
+  [[ $HC_TLS == acme || $HC_TLS == self-signed || $HC_TLS == proxy ]] || die "--tls must be acme, self-signed or proxy"
+  [[ $HC_TLS == self-signed || -n $HC_DOMAIN ]] || die "--tls $HC_TLS needs a domain; use --tls self-signed with --ip"
+  if [[ $HC_TLS == proxy ]]; then
+    [[ -n $HC_PROXY_FROM ]] || HC_PROXY_FROM=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7
+    local net
+    for net in ${HC_PROXY_FROM//,/ }; do
+      [[ $net =~ ^[0-9a-fA-F:.]+(/[0-9]{1,3})?$ ]] || die "invalid --proxy-from entry: $net"
+    done
+  fi
   [[ -z $HC_ACME_EMAIL || $HC_ACME_EMAIL =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$ ]] || die "invalid email"
 
   if [[ -z $HC_APNS ]]; then
@@ -267,7 +281,7 @@ write_secrets() {
 
 setup_tls() {
   TLS_PIN=""
-  [[ $HC_TLS == self-signed ]] || return 0
+  [[ $HC_TLS == self-signed ]] || return 0  # acme: Caddy's certificate; proxy: the proxy's
   install -d -m 0750 -o root -g caddy "$CADDY_TLS"
   local san
   if is_ip "$(host)"; then san="IP:$(host)"; else san="DNS:$(host)"; fi
@@ -284,16 +298,25 @@ setup_tls() {
   TLS_PIN=$(openssl pkey -in "$CADDY_TLS/key.pem" -pubout -outform DER | openssl dgst -sha256 -binary | base64 | tr '+/' '-_' | tr -d '=')
 }
 
+# Proxy mode: the reverse proxy's addresses as a TOML list ("a", "b"), else empty.
+proxy_list() {
+  [[ $HC_TLS == proxy ]] || return 0
+  local net out=""
+  for net in ${HC_PROXY_FROM//,/ }; do out+="${out:+, }\"$net\""; done
+  printf '%s' "$out"
+}
+
 write_relay_config() {
   local apns_enabled=false
   [[ $HC_APNS == yes ]] && apns_enabled=true
   cat >"$ETC/relay.toml.tmp" <<EOF
 authority = "$(url_host)"
 tls_pin = "$TLS_PIN"
-listen_host = "127.0.0.1"
+listen_host = "$([[ $HC_TLS == proxy ]] && echo 0.0.0.0 || echo 127.0.0.1)"
 listen_port = $LISTEN_PORT
 db_path = "/var/lib/hermescall-relay/relay.db"
 trust_proxy = true
+trusted_proxies = [$(proxy_list)]
 
 [turn]
 urls = ["turn:$(url_host):$TURN_PORT?transport=udp", "turn:$(url_host):$TURN_PORT?transport=tcp"]
@@ -388,6 +411,11 @@ EOF
 
 write_caddy_config() {
   local site tls_line global_extra=""
+  if [[ $HC_TLS == proxy ]]; then
+    # The external proxy terminates TLS; the relay listens itself (only for the proxy, see firewall).
+    systemctl disable --now caddy.service >/dev/null 2>&1 || true
+    return 0
+  fi
   [[ -f /etc/caddy/Caddyfile.hermescall-backup || ! -f /etc/caddy/Caddyfile ]] ||
     cp -p /etc/caddy/Caddyfile /etc/caddy/Caddyfile.hermescall-backup
   site="https://$(url_host)"
@@ -456,7 +484,12 @@ setup_firewall() {
   [[ $HC_FIREWALL == yes ]] || { warn "firewall management disabled; open only the ports listed in docs"; return 0; }
   if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
     log "ufw is active; adding relay rules to it"
-    ufw allow 443/tcp >/dev/null
+    if [[ $HC_TLS == proxy ]]; then
+      local net
+      for net in ${HC_PROXY_FROM//,/ }; do ufw allow from "$net" to any port "$LISTEN_PORT" proto tcp >/dev/null; done
+    else
+      ufw allow 443/tcp >/dev/null
+    fi
     ufw allow "$TURN_PORT" >/dev/null
     ufw allow "$TURN_MIN_PORT:$TURN_MAX_PORT/udp" >/dev/null
     return 0
@@ -468,6 +501,16 @@ setup_firewall() {
     [[ -n $ports ]] || die "could not determine the SSH port (sshd -T failed); refusing to enable a firewall that could lock you out"
   fi
   [[ -z $ports ]] || ssh_rule="tcp dport { $ports } ct state new limit rate 30/minute accept"
+  local signaling_rule="tcp dport 443 accept" v4="" v6="" net
+  if [[ $HC_TLS == proxy ]]; then
+    # Only the reverse proxy reaches the relay's plain-HTTP port.
+    for net in ${HC_PROXY_FROM//,/ }; do
+      if [[ $net == *:* ]]; then v6+="${v6:+, }$net"; else v4+="${v4:+, }$net"; fi
+    done
+    signaling_rule=""
+    [[ -z $v4 ]] || signaling_rule="ip saddr { $v4 } tcp dport $LISTEN_PORT accept"
+    [[ -z $v6 ]] || signaling_rule+="${signaling_rule:+$'\n\t\t'}ip6 saddr { $v6 } tcp dport $LISTEN_PORT accept"
+  fi
   [[ -f /etc/nftables.conf.hermescall-backup || ! -f /etc/nftables.conf ]] ||
     cp -p /etc/nftables.conf /etc/nftables.conf.hermescall-backup
   cat >/etc/nftables.conf.tmp <<EOF
@@ -486,7 +529,7 @@ table inet hermescall {
 		meta l4proto icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } limit rate 10/second accept
 		meta l4proto ipv6-icmp accept
 		$ssh_rule
-		tcp dport 443 accept
+		$signaling_rule
 		meta l4proto { tcp, udp } th dport $TURN_PORT accept
 		udp dport $TURN_MIN_PORT-$TURN_MAX_PORT accept
 	}
@@ -545,8 +588,13 @@ EOF
 
 start_services() {
   log "Starting services"
-  systemctl enable "${UNITS[@]}" caddy.service >/dev/null
-  systemctl restart hermescall-turn.service hermescall-relay.service caddy.service
+  if [[ $HC_TLS == proxy ]]; then
+    systemctl enable "${UNITS[@]}" >/dev/null
+    systemctl restart hermescall-turn.service hermescall-relay.service
+  else
+    systemctl enable "${UNITS[@]}" caddy.service >/dev/null
+    systemctl restart hermescall-turn.service hermescall-relay.service caddy.service
+  fi
 
   for _ in $(seq 1 30); do
     if python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:$LISTEN_PORT/healthz', timeout=2)" 2>/dev/null; then
@@ -556,6 +604,14 @@ start_services() {
   done
   journalctl -u hermescall-relay.service -n 30 --no-pager >&2 || true
   die "relay did not become healthy"
+}
+
+signaling_summary() {
+  if [[ $HC_TLS == proxy ]]; then
+    printf '%s/tcp (plain HTTP, only from %s, behind your reverse proxy)' "$LISTEN_PORT" "$HC_PROXY_FROM"
+  else
+    printf '443/tcp (TLS signaling)'
+  fi
 }
 
 push_summary() {
@@ -572,9 +628,18 @@ print_summary() {
   cat <<EOF
 
 Hermes Call relay is running for $(url_host).
-Open ports: 443/tcp (TLS signaling), $TURN_PORT/udp+tcp (TURN), $TURN_MIN_PORT-$TURN_MAX_PORT/udp (TURN media relay)$(if has_sshd; then printf ', SSH'; fi)
+Open ports: $(signaling_summary), $TURN_PORT/udp+tcp (TURN), $TURN_MIN_PORT-$TURN_MAX_PORT/udp (TURN media relay)$(if has_sshd; then printf ', SSH'; fi)
 Push: $(push_summary)
 EOF
+  if [[ $HC_TLS == proxy ]]; then
+    cat <<EOF
+
+Reverse proxy (e.g. Nginx Proxy Manager): a proxy host for $(host) with scheme http, forward
+host $(local_ipv4), port $LISTEN_PORT, Websockets Support on, an SSL certificate for $(host) and
+Force SSL. TURN does not go through the proxy: forward $TURN_PORT/udp+tcp and
+$TURN_MIN_PORT-$TURN_MAX_PORT/udp from the router straight to $(local_ipv4).
+EOF
+  fi
   [[ -z $TLS_PIN ]] || printf 'TLS public-key pin: %s\n' "$TLS_PIN"
   printf '\n'
   "$WRAPPER" pair

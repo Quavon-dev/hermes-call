@@ -78,6 +78,22 @@ hermescall-relay revoke-bridge <bridge-id>           # removes the bridge and al
 
 Update to the latest version: `git -C /root/hermes-call pull && /root/hermes-call/relay/install.sh update`.
 
+## Behind your own reverse proxy (Nginx Proxy Manager, Traefik, Caddy)
+
+If a reverse proxy already publishes your services on 443, let it terminate TLS for the relay too:
+
+```bash
+/opt/hermescall-relay/relay/install.sh install --domain relay.example.com --tls proxy --proxy-from 192.168.0.10
+```
+
+The relay then listens on plain HTTP port **8743**; the firewall lets only `--proxy-from` (comma-
+separated addresses or CIDRs, default: the private ranges) reach it, and only their
+`X-Forwarded-For` is believed, so phones and bridges keep their own rate limits. The installer's
+Caddy is switched off. In Nginx Proxy Manager: a proxy host for the domain, scheme `http`, forward
+to the relay's LAN address, port 8743, **Websockets Support** on, an SSL certificate and *Force
+SSL*. TURN cannot go through an HTTP proxy: forward TCP/UDP 3478 and UDP 49160–49200 from the
+router straight to the relay. Back to the relay's own certificate: `install.sh install --tls acme`.
+
 ## Install on your home Proxmox (isolated LXC)
 
 > **Check first:** many German cable/fibre lines use **DS-Lite** (no public IPv4).

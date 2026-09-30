@@ -1,6 +1,6 @@
 [project]
 name = "hermescall-bridge"
-version = "0.6.0"
+version = "0.6.1"
 description = "hermes-call-bridge: voice calls between Hermes Agent and the Hermes Call app"
 requires-python = ">=3.11"
 license = "MIT"
