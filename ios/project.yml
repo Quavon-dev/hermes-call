@@ -249,6 +249,7 @@ targets:
         HermesCallAppGroup: $(HC_APP_GROUP)
         WKApplication: true
         WKCompanionAppBundleIdentifier: $(HC_BUNDLE_ID)
+        NSMicrophoneUsageDescription: Hermes records a voice note on your watch when you choose it; your iPhone sends it end-to-end encrypted to your own bridge.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(HC_BUNDLE_ID).watchkitapp

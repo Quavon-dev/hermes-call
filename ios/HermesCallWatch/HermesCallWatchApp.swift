@@ -27,15 +27,25 @@ struct WatchRootView: View {
 }
 
 /// The presence fills the screen: tap it to call (the call runs on the iPhone); the bottom bar
-/// dictates a message or calls.
+/// dictates a message or records a voice note, or calls. A pending approval shows on top.
 struct WatchPresenceView: View {
     @Environment(WatchModel.self) private var model
     @State private var composing = false
     @State private var pressed = false
+    @State private var reviewing: WatchSnapshot.Approval?
 
     var body: some View {
         let palette = model.palette
         VStack(spacing: 4) {
+            if let approval = model.snapshot.approval {
+                Button { reviewing = approval } label: {
+                    Label("Approval needed", systemImage: "exclamationmark.shield.fill")
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(.black)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Capsule().fill(.orange))
+                }
+                .buttonStyle(.plain)
+            }
             presence
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .scaleEffect(pressed ? 1.06 : 1)
@@ -51,7 +61,7 @@ struct WatchPresenceView: View {
                 .multilineTextAlignment(.center)
             // Kept clear of the rounded screen edges.
             HStack {
-                roundButton("mic.fill", fill: palette.ember, ink: palette.light, label: "Dictate a message") { composing = true }
+                roundButton("mic.fill", fill: palette.ember, ink: palette.light, label: "Message or voice note") { composing = true }
                 Spacer()
                 roundButton("phone.fill", fill: palette.glow, ink: .black, label: "Call", action: call)
             }
@@ -60,6 +70,7 @@ struct WatchPresenceView: View {
         }
         .navigationTitle(model.snapshot.agentName)
         .sheet(isPresented: $composing) { WatchComposeView() }
+        .sheet(item: $reviewing) { WatchApprovalView(approval: $0) }
         .containerBackground(Color.black.gradient, for: .tabView)
         .disabled(!model.snapshot.paired)
     }
@@ -105,24 +116,82 @@ struct WatchPresenceView: View {
     }
 }
 
-/// Dictate (or scribble) a message; sent through the iPhone.
+/// Dictate (or scribble) a message, or record a voice note; sent through the iPhone.
 struct WatchComposeView: View {
     @Environment(WatchModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var draft = ""
+    @State private var recorder = WatchVoiceRecorder()
+    @State private var problem: String?
 
     var body: some View {
-        VStack(spacing: 10) {
-            TextField("Dictate a message", text: $draft).submitLabel(.send).onSubmit(send)
-            Button("Send", action: send).disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
-                .tint(model.palette.glow)
+        ScrollView {
+            VStack(spacing: 10) {
+                if recorder.isRecording {
+                    recording
+                } else {
+                    TextField("Dictate a message", text: $draft).submitLabel(.send).onSubmit(send)
+                    Button("Send", action: send).disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .tint(model.palette.glow)
+                    Button { Task { await record() } } label: { Label("Voice note", systemImage: "waveform") }
+                    if let problem { Text(problem).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center) }
+                }
+            }
         }
         .navigationTitle(model.snapshot.agentName)
+    }
+
+    private var recording: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "waveform").font(.title2).foregroundStyle(.red).symbolEffect(.variableColor.iterative)
+            Text(Duration.seconds(recorder.elapsed).formatted(.time(pattern: .minuteSecond))).font(.title3.monospacedDigit())
+            HStack {
+                Button(role: .destructive) { _ = recorder.stop(keep: false) } label: { Image(systemName: "trash") }
+                    .accessibilityLabel("Discard")
+                Button {
+                    if let note = recorder.stop(keep: true) { model.sendVoiceNote(note.file, duration: note.duration) }
+                    dismiss()
+                } label: { Image(systemName: "arrow.up") }
+                    .tint(model.palette.glow)
+                    .accessibilityLabel("Send voice note")
+            }
+        }
+    }
+
+    private func record() async {
+        switch await recorder.start() {
+        case .recording: problem = nil
+        case .denied: problem = "Allow the microphone for Hermes in the Watch app's settings on your iPhone."
+        case .failed: problem = "Recording could not start."
+        }
     }
 
     private func send() {
         model.sendMessage(draft)
         dismiss()
+    }
+}
+
+/// A command waiting for approval: deny it here, or approve on the iPhone (Face ID).
+struct WatchApprovalView: View {
+    let approval: WatchSnapshot.Approval
+    @Environment(WatchModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("\(model.snapshot.agentName) wants to run:").font(.footnote).foregroundStyle(.secondary)
+                Text(approval.command).font(.system(.footnote, design: .monospaced))
+                Button(role: .destructive) {
+                    model.deny(approval)
+                    dismiss()
+                } label: { Label("Deny", systemImage: "xmark") }
+                Text("To approve, open Hermes Call on your iPhone: approving needs Face ID or your passcode.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("Approval")
     }
 }
 

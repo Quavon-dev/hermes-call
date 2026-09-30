@@ -22,6 +22,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>HermesCallAppGroup</key>
 	<string>$(HC_APP_GROUP)</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Hermes records a voice note on your watch when you choose it; your iPhone sends it end-to-end encrypted to your own bridge.</string>
 	<key>WKApplication</key>
 	<true/>
 	<key>WKCompanionAppBundleIdentifier</key>
