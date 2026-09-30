@@ -15,6 +15,9 @@ struct HermesCallApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        #if DEBUG
+        ChatDemo.seedIfRequested()
+        #endif
         let app = AppModel()
         let calls = CallCoordinator(app: app)
         let chat = ChatModel(app: app)
@@ -44,6 +47,7 @@ struct HermesCallApp: App {
         PlaceMonitor.shared.start()
         WatchBridge.shared.configure(app: app, chat: chat, calls: calls)
         #if DEBUG
+        if ChatDemo.enabled { app.tab = .chat }
         tasks.runDemoIfRequested()
         PresenceStill.renderIconCandidatesIfRequested()
         #endif

@@ -46,6 +46,9 @@ final class ChatNotifications: NSObject {
 
     /// Asks once; registering also works without permission (the token is still issued).
     func requestAuthorization() {
+        #if DEBUG
+        if ChatDemo.enabled { return }
+        #endif
         Task {
             _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
             UIApplication.shared.registerForRemoteNotifications()

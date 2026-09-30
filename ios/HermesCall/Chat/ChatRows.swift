@@ -71,6 +71,8 @@ struct MessageRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        // Links and controls in the owner's blue bubble are white (not the bubble's own tint).
+        .tint(isOwner && !hud ? .white : nil)
         .background { background }
         .overlay {
             if highlighted {
@@ -78,7 +80,6 @@ struct MessageRow: View {
             }
         }
         .foregroundStyle(isOwner && !hud ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-        .tint(isOwner && !hud ? .white : nil)
         .contextMenu {
             if !message.text.isEmpty {
                 Button { UIPasteboard.general.string = message.text } label: { Label("Copy", systemImage: "doc.on.doc") }

@@ -151,6 +151,9 @@ final class ChatModel {
             window = ChatWindow()
             return
         }
+        #if DEBUG
+        await ChatDemo.fillIfRequested(profile, store: store)
+        #endif
         let latest = await store.latest(profile, limit: ChatWindow.pageSize)
         let total = await store.count(profile)
         guard shownProfile == profile else { return }

@@ -13,6 +13,7 @@
 		091CC2FC91849E5703B0881C /* ChatModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02B4F678CDC94B6AA0EBE3B2 /* ChatModel.swift */; };
 		0A06134E7DDFAA99B223D632 /* HermesCallWatchWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0E2DB9903B1F74724D22A72E /* HermesCallWatchWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		0A9A7833A5486F7214C63353 /* HermesCallWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F81FFBDB4421D1E091543C09 /* HermesCallWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		0BDF08F83D7F388F13397740 /* ChatDemo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A06754BEBBBAFB7D1CEA12C2 /* ChatDemo.swift */; };
 		0C5D04603D9986C6E2EC619B /* PresenceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CEC06667E2A8ECA3ED48251 /* PresenceEngine.swift */; };
 		119D91E77D4407D5BB6F06BA /* HermesCallWatchWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FCBC150291B9E1126460F6 /* HermesCallWatchWidget.swift */; };
 		12829DEF400AD134415B6F3E /* InCallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9273B76265898AEA3482C0E /* InCallView.swift */; };
@@ -249,6 +250,7 @@
 		990F6D2623C88EAC409E7ACB /* HermesCallShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = HermesCallShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		99FC5198B587F12FFF21A16C /* PresenceDemo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenceDemo.swift; sourceTree = "<group>"; };
 		9CEC06667E2A8ECA3ED48251 /* PresenceEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenceEngine.swift; sourceTree = "<group>"; };
+		A06754BEBBBAFB7D1CEA12C2 /* ChatDemo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDemo.swift; sourceTree = "<group>"; };
 		A5EB02F8D27D7C9CAA78A391 /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
 		A6C98861853B803EA7B7EF0F /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		A76AB9DB839DB8F4F3896675 /* PresenceInteraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenceInteraction.swift; sourceTree = "<group>"; };
@@ -504,6 +506,7 @@
 			isa = PBXGroup;
 			children = (
 				B9B20A4702046B5574C957FC /* ChatComposer.swift */,
+				A06754BEBBBAFB7D1CEA12C2 /* ChatDemo.swift */,
 				3FFC4DA277DD0CD5B04504A9 /* ChatLink.swift */,
 				02B4F678CDC94B6AA0EBE3B2 /* ChatModel.swift */,
 				6100F7F693C7F153053D66E2 /* ChatNotifications.swift */,
@@ -980,6 +983,7 @@
 				031132302F325F3280094EBE /* CallCoordinator.swift in Sources */,
 				D1D807037466A7646BC5ACEE /* CarPlaySceneDelegate.swift in Sources */,
 				26BCF39D49714C533100CF74 /* ChatComposer.swift in Sources */,
+				0BDF08F83D7F388F13397740 /* ChatDemo.swift in Sources */,
 				432DF7A60BD70B4318284DD9 /* ChatLink.swift in Sources */,
 				091CC2FC91849E5703B0881C /* ChatModel.swift in Sources */,
 				E4609E50A935BC9FE2E0D3F5 /* ChatNotifications.swift in Sources */,

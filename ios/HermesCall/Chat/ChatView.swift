@@ -60,6 +60,9 @@ struct ChatView: View {
             settled = false
             closeSearch()
             await chat.reload()
+            #if DEBUG
+            await showDemoState()
+            #endif
         }
         .task(id: query) {
             try? await Task.sleep(for: .milliseconds(250))
@@ -240,6 +243,25 @@ struct ChatView: View {
         }
     }
 
+    #if DEBUG
+    /// `-ChatDemoQuery` / `-ChatDemoPlay` (see `ChatDemo`).
+    private func showDemoState() async {
+        if let demo = ChatDemo.query {
+            searching = true
+            query = demo
+        }
+        if let text = ChatDemo.reveal, let hit = chat.messages.first(where: { $0.text.contains(text) }) {
+            try? await Task.sleep(for: .seconds(1))
+            open(hit)
+        }
+        if ChatDemo.plays, let voice = chat.messages.flatMap(\.attachments).first(where: { $0.kind == .voice }),
+           let url = await chat.attachmentURL(voice) {
+            try? await Task.sleep(for: .seconds(1))
+            chat.player.play(id: voice.id, url: url, from: 0.35)
+        }
+    }
+    #endif
+
     private func closeSearch() {
         searching = false
         query = ""
@@ -317,8 +339,10 @@ private struct SearchHitRow: View {
 
     /// The preview starting shortly before the match, with the match in bold.
     private var snippet: AttributedString {
-        let plain = message.role == .system ? message.systemText : ChatText.plain(message.text.isEmpty ? message.preview : message.text,
-                                                                                  limit: 2000)
+        // Text and transcript first; for a message without either, its preview ("🎙 Voice note", a file name).
+        let parts = [message.text, message.transcript ?? ""].filter { !$0.isEmpty }
+        let plain = message.role == .system ? message.systemText
+            : ChatText.plain(parts.isEmpty ? message.preview : parts.joined(separator: " · "), limit: 2000)
         let needle = query.trimmingCharacters(in: .whitespaces)
         guard let range = plain.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) else {
             return AttributedString(String(plain.prefix(160)))

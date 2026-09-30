@@ -133,10 +133,7 @@ final class VoicePlayer {
             engine.connect(pitch, to: engine.mainMixerNode, format: file.processingFormat)
             let format = engine.mainMixerNode.outputFormat(forBus: 0)
             let analyzer = SpectrumAnalyzer(sampleRate: format.sampleRate)
-            engine.mainMixerNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-                guard let samples = buffer.floatChannelData?[0] else { return }
-                analyzer.feed(UnsafeBufferPointer(start: samples, count: Int(buffer.frameLength)))
-            }
+            Self.tap(engine.mainMixerNode, format: format, into: analyzer)
             try engine.start()
             (self.engine, self.node, self.pitch, self.file, self.url) = (engine, node, pitch, file, url)
             spectrum = analyzer
@@ -211,10 +208,25 @@ final class VoicePlayer {
         let start = AVAudioFramePosition(Double(file.length) * min(max(fraction, 0), 0.999))
         segmentStart = start
         progress = Double(start) / Double(max(file.length, 1))
-        node.scheduleSegment(file, startingFrame: start, frameCount: AVAudioFrameCount(file.length - start), at: nil,
-                             completionCallbackType: .dataPlayedBack) { [weak self] _ in
+        Self.schedule(file, from: start, on: node) { [weak self] in
             Task { @MainActor in if self?.generation == current { self?.stop() } }
         }
+    }
+
+    // The audio callbacks run on the audio threads: created outside the main actor, so Swift does not
+    // treat them as main-actor code (which traps when called from there).
+
+    private nonisolated static func tap(_ mixer: AVAudioMixerNode, format: AVAudioFormat, into analyzer: SpectrumAnalyzer) {
+        mixer.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            guard let samples = buffer.floatChannelData?[0] else { return }
+            analyzer.feed(UnsafeBufferPointer(start: samples, count: Int(buffer.frameLength)))
+        }
+    }
+
+    private nonisolated static func schedule(_ file: AVAudioFile, from start: AVAudioFramePosition, on node: AVAudioPlayerNode,
+                                             finished: @escaping @Sendable () -> Void) {
+        node.scheduleSegment(file, startingFrame: start, frameCount: AVAudioFrameCount(file.length - start), at: nil,
+                             completionCallbackType: .dataPlayedBack) { _ in finished() }
     }
 
     private func startTicker() {
