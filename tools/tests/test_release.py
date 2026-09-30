@@ -2,6 +2,7 @@
 """tools/release.sh (build, MANIFEST, signing) and the installers' shared hc_verify_release block."""
 
 import gzip
+import hashlib
 import io
 import os
 import re
@@ -238,3 +239,53 @@ def test_verify_legacy_release_without_manifest(verifier: Verifier) -> None:
     assert newer.returncode == 1 and "refusing to downgrade" in newer.stderr
     required = verifier(drop=("MANIFEST", "MANIFEST.sig"), HC_REQUIRE_MANIFEST="1")
     assert required.returncode == 1 and "no signed MANIFEST" in required.stderr
+
+
+def resign_sums(verifier: Verifier, content: str) -> None:
+    sums = verifier.dist / "SHA256SUMS"
+    sums.write_text(content)
+    (verifier.dist / "SHA256SUMS.sig").unlink()
+    run("ssh-keygen", "-Y", "sign", "-q", "-f", str(verifier.tmp_path / "key"), "-n", "hermes-call-release", str(sums))
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{other}  other-file\n",  # a signed list that does not name the tarball
+        "{digest}  hermes-call.tar.gz\n{digest}  hermes-call.tar.gz\n",
+        "{digest}  hermes-call.tar.gz\n{digest}  evil.sh\n",
+        "{digest} *hermes-call.tar.gz\n",
+        "",
+    ],
+)
+def test_verify_legacy_sums_must_name_exactly_the_tarball(verifier: Verifier, content: str) -> None:
+    digest = hashlib.sha256((verifier.dist / "hermes-call.tar.gz").read_bytes()).hexdigest()
+    (verifier.dist / "other-file").write_text("x")
+    resign_sums(verifier, content.format(digest=digest, other=hashlib.sha256(b"x").hexdigest()))
+    refused = verifier("0.6.1", drop=("MANIFEST", "MANIFEST.sig"))
+    assert refused.returncode == 1 and "SHA256SUMS" in refused.stderr
+
+
+def test_verify_legacy_checks_the_tarball_itself(verifier: Verifier) -> None:
+    (verifier.dist / "hermes-call.tar.gz").write_bytes(b"not the release")
+    refused = verifier("0.6.1", drop=("MANIFEST", "MANIFEST.sig"))
+    assert refused.returncode == 1 and "checksum mismatch" in refused.stderr
+
+
+def test_verify_legacy_only_for_upgrades_once_fresh_installs_need_a_manifest(verifier: Verifier) -> None:
+    legacy = ("MANIFEST", "MANIFEST.sig")
+    fresh = verifier(drop=legacy, HC_ALLOW_LEGACY_FRESH_INSTALL="0")
+    assert fresh.returncode == 1 and "fresh install" in fresh.stderr
+    assert verifier("0.6.1", drop=legacy, HC_ALLOW_LEGACY_FRESH_INSTALL="0").returncode == 0  # existing install
+    assert verifier(HC_ALLOW_LEGACY_FRESH_INSTALL="0").returncode == 0  # MANIFEST releases always
+
+
+def test_sign_refuses_sums_that_do_not_name_exactly_the_tarball(repo: Path, tmp_path: Path) -> None:
+    key = tmp_path / "key"
+    make_key(key)
+    release(repo, "v1.2.3")
+    sums = repo / "dist" / "SHA256SUMS"
+    sums.write_text(sums.read_text() + sums.read_text().replace("hermes-call.tar.gz", "other"))
+    (repo / "dist" / "other").write_bytes((repo / "dist" / "hermes-call.tar.gz").read_bytes())
+    refused = release(repo, "--sign", "dist", str(key), check=False)
+    assert refused.returncode == 2 and "SHA256SUMS must be exactly one line" in refused.stderr

@@ -125,7 +125,9 @@ sign_existing() {
   want=$(archive_tar "$tag" | sha256_stdin)
   got=$(gzip -dc "$dir/$TARBALL" | sha256_stdin)
   [[ $want == "$got" ]] || die "$TARBALL does not contain exactly $tag (tar $got, expected $want)"
-  (cd "$dir" && sha256 -c --quiet SHA256SUMS) || die "SHA256SUMS does not match $TARBALL"
+  # Exactly what build() writes: one line, for the tarball only (older installers run sha256sum -c).
+  [[ $(cat "$dir/SHA256SUMS") == "$(sha256_stdin <"$dir/$TARBALL")  $TARBALL" && $(wc -l <"$dir/SHA256SUMS") -eq 1 ]] ||
+    die "SHA256SUMS must be exactly one line: the checksum of $TARBALL"
   [[ $(sed -n 's/^sha256=//p' "$dir/MANIFEST") == "$(sha256_stdin <"$dir/$TARBALL")" ]] ||
     die "MANIFEST checksum does not match $TARBALL"
   sign "$dir" "$key"

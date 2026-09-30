@@ -103,8 +103,9 @@ RELEASE_SIGNER="${RELEASE_SIGNER:-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBZcryC9om
 # hc_verify_release DIR [INSTALLED_VERSION]: DIR holds hermes-call.tar.gz, SHA256SUMS, SHA256SUMS.sig
 # and, from 0.7 on, MANIFEST and MANIFEST.sig. Succeeds only if RELEASE_SIGNER signed the release
 # and, with a MANIFEST, its version is not older than INSTALLED_VERSION (HC_ALLOW_DOWNGRADE=1 allows
-# it). Releases up to 0.6.2 have no MANIFEST: accepted only while nothing newer is installed and
-# HC_REQUIRE_MANIFEST is not 1.
+# it). Releases up to 0.6.2 have no MANIFEST: accepted only while nothing newer is installed,
+# HC_REQUIRE_MANIFEST is not 1, and (for a fresh install) HC_ALLOW_LEGACY_FRESH_INSTALL is not 0;
+# their SHA256SUMS must be exactly one line for hermes-call.tar.gz.
 hc_verify_release() {
   local dir=$1 installed=${2:-} version digest oldest
   if [[ ${RELEASE_SIGNER:-} != "ssh-ed25519 "* ]]; then
@@ -136,6 +137,9 @@ hc_verify_release() {
     return 0
   fi
   [[ ${HC_REQUIRE_MANIFEST:-0} != 1 ]] || { echo "release has no signed MANIFEST: not installing" >&2; return 1; }
+  # TODO(0.7): default HC_ALLOW_LEGACY_FRESH_INSTALL to 0 once a MANIFEST release is latest.
+  [[ -n $installed || ${HC_ALLOW_LEGACY_FRESH_INSTALL:-1} == 1 ]] ||
+    { echo "release has no signed MANIFEST: a fresh install needs 0.7 or newer" >&2; return 1; }
   if [[ -n $installed && $(printf '%s\n0.6.2\n' "$installed" | sort -V | tail -1) != 0.6.2 ]]; then
     [[ ${HC_ALLOW_DOWNGRADE:-0} == 1 ]] || {
       echo "release has no MANIFEST (0.6.2 or older) but $installed is installed: refusing to downgrade" \
@@ -146,7 +150,11 @@ hc_verify_release() {
   ssh-keygen -Y verify -f "$dir/allowed_signers" -I release@quavon -n hermes-call-release \
     -s "$dir/SHA256SUMS.sig" <"$dir/SHA256SUMS" >/dev/null 2>&1 ||
     { echo "release signature is invalid: not installing" >&2; return 1; }
-  (cd "$dir" && sha256sum -c --quiet SHA256SUMS) >/dev/null 2>&1 ||
+  # Exactly one line for exactly the tarball: a signed list naming other files proves nothing.
+  digest=$(sed -n '1{/^[0-9a-f]\{64\}  hermes-call\.tar\.gz$/s/ .*//p;}' "$dir/SHA256SUMS")
+  [[ -n $digest && $(wc -l <"$dir/SHA256SUMS") -eq 1 ]] ||
+    { echo "release SHA256SUMS is not exactly one line for hermes-call.tar.gz: not installing" >&2; return 1; }
+  [[ $(sha256sum "$dir/hermes-call.tar.gz" | cut -d' ' -f1) == "$digest" ]] ||
     { echo "release checksum mismatch: not installing" >&2; return 1; }
   echo "warning: release without MANIFEST (0.6.2 or older): its version is not checked" >&2
 }

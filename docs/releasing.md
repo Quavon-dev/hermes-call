@@ -58,9 +58,24 @@ bridge: see `bridge/get.sh`). `HC_ALLOW_DOWNGRADE=1` in front of the command for
 stays the way back to the previous code.
 
 A release without a MANIFEST (0.6.2 and older) is still accepted while nothing newer is installed,
-so the scripts keep working until the first 0.7 release is *latest*. After that, set
-`HC_REQUIRE_MANIFEST` to 1 in the three scripts (`: "${HC_REQUIRE_MANIFEST:=1}"` next to
-`RELEASE_SIGNER`), so a fresh install can no longer be served an old release either.
+so the scripts keep working until the first 0.7 release is *latest*. Its `SHA256SUMS` must be
+exactly one line, `<64 hex>  hermes-call.tar.gz`, and the installers compare that checksum with the
+tarball themselves (a signed list that names other files proves nothing about the tarball);
+`release.sh --sign` refuses to sign any other `SHA256SUMS`. `HC_REQUIRE_MANIFEST=1` in front of a
+command refuses every release without a MANIFEST.
+
+Fresh installs versus updates: `HC_ALLOW_LEGACY_FRESH_INSTALL=0` refuses a release without MANIFEST
+when nothing is installed yet, while an existing 0.6.x install can still update. It defaults to 1
+for now because the release marked *latest* (0.6.2) has no MANIFEST, and the helper scripts run
+from `main`: with 0, every fresh install would fail until 0.7 is published.
+
+> **TODO after the first 0.7 release is *latest*:** in the `verify_release` block (both Proxmox
+> scripts and `bridge/get.sh`, one commit; the test checks they stay identical) change
+> `${HC_ALLOW_LEGACY_FRESH_INSTALL:-1}` to `${HC_ALLOW_LEGACY_FRESH_INSTALL:-0}`. From then on a
+> fresh install needs a release with a signed MANIFEST and cannot be served an old release;
+> existing 0.6.x installs still update through the legacy path. Later, once no 0.6.x installs are
+> expected, set `HC_REQUIRE_MANIFEST` to 1 as well (`: "${HC_REQUIRE_MANIFEST:=1}"` next to
+> `RELEASE_SIGNER`).
 
 ### Verify a release by hand
 
@@ -84,7 +99,8 @@ tar -xzf hermes-call.tar.gz -C /opt       # then e.g. /opt/hermes-call/relay/ins
 ```
 
 Releases before 0.7 have no MANIFEST: verify `SHA256SUMS` with `SHA256SUMS.sig` in namespace
-`hermes-call-release` and run `sha256sum -c SHA256SUMS`. Later updates of such a relay:
+`hermes-call-release`, check that it is exactly one line ending in `  hermes-call.tar.gz`, and run
+`sha256sum -c SHA256SUMS`. Later updates of such a relay:
 download and verify the next release the same way, then `/opt/hermes-call/relay/install.sh update`
 (it refuses older code than the installed one).
 
