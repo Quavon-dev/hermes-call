@@ -92,6 +92,9 @@ targets:
         # Required with the communication-notifications entitlement (ITMS-90894); INStartCallIntent
         # is what iOS hands the app when a call is tapped in the Phone app's Recents.
         NSUserActivityTypes: [INStartCallIntent]
+        # Export compliance, answered by Quavon UG on 2026-09-30: the app uses standard encryption
+        # (TLS, libsodium) and is treated as exempt, so builds need no manual answer per upload.
+        ITSAppUsesNonExemptEncryption: false
         NSCameraUsageDescription: The camera scans the pairing QR code of your bridge, and during a call it shows your agent what you point it at when you choose Look. Pictures go end-to-end encrypted to your own bridge only.
         NSFaceIDUsageDescription: Face ID confirms that you approve a command your assistant wants to run.
         # Phone access (docs/protocol.md "Phone context"): only read when the owner's rule allows it.

@@ -37,6 +37,8 @@
 	<string>$(HC_APP_GROUP)</string>
 	<key>HermesCallKeychainGroup</key>
 	<string>$(AppIdentifierPrefix)$(HC_BUNDLE_ID).shared</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>When you allow it, your agent can ask which song is playing in the Music app. Sent end-to-end encrypted to your own bridge only.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>

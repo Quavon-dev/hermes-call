@@ -127,15 +127,36 @@ TestFlight/App Store builds receive **production** VoIP pushes; builds run from
 Xcode receive **sandbox** pushes. The app tells the relay which one; the relay
 and the push gateway support both.
 
-## Automatic TestFlight releases
+## Automatic releases
 
 `.github/workflows/ios-release.yml` runs on every push to `main` that changes the app (`ios/`,
-not its tests or docs), or by hand (*Actions → iOS release → Run workflow*). It runs the Swift
-core tests, archives the app with build number = workflow run number (+ the repository variable
-`IOS_BUILD_OFFSET`, default 0), uploads it to TestFlight and creates a GitHub release
-`ios-v<version>-<build>` with the IPA. The IPA is signed for App Store distribution, so it
-installs only through TestFlight or the App Store; relay/bridge releases (`v*`) stay the
-"latest" release. The version comes from `MARKETING_VERSION` in `ios/project.yml`.
+not its tests or docs), or by hand (*Actions → iOS release → Run workflow*). Same model as
+Quavon's jackpoll:
+
+1. **Version**: `MARKETING_VERSION` in `ios/project.yml`, or, once Apple has approved that
+   version, the next minor one (0.6.0 → 0.7.0), because an approved version takes no more builds.
+   Raise `MARKETING_VERSION` by hand for 1.0.0. **Build number**: the highest one App Store Connect
+   has for that version + 1, so manual and CI uploads share one sequence (`tools/asc.py`).
+2. **ios** (macOS): archive, upload, signed build provenance (`gh attestation verify
+   HermesCall-….ipa --repo Quavon-dev/hermes-call`), GitHub release `ios-v<version>-<build>` with
+   the IPA (never "latest": relay releases `v*` are).
+3. **beta** (Linux, waits for Apple's processing): TestFlight group `Internal` (skipped if it gets
+   every build anyway); with the repository variable `ASC_EXTERNAL_BETA=true` also the group
+   `Beta` and Beta App Review ("What to test" = the app's commit subjects). Apple reviews one
+   build per version at a time; later builds wait in the group.
+4. **app-store** (Linux), with the repository variable `ASC_APP_STORE=true`: the build is attached
+   to the open App Store version and submitted for App Review, released automatically after
+   approval. While a version is with Apple (waiting, in review, approved) this skips; the next push
+   after that goes out as the next version. "What's New" comes from
+   `ios/appstore/notes/<version>/<locale>.txt`.
+
+Both review switches stay off until Apple's reviewers can test the app (review demo) and the store
+listing exists; internal testing works from the first build.
+
+Export compliance is answered in the project (`ITSAppUsesNonExemptEncryption = NO`, Quavon UG's
+decision: standard encryption, treated as exempt), so no build waits for the question. The IPA in
+the GitHub release is signed for App Store distribution and installs only through TestFlight or
+the App Store.
 
 One-time setup (repository *Settings → Secrets and variables → Actions*):
 
@@ -148,8 +169,10 @@ One-time setup (repository *Settings → Secrets and variables → Actions*):
 
 The job runs in the `app-store` environment: add required reviewers there if every upload should
 wait for approval. Distribution signing happens in Apple's cloud during export, so no
-distribution certificate leaves Apple. The first TestFlight build of a new version may still need
-the export compliance answer in App Store Connect (see above).
+distribution certificate leaves Apple. Once in App Store Connect: create the TestFlight groups
+`Internal` and `Beta`, fill in *TestFlight → Test Information* (Beta App Review) and the App
+Store listing (description, screenshots, privacy policy, App Privacy, age rating, review notes
+with the demo pairing) — without them the external and App Store channels only warn.
 
 
 

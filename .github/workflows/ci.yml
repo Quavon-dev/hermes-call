@@ -32,7 +32,7 @@ jobs:
       # Skips cleanly here: bridge/tests/test_chat.py's Hermes adapter smoke test (needs a local
       # Hermes checkout in ~/.hermes/hermes-agent). Kokoro, Whisper models and Docker are only used by
       # bridge/tests/container_e2e.sh and relay/tests/container_e2e.sh, which CI does not run.
-      - run: uv run pytest -q bridge/tests common/tests relay/tests
+      - run: uv run pytest -q bridge/tests common/tests relay/tests tools/tests
 
   relay-distro:
     name: Relay on ${{ matrix.image }} packages

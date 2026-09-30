@@ -1,8 +1,13 @@
 name: iOS release
 
-# Builds the app, uploads it to TestFlight and attaches the IPA to a GitHub release — only when the
-# app itself changed (or when started by hand). Needs the repository secrets listed in
-# docs/ios.md, "Automatic TestFlight releases".
+# When the app itself changed (or when started by hand), the same model as Quavon's jackpoll:
+#   ios        version + build number from App Store Connect (tools/asc.py), archive, upload,
+#              signed build provenance, GitHub release ios-v<version>-<build> with the IPA
+#   beta       internal group + external group "Beta" with Beta App Review (Linux: it only waits
+#              for Apple's processing, and a problem there cannot take the GitHub release down)
+#   app-store  App Review, released after approval; skips while a version is with Apple, the next
+#              push after that goes out as the next version
+# Needs the repository secrets listed in docs/ios.md, "Automatic releases".
 on:
   push:
     branches: [main]
@@ -36,14 +41,19 @@ jobs:
         working-directory: ios/HermesCallKit
         run: swift test
 
-  release:
-    name: TestFlight and GitHub release
+  ios:
+    name: Build, TestFlight upload and GitHub release
     needs: test
     runs-on: macos-26
     timeout-minutes: 60
     environment: app-store
     permissions:
       contents: write
+      id-token: write # build provenance attestation
+      attestations: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build: ${{ steps.version.outputs.build }}
     env:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -65,11 +75,7 @@ jobs:
           major=$(xcodebuild -version | awk 'NR==1 { split($2, v, "."); print v[1] }')
           [ "$major" -ge 26 ] || { echo "::error::Xcode 26 or newer is required (found $major)"; exit 1; }
 
-      - name: Build number
-        # Raise the repository variable IOS_BUILD_OFFSET if builds were uploaded by hand before.
-        env:
-          OFFSET: ${{ vars.IOS_BUILD_OFFSET || '0' }}
-        run: echo "BUILD_NUMBER=$(( ${{ github.run_number }} + OFFSET ))" >>"$GITHUB_ENV"
+      - uses: astral-sh/setup-uv@v6
 
       - name: Install signing material
         env:
@@ -92,6 +98,20 @@ jobs:
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           rm "$RUNNER_TEMP/keys/build.p12"
 
+      - name: Version and build number from App Store Connect
+        # Version: MARKETING_VERSION in ios/project.yml, or the next minor once Apple has approved it.
+        # Build: highest number App Store Connect has for that version + 1 (at least the run number,
+        # so a build Apple has not ingested yet is never reused).
+        env:
+          ASC_KEY_PATH: ${{ runner.temp }}/keys/AuthKey.p8
+        run: |
+          asc() { uv run --quiet --no-project --with cryptography python tools/asc.py "$@"; }
+          floor=$(awk -F'"' '/MARKETING_VERSION:/ { print $2; exit }' ios/project.yml)
+          version=$(asc next-version --floor "$floor")
+          build=$(asc next-build --version "$version" --at-least "${{ github.run_number }}")
+          echo "Building $version ($build); MARKETING_VERSION is $floor"
+          { echo "APP_VERSION=$version"; echo "BUILD_NUMBER=$build"; } >>"$GITHUB_ENV"
+
       - name: Generate project
         run: |
           brew install xcodegen
@@ -105,15 +125,14 @@ jobs:
           -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/HermesCall.xcarchive"
           -allowProvisioningUpdates -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey.p8"
           -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
-          CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
+          MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
 
       - name: Version
         id: version
         run: |
           plist="$RUNNER_TEMP/HermesCall.xcarchive/Info.plist"
           version=$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleShortVersionString' "$plist")
-          echo "version=$version" >>"$GITHUB_OUTPUT"
-          echo "tag=ios-v$version-$BUILD_NUMBER" >>"$GITHUB_OUTPUT"
+          { echo "version=$version"; echo "build=$BUILD_NUMBER"; echo "tag=ios-v$version-$BUILD_NUMBER"; } >>"$GITHUB_OUTPUT"
 
       - name: Export IPA and upload to TestFlight
         run: |
@@ -139,6 +158,11 @@ jobs:
           done
           mv "$RUNNER_TEMP/export-export/HermesCall.ipa" "$RUNNER_TEMP/HermesCall-${{ steps.version.outputs.version }}-$BUILD_NUMBER.ipa"
 
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ runner.temp }}/HermesCall-${{ steps.version.outputs.version }}-${{ steps.version.outputs.build }}.ipa
+
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -150,7 +174,11 @@ jobs:
             echo "Hermes Call $VERSION (build $BUILD_NUMBER) for iPhone and Apple Watch, uploaded to TestFlight."
             echo
             echo "The IPA is signed for App Store distribution: it installs only through TestFlight or the App Store."
-            echo "Relay and bridge releases are the \`v*\` releases."
+            echo "Relay and bridge releases are the \`v*\` releases. Verify that this IPA was built here:"
+            echo
+            echo '```'
+            echo "gh attestation verify HermesCall-$VERSION-$BUILD_NUMBER.ipa --repo $GITHUB_REPOSITORY"
+            echo '```'
             echo
             echo "App changes:"
             git log --format='- %s' ${previous:+$previous..}HEAD -- ios | head -50
@@ -163,3 +191,61 @@ jobs:
         run: |
           security delete-keychain "$RUNNER_TEMP/build.keychain-db" 2>/dev/null || true
           rm -rf "$RUNNER_TEMP/keys"
+
+  beta:
+    name: Internal and external TestFlight
+    needs: ios
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    environment: app-store
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - name: Internal group, external group "Beta" and Beta App Review
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          VERSION: ${{ needs.ios.outputs.version }}
+          BUILD: ${{ needs.ios.outputs.build }}
+          # Off until Apple's reviewers can test the app (review demo); then set the repository
+          # variable ASC_EXTERNAL_BETA=true.
+          EXTERNAL: ${{ vars.ASC_EXTERNAL_BETA == 'true' && 'Beta' || '' }}
+        run: |
+          umask 077
+          printf '%s' "$ASC_KEY_P8" | base64 --decode >"$RUNNER_TEMP/AuthKey.p8"
+          # "What to test": the app's commit subjects since the previous iOS release.
+          previous=$(git tag --list 'ios-v*' --sort=-creatordate | grep -v "^ios-v$VERSION-$BUILD$" | head -1 || true)
+          git log --format='- %s' ${previous:+$previous..}HEAD -- ios | head -30 >"$RUNNER_TEMP/what-to-test.txt"
+          ASC_KEY_PATH="$RUNNER_TEMP/AuthKey.p8" uv run --quiet --no-project --with cryptography \
+            python tools/asc.py beta-add --version "$VERSION" --build "$BUILD" --external "$EXTERNAL" \
+            --notes-file "$RUNNER_TEMP/what-to-test.txt"
+
+  app-store:
+    name: App Review
+    needs: ios
+    # Off until the store listing and the review demo exist; then set ASC_APP_STORE=true.
+    if: vars.ASC_APP_STORE == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    environment: app-store
+    concurrency:
+      group: ios-app-review
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - name: Submit for App Review, release after approval
+        # "What's New" comes from ios/appstore/notes/<version>/<locale>.txt (generic text if missing).
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          umask 077
+          printf '%s' "$ASC_KEY_P8" | base64 --decode >"$RUNNER_TEMP/AuthKey.p8"
+          ASC_KEY_PATH="$RUNNER_TEMP/AuthKey.p8" uv run --quiet --no-project --with cryptography \
+            python tools/asc.py promote --version "${{ needs.ios.outputs.version }}" \
+            --build "${{ needs.ios.outputs.build }}" --notes ios/appstore/notes
