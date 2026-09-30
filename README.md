@@ -66,13 +66,37 @@ turn it on. Details, including what is deliberately out of scope: [THREAT_MODEL.
 
 ## Getting started
 
+### Quick start on Proxmox VE
+
+**Relay**: one command on the Proxmox host, as root. It creates an unprivileged Debian 13 LXC,
+installs the signed release (the signature is checked before anything runs) and prints a pairing
+code. Pushes to the phone go through the Hermes Call push gateway, so no Apple account is needed.
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/proxmox-helper/ct/hermes-call-relay.sh)"
+```
+
+Then point a domain at your public IP and forward TCP 443, TCP/UDP 3478 and UDP 49160–49200 to
+the container ([details](docs/relay.md)).
+
+**Bridge**: into the container that runs Hermes (replace `121` with its ID):
+
+```bash
+pct exec 121 -- bash -c 'apt-get install -y -qq git >/dev/null && git clone --depth 1 https://github.com/Quavon-dev/hermes-call /root/hermes-call && /root/hermes-call/bridge/install.sh install --configure-hermes'
+```
+
+**Pair**: `hermescall-relay pair` in the relay container gives a link; run
+`hermes-call-bridge relay add '<link>'` and then `hermes-call-bridge device add --name iPhone` in the
+Hermes container, and scan the QR code with the app. Restart Hermes and its gateway once so they
+load the plugin.
+
+### Other hosts
+
 1. **Relay** on a small VPS or LXC with a public address: `relay/install.sh` ([docs](docs/relay.md)).
 2. **Bridge** next to Hermes: `bridge/install.sh`, then pair it with the relay ([docs](docs/bridge.md)).
 3. **Hermes plugin**: install `hermes-integration/hermes-call` into Hermes ([docs](docs/bridge.md)).
-4. **iPhone app**: build it with Xcode under your own Apple developer account —
-   see [docs/ios.md](docs/ios.md#build-your-own-copy) — and pair it with the code the bridge shows.
-
-There is no App Store build yet.
+4. **iPhone app**: the published app (TestFlight, then the App Store), or build it with Xcode
+   under your own Apple developer account ([docs/ios.md](docs/ios.md#build-your-own-copy)).
 
 ## Development
 

@@ -18,7 +18,8 @@ RELEASE_SIGNER="${RELEASE_SIGNER:-}"
 
 fetch_verified_release() {
   [[ -n $RELEASE_SIGNER ]] || { msg_error "RELEASE_SIGNER is not set: refusing to install an unverified release"; exit 1; }
-  local tmp base="https://github.com/quavon-dev/hermes-call/releases/latest/download"
+  # HC_RELEASE_URL: only for tests of this script (e.g. file:///dist); installs use GitHub.
+  local tmp base="${HC_RELEASE_URL:-https://github.com/Quavon-dev/hermes-call/releases/latest/download}"
   tmp=$(mktemp -d)
   curl -fsSL -o "$tmp/hermes-call.tar.gz" "$base/hermes-call.tar.gz"
   curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS"

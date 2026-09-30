@@ -29,11 +29,20 @@ tools/release.sh v0.6.0 ~/.ssh/hermes-call-release
 
 Upload the three files from `dist/` to the GitHub release.
 
+## One command
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/proxmox-helper/ct/hermes-call-relay.sh)"
+```
+
+`ct/hermes-call-relay.sh` sets `COMMUNITY_SCRIPTS_URL` to this folder, so the community-scripts
+framework (`community-scripts/core`) fetches `install/hermes-call-relay-install.sh` from this
+repository. Unattended: `var_relay_address=relay.example.com` before the command.
+
 ## Status
 
-- **Needs a published GitHub release** of `quavon-dev/hermes-call` (the install script
-  downloads the release tarball). Until then use the manual steps in
-  [docs/relay.md](../docs/relay.md#install-on-your-home-proxmox-isolated-lxc).
+- **Needs a signed GitHub release** marked *latest* (`tools/release.sh`, see above); iOS releases
+  (`ios-v*`) are never marked latest.
 - **Not yet eligible upstream:** ProxmoxVED requires 600+ stars, 6+ months age,
   active maintenance and release tarballs.
 

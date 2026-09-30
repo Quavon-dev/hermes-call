@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# One command on the Proxmox host (as root):
+#   bash -c "$(curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/proxmox-helper/ct/hermes-call-relay.sh)"
+# The framework loads install/hermes-call-relay-install.sh from this repository (not from
+# community-scripts), and that script installs only a release signed with RELEASE_SIGNER.
+export COMMUNITY_SCRIPTS_URL="${COMMUNITY_SCRIPTS_URL:-https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/proxmox-helper}"
 _cs_boot="${COMMUNITY_SCRIPTS_CORE_DIR:-$(dirname "${BASH_SOURCE[0]}")/../../core}/core/build.func"
 source "$_cs_boot" 2>/dev/null || source <(curl -fsSL "${COMMUNITY_SCRIPTS_CORE_URL:-https://raw.githubusercontent.com/community-scripts/core/main}/core/build.func")
 
@@ -28,7 +33,7 @@ RELEASE_SIGNER="${RELEASE_SIGNER:-}"
 
 fetch_verified_release() {
   [[ -n $RELEASE_SIGNER ]] || { msg_error "RELEASE_SIGNER is not set: refusing to install an unverified release"; exit 1; }
-  local tmp base="https://github.com/quavon-dev/hermes-call/releases/latest/download"
+  local tmp base="${HC_RELEASE_URL:-https://github.com/Quavon-dev/hermes-call/releases/latest/download}"
   tmp=$(mktemp -d)
   curl -fsSL -o "$tmp/hermes-call.tar.gz" "$base/hermes-call.tar.gz"
   curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS"
@@ -53,7 +58,7 @@ function update_script() {
     exit
   fi
 
-  if check_for_gh_release "hermes-call" "quavon-dev/hermes-call"; then
+  if check_for_gh_release "hermes-call" "Quavon-dev/hermes-call"; then
     fetch_verified_release
 
     msg_info "Updating Hermes Call Relay"
