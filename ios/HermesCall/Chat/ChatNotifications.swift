@@ -3,21 +3,27 @@ import os
 import UIKit
 @preconcurrency import UserNotifications
 
-/// Chat notifications: the alert push token, the categories (reply from the notification),
-/// taps that open the chat, and no banners for the chat that is already on screen.
+/// Chat notifications: the alert push token, the categories (reply from the notification, answer or
+/// deny a phone-context question), taps that open the chat, and no banners for the chat on screen.
 @MainActor
 final class ChatNotifications: NSObject {
     static let messageCategory = "chat"
     static let approvalCategory = "approval"
     nonisolated static let replyAction = "reply"
+    /// Phone-context "Ask": open the app at the question, or deny it without opening.
+    nonisolated static let answerQueryAction = "phone.answer"
+    nonisolated static let denyQueryAction = "phone.deny"
+    nonisolated static let phoneInfoCategory = "phone.info"
 
     private let app: AppModel
     private let chat: ChatModel
+    private let phone: PhoneContextModel?
     private let log = Logger(subsystem: "de.quavon.hermescall", category: "notifications")
 
-    init(app: AppModel, chat: ChatModel) {
+    init(app: AppModel, chat: ChatModel, phone: PhoneContextModel? = nil) {
         self.app = app
         self.chat = chat
+        self.phone = phone
         super.init()
         let center = UNUserNotificationCenter.current()
         center.delegate = self
@@ -27,7 +33,11 @@ final class ChatNotifications: NSObject {
             UNNotificationCategory(identifier: Self.messageCategory, actions: [reply], intentIdentifiers: [],
                                    options: [.hiddenPreviewsShowTitle]),
             UNNotificationCategory(identifier: Self.approvalCategory, actions: [], intentIdentifiers: [], options: []),
-            UNNotificationCategory(identifier: PhoneContextModel.notificationCategory, actions: [], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: PhoneContextModel.notificationCategory, actions: [
+                UNNotificationAction(identifier: Self.answerQueryAction, title: "Answer…", options: [.foreground]),
+                UNNotificationAction(identifier: Self.denyQueryAction, title: "Deny", options: [.destructive]),
+            ], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: Self.phoneInfoCategory, actions: [], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: PlaceMonitor.notificationCategory,
                                    actions: [UNNotificationAction(identifier: PlaceMonitor.tellAction, title: "Tell \(app.activeProfile?.bridgeName ?? RelayProfile.defaultAgentName)")],
                                    intentIdentifiers: [], options: []),
@@ -73,6 +83,10 @@ extension ChatNotifications: UNUserNotificationCenterDelegate {
                 if reply == nil { app.activate(id) }
             }
         }
+        if content.categoryIdentifier == PhoneContextModel.notificationCategory {
+            await handleQuery(response.actionIdentifier, content: content)
+            return
+        }
         if content.categoryIdentifier == PlaceMonitor.notificationCategory {
             // A place reminder with the Ask rule: only the "Tell" button sends it to the agent.
             if response.actionIdentifier == PlaceMonitor.tellAction, let text = content.userInfo["place_message"] as? String {
@@ -84,10 +98,17 @@ extension ChatNotifications: UNUserNotificationCenterDelegate {
         if let reply, response.actionIdentifier == Self.replyAction {
             let profile = await MainActor.run { profileID(content) }
             await chat.send(text: reply, profileID: profile)
-        } else if content.categoryIdentifier != PhoneContextModel.notificationCategory {
-            // Phone queries open wherever the app was: the prompt shows on top.
+        } else if content.categoryIdentifier != Self.phoneInfoCategory {
             await MainActor.run { app.tab = .chat }
         }
+    }
+
+    /// "Answer…" (or a tap) opens the app wherever it was: the question shows on top once its mail is
+    /// fetched. "Deny" answers without opening the app.
+    private nonisolated func handleQuery(_ action: String, content: UNNotificationContent) async {
+        guard action == Self.denyQueryAction, let queryID = content.userInfo["query"] as? String else { return }
+        let profile = await MainActor.run { profileID(content) }
+        await phone?.deny(queryID: queryID, profileID: profile)
     }
 }
 

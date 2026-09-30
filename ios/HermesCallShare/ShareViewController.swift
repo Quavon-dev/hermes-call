@@ -3,9 +3,10 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// "Share → Hermes Call": sends links, text, photos and files to the agent's chat. The extension
-/// talks to the relay itself; if the bridge does not confirm in time, the message stays in the
-/// chat's outbox and the app resends it.
+/// "Share → Hermes Call": sends links, text, photos and files to the agent's chat. The message goes into
+/// the chat's outbox in the app group; a running app sends it over its own relay connection (the relay
+/// keeps one connection per device, so the extension must not take it over). Only when the app does not
+/// answer does the extension connect itself (`ShareHandoff`); anything unconfirmed stays in the outbox.
 final class ShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -37,11 +38,16 @@ struct SharedFile: Identifiable, Sendable {
 final class ShareModel {
     enum Phase: Equatable { case loading, ready, sending, failed(String) }
 
+    /// Attachments per chat message (the bridge takes at most four).
+    static let maxFiles = 4
+
     var comment = ""
     var profileID: UUID?
     private(set) var profiles: [RelayProfile] = []
     private(set) var texts: [String] = []
     private(set) var files: [SharedFile] = []
+    /// Items that were not taken: more than `maxFiles` files, too large or unreadable.
+    private(set) var leftOut = 0
     private(set) var phase: Phase = .loading
     private let items: [NSExtensionItem]
     private let done: () -> Void
@@ -57,7 +63,9 @@ final class ShareModel {
 
     func load() async {
         profiles = (try? ProfileStore().load()) ?? []
-        profileID = profiles.first?.id
+        // The agent that is active in the app, like the app's own chat.
+        let active = AgentDirectory.activeID()
+        profileID = profiles.first { $0.id == active }?.id ?? profiles.first?.id
         for provider in items.flatMap({ $0.attachments ?? [] }) {
             await load(provider)
         }
@@ -68,16 +76,24 @@ final class ShareModel {
         if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier), !provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
            let url = try? await provider.loadItem(forTypeIdentifier: UTType.url.identifier) as? URL {
             texts.append(url.absoluteString)
-        } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier),
-                  let data = try? await Self.data(provider, type: .image), let jpeg = Self.jpeg(data) {
-            files.append(SharedFile(kind: .photo, name: "Photo \(files.count + 1).jpg", mime: "image/jpeg", data: jpeg))
         } else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier),
+                  !provider.hasItemConformingToTypeIdentifier(UTType.image.identifier),
                   let text = try? await provider.loadItem(forTypeIdentifier: UTType.plainText.identifier) as? String {
             texts.append(text)
+        } else if files.count >= Self.maxFiles {
+            leftOut += 1
+        } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+            guard let data = try? await Self.data(provider, type: .image), let jpeg = PhotoEncoder.jpeg(data) else {
+                leftOut += 1
+                return
+            }
+            files.append(SharedFile(kind: .photo, name: "Photo \(files.count + 1).jpg", mime: "image/jpeg", data: jpeg))
         } else if let type = provider.registeredContentTypes.first, let data = try? await Self.data(provider, type: type),
                   data.count <= Blob.maxPlaintext {
             let name = provider.suggestedName.map { "\($0).\(type.preferredFilenameExtension ?? "bin")" } ?? "File"
             files.append(SharedFile(kind: .file, name: name, mime: type.preferredMIMEType ?? "application/octet-stream", data: data))
+        } else {
+            leftOut += 1
         }
     }
 
@@ -89,16 +105,6 @@ final class ShareModel {
         }
     }
 
-    private static func jpeg(_ data: Data, maxSide: CGFloat = 2048) -> Data? {
-        guard let image = UIImage(data: data) else { return nil }
-        let scale = min(1, maxSide / max(image.size.width, image.size.height))
-        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        return UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
-            .jpegData(compressionQuality: 0.82)
-    }
-
     func send() async {
         guard let profile else { return }
         phase = .sending
@@ -106,7 +112,7 @@ final class ShareModel {
         var message = ChatMessage(id: E2EChannel.newMessageID(), role: .owner, text: String(text.prefix(ChatWire.maxText)), status: .pending)
         let store = ChatStore.shared
         do {
-            for file in files.prefix(4) {
+            for file in files.prefix(Self.maxFiles) {
                 var attachment = ChatAttachment(kind: file.kind, name: file.name, mime: file.mime, size: file.data.count)
                 attachment.localFile = try await store.saveAttachment(file.data, id: attachment.id, name: file.name, in: profile.id)
                 message.attachments.append(attachment)
@@ -116,24 +122,26 @@ final class ShareModel {
             phase = .failed("The message could not be saved.")
             return
         }
-        let delivered = await Self.deliver(message, files: files, profile: profile)
-        try? await store.update(message.id, in: profile.id) { $0.status = delivered ? .delivered : .pending }
+        let stored = message
+        _ = await ShareHandoff.deliver(stored, profile: profile.id, store: store, appIsRunning: { await SharedSignal.probe() },
+                                       sendHere: { await Self.deliver(stored, profile: profile, store: store) })
         done()
     }
 
-    /// Up to 15 s; otherwise the app's outbox takes over.
-    private static func deliver(_ message: ChatMessage, files: [SharedFile], profile: RelayProfile) async -> Bool {
+    /// Only when the app is not running: its own connection, up to 25 s.
+    private static func deliver(_ message: ChatMessage, profile: RelayProfile, store: ChatStore) async -> Bool {
         guard let session = try? RelaySession(profile: profile, acceptsMail: false) else { return false }
-        defer { Task { await session.stop() } }
         do {
             try await session.waitUntilConnected(timeout: 10)
             var uploads: [(attachment: ChatAttachment, blobID: String, key: Data)] = []
-            for (attachment, file) in zip(message.attachments, files) {
-                let (key, sealed) = try Blob.seal(file.data)
+            let directory = await store.attachmentDirectory(profile.id)
+            for attachment in message.attachments {
+                guard let file = attachment.localFile else { continue }
+                let (key, sealed) = try Blob.seal(try Data(contentsOf: directory.appendingPathComponent(file)))
                 uploads.append((attachment, try await session.uploadBlob(sealed), key))
             }
             try await session.send(ChatWire.body(for: message, uploads: uploads), mail: true)
-            return await withTaskGroup(of: Bool.self) { group in
+            let confirmed = await withTaskGroup(of: Bool.self) { group in
                 group.addTask {
                     for await body in session.messages where body["type"]?.string == "chat_ack" && body["id"]?.string == message.id {
                         return true
@@ -146,10 +154,12 @@ final class ShareModel {
                 }
                 let result = await group.next() ?? false
                 group.cancelAll()
-                await session.stop()
                 return result
             }
+            await session.stop()
+            return confirmed
         } catch {
+            await session.stop()
             return false
         }
     }
@@ -173,10 +183,19 @@ struct ShareView: View {
                         TextField("Add a message", text: $model.comment, axis: .vertical).lineLimit(2...6)
                     }
                     if !model.texts.isEmpty || !model.files.isEmpty {
-                        Section("Sharing") {
+                        Section {
                             ForEach(model.texts, id: \.self) { Label($0, systemImage: "link").lineLimit(2) }
                             ForEach(model.files) { file in
                                 Label(file.name, systemImage: file.kind == .photo ? "photo" : "doc")
+                            }
+                        } header: {
+                            Text("Sharing")
+                        } footer: {
+                            if model.leftOut > 0 {
+                                Text(model.leftOut == 1
+                                     ? "1 item is left out: a message takes up to \(ShareModel.maxFiles) files of at most 10 MB each."
+                                     : "\(model.leftOut) items are left out: a message takes up to \(ShareModel.maxFiles) files of at most 10 MB each.")
+                                    .foregroundStyle(.orange)
                             }
                         }
                     }

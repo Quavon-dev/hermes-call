@@ -90,12 +90,13 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UIBackgroundModes: [voip, audio]
         # Required with the communication-notifications entitlement (ITMS-90894); INStartCallIntent
-        # is what iOS hands the app when a call is tapped in the Phone app's Recents.
-        NSUserActivityTypes: [INStartCallIntent]
+        # is what iOS hands the app when a call is tapped in the Phone app's Recents, INSendMessageIntent
+        # marks chat notifications as messages from the agent (name, presence, Focus).
+        NSUserActivityTypes: [INStartCallIntent, INSendMessageIntent]
         # Export compliance, answered by Quavon UG on 2026-09-30: the app uses standard encryption
         # (TLS, libsodium) and is treated as exempt, so builds need no manual answer per upload.
         ITSAppUsesNonExemptEncryption: false
-        NSCameraUsageDescription: The camera scans the pairing QR code of your bridge, and during a call it shows your agent what you point it at when you choose Look. Pictures go end-to-end encrypted to your own bridge only.
+        NSCameraUsageDescription: The camera scans the pairing QR code of your bridge, takes the photos you send in the chat, and during a call it shows your agent what you point it at when you choose Look. Pictures go end-to-end encrypted to your own bridge only.
         NSFaceIDUsageDescription: Face ID confirms that you approve a command your assistant wants to run.
         # Phone access (docs/protocol.md "Phone context"): only read when the owner's rule allows it.
         NSLocationWhenInUseUsageDescription: When you allow it, your agent can ask where you are (about 1 km unless you allow precise). It is sent end-to-end encrypted to your own bridge only.
@@ -145,6 +146,9 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+          # Agent messages are communication notifications (INSendMessageIntent).
+          NSExtensionAttributes:
+            IntentsSupported: [INSendMessageIntent]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(HC_BUNDLE_ID).notifications

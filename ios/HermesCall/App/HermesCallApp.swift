@@ -38,7 +38,7 @@ struct HermesCallApp: App {
         _phone = State(initialValue: phone)
         _tasks = State(initialValue: tasks)
         _push = State(initialValue: PushRegistrar(app: app, calls: calls))
-        _notifications = State(initialValue: ChatNotifications(app: app, chat: chat))
+        _notifications = State(initialValue: ChatNotifications(app: app, chat: chat, phone: phone))
         AppServices.shared.configure(app: app, chat: chat, calls: calls)
         PlaceMonitor.shared.tellAgent = { [weak chat] text, profile in await chat?.send(text: text, profileID: profile) }
         PlaceMonitor.shared.start()

@@ -29,6 +29,8 @@ final class PhoneContextModel {
     private let log = Logger(subsystem: "de.quavon.hermescall", category: "phone")
     /// Query ids already handled (mail can arrive twice: live and from the mailbox).
     private var handled: [String] = []
+    /// Denied from the notification before the query reached the app (it arrives with the mail).
+    private var deniedEarly: Set<String> = []
 
     init(app: AppModel, settings: PhoneAccessSettings = PhoneAccessSettings()) {
         self.app = app
@@ -54,6 +56,10 @@ final class PhoneContextModel {
         handled = Array((handled + [query.queryID]).suffix(200))
         let profile = session.profile
         let request = PhonePrompt(query: query, profileID: profile.id, agentName: profile.bridgeName, mailID: mailID)
+        if deniedEarly.remove(query.queryID) != nil {
+            Task { await finish(request, status: .denied) }
+            return
+        }
         switch PhoneAnswer.decide(settings.permission(for: query.capability), for: query.capability) {
         case .deny:
             Task { await finish(request, status: .denied) }
@@ -103,6 +109,26 @@ final class PhoneContextModel {
         defer { answering = false }
         close(request.id)
         if allow { await fetchAndAnswer(request) } else { await finish(request, status: .denied) }
+    }
+
+    /// "Deny" on the query's notification, also while the app is in the background: the query may not
+    /// have arrived yet, so the app connects to the agent's relay briefly to fetch it.
+    func deny(queryID: String, profileID: UUID?) async {
+        if let request = [prompt].compactMap({ $0 }).first(where: { $0.id == queryID }) ?? queue.first(where: { $0.id == queryID }) {
+            close(queryID)
+            await finish(request, status: .denied)
+            return
+        }
+        guard !handled.contains(queryID) else { return }
+        deniedEarly.insert(queryID)
+        guard let profile = app.profiles.first(where: { $0.id == profileID }) ?? app.activeProfile,
+              let session = try? app.borrowSession(for: profile) else { return }
+        defer { app.releaseSession(session) }
+        // Up to 10 s for the mail fetch that brings the query (then it is denied in `receive`).
+        let deadline = ContinuousClock.now + .seconds(10)
+        while deniedEarly.contains(queryID), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
     }
 
     /// Photos / files the owner picked (none = deny). Uploaded as encrypted blobs for the bridge.

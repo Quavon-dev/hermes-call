@@ -22,7 +22,9 @@
 		15E635C1A6AEAA737DDF90E0 /* WebRTCCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65F0DBE26949EE2A0C2DAC3D /* WebRTCCall.swift */; };
 		17AE24022E706B2C427DF6D6 /* HermesCallWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97643C6D5F6591BC1A32F951 /* HermesCallWidget.swift */; };
 		1CE432295D7FD7D102AB89CC /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B444D9D2675C02EE191BB57 /* AppModel.swift */; };
+		20A810FDC6F37D33C5AA9E10 /* ChatRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4334886B079E4F597D3F8988 /* ChatRows.swift */; };
 		23CDC12FA01F36C2352806C0 /* Licenses in Resources */ = {isa = PBXBuildFile; fileRef = 31ADD53270A4B876EDE45E25 /* Licenses */; };
+		26BCF39D49714C533100CF74 /* ChatComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9B20A4702046B5574C957FC /* ChatComposer.swift */; };
 		29D276B74BCCA79D6056E931 /* PhoneTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2182CBC7DDEBD1D58814495 /* PhoneTranscriber.swift */; };
 		2A61D301A86EF3BA4ACCC743 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E75AE46F5F1F0CE72913EAE /* NotificationService.swift */; };
 		2E1E155B0A89959AAD96B13C /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C98861853B803EA7B7EF0F /* ShareViewController.swift */; };
@@ -38,6 +40,7 @@
 		4042E63EFE4375EC50437008 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 306985FC5AB57EFDF36F1E89 /* WidgetKit.framework */; };
 		40E757D9120247BB460DC9FD /* PresenceSketch.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9250EEBE2CF76F1569F7E09 /* PresenceSketch.swift */; };
 		416EB6969D3061DBFF6925C0 /* WatchPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0298500A7E504AEAD9DA16C3 /* WatchPalette.swift */; };
+		432DF7A60BD70B4318284DD9 /* ChatLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FFC4DA277DD0CD5B04504A9 /* ChatLink.swift */; };
 		44ED4464146F1719AB9FAB19 /* HermesCallNotifications.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5E7BA35C16726BD5998CC626 /* HermesCallNotifications.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		452929C8C86A63BC25D3C525 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 606A4C5C83183366D9329287 /* PrivacyInfo.xcprivacy */; };
 		49E5D3C1764009793F600183 /* HermesCallCore in Frameworks */ = {isa = PBXBuildFile; productRef = 00AD96B55095A83056BC52DE /* HermesCallCore */; };
@@ -49,6 +52,7 @@
 		6583B0C13810DA2DEFF34B2F /* AcknowledgementsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 857DAD0FB16BC816A60260D3 /* AcknowledgementsView.swift */; };
 		68E0E8112CF66633EB8875B8 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 606A4C5C83183366D9329287 /* PrivacyInfo.xcprivacy */; };
 		6AB0C865B170C12438EC62AD /* HermesCallTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6EC0C66622260736F15B2E3 /* HermesCallTests.swift */; };
+		6E65F232E9C339D2180B76BD /* MarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB3211E86987D867CE644303 /* MarkdownView.swift */; };
 		6FE43E9439B3DE3DB87557C2 /* HermesCallCore in Frameworks */ = {isa = PBXBuildFile; productRef = A94AF0E4C444176804E7D920 /* HermesCallCore */; };
 		74EFBA575B93F4DE7CBC9708 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 66A1D6CBC2CA7794BEEB0322 /* SwiftUI.framework */; };
 		772053DD8B223D6081D47E29 /* WatchLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1BA57DC1F3AED390AEA672B /* WatchLink.swift */; };
@@ -68,7 +72,9 @@
 		99F2BC4C5777F822D5E55A41 /* HermesCallWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1149AAB8E1622B5434D5B0B2 /* HermesCallWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		9A14698988E7F2C14A002239 /* AddRelayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDBC207885F299764D79674D /* AddRelayView.swift */; };
 		9EAA04F167F8613B0DE4E34A /* WatchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F94FA0A37273625E168E761E /* WatchModel.swift */; };
+		9EB5ACA9955D673DE1C621F4 /* ChatWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9426EC7AE4F6494EA6BA8F1D /* ChatWindow.swift */; };
 		9F0970220E11A9277D843745 /* PresenceInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = A76AB9DB839DB8F4F3896675 /* PresenceInteraction.swift */; };
+		A21CE3E56C5B7C9ABAC04063 /* ChatModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2D612D89592478D506EDDFC /* ChatModelTests.swift */; };
 		A3A06FF726BF93757E2CB5CF /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDDD59464AA12FBED0EF02FA /* HomeView.swift */; };
 		A91DA215CE16DBDF5DF3A433 /* TaskActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFD3AE043654DEAC0FE8B650 /* TaskActivityAttributes.swift */; };
 		A9FE8DBC3A6E8AF1F6C79717 /* PlaceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E6173D52C43474ABB6AA0A /* PlaceMonitor.swift */; };
@@ -203,7 +209,9 @@
 		2B444D9D2675C02EE191BB57 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		306985FC5AB57EFDF36F1E89 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		31ADD53270A4B876EDE45E25 /* Licenses */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Licenses; path = HermesCall/Resources/Licenses; sourceTree = SOURCE_ROOT; };
+		3FFC4DA277DD0CD5B04504A9 /* ChatLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatLink.swift; sourceTree = "<group>"; };
 		416D48B6DEC5D89FBEC69061 /* PresenceRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenceRenderer.swift; sourceTree = "<group>"; };
+		4334886B079E4F597D3F8988 /* ChatRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatRows.swift; sourceTree = "<group>"; };
 		4646A34CA3E08ED0B0D222D4 /* PresenceHaptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenceHaptics.swift; sourceTree = "<group>"; };
 		485AED7B5EDDF23A1A3C8802 /* LookCamera.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LookCamera.swift; sourceTree = "<group>"; };
 		4BC359306B42FAB3C49DF2A4 /* ProfilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesView.swift; sourceTree = "<group>"; };
@@ -233,6 +241,7 @@
 		885851B6A31D5D273481A2D0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		89FD6C096332F4C3EB01EEEA /* PresenceMood.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenceMood.swift; sourceTree = "<group>"; };
 		8DD452807AF76497D756BDD6 /* HermesCallKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = HermesCallKit; path = HermesCallKit; sourceTree = SOURCE_ROOT; };
+		9426EC7AE4F6494EA6BA8F1D /* ChatWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatWindow.swift; sourceTree = "<group>"; };
 		97643C6D5F6591BC1A32F951 /* HermesCallWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesCallWidget.swift; sourceTree = "<group>"; };
 		9895742A9CF4988FB793C468 /* Identity.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Identity.xcconfig; sourceTree = "<group>"; };
 		990F6D2623C88EAC409E7ACB /* HermesCallShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = HermesCallShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -251,6 +260,7 @@
 		B705F78AC5DDE50616A1716B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		B9250EEBE2CF76F1569F7E09 /* PresenceSketch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenceSketch.swift; sourceTree = "<group>"; };
 		B9273B76265898AEA3482C0E /* InCallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InCallView.swift; sourceTree = "<group>"; };
+		B9B20A4702046B5574C957FC /* ChatComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatComposer.swift; sourceTree = "<group>"; };
 		BDBC207885F299764D79674D /* AddRelayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddRelayView.swift; sourceTree = "<group>"; };
 		C1795C2EE043107F457BFD5E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C46B5E45723A531832767176 /* PresenceGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenceGeometry.swift; sourceTree = "<group>"; };
@@ -259,6 +269,7 @@
 		CCEDED18A1E11A930531AD8D /* HUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUD.swift; sourceTree = "<group>"; };
 		D12712DE83D5D9A0963A36DA /* HermesCall.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = HermesCall.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D1BA57DC1F3AED390AEA672B /* WatchLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchLink.swift; sourceTree = "<group>"; };
+		D2D612D89592478D506EDDFC /* ChatModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModelTests.swift; sourceTree = "<group>"; };
 		D31C21A16AE732E7D97FCABD /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		D4020FB0B03FAAE0D65A61EE /* HealthHomeSources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthHomeSources.swift; sourceTree = "<group>"; };
 		D53623A79B6059B27FD19D79 /* PresenceDeck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenceDeck.swift; sourceTree = "<group>"; };
@@ -270,6 +281,7 @@
 		DDDD59464AA12FBED0EF02FA /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		DE6EB54A7ED404DD3D1C2954 /* HermesCallNotifications.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HermesCallNotifications.entitlements; sourceTree = "<group>"; };
 		E0CE17DE2FD0B7834525AD95 /* EngineAudioDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineAudioDevice.swift; sourceTree = "<group>"; };
+		EB3211E86987D867CE644303 /* MarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownView.swift; sourceTree = "<group>"; };
 		ECB174B217FA34FCBD97CA30 /* HermesCallApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesCallApp.swift; sourceTree = "<group>"; };
 		F23A26673B9C4C7ADCFE209D /* PresenceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenceView.swift; sourceTree = "<group>"; };
 		F2CF86B94B48247C7F84D1B0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -486,9 +498,14 @@
 		802243D16BFE8CC701648842 /* Chat */ = {
 			isa = PBXGroup;
 			children = (
+				B9B20A4702046B5574C957FC /* ChatComposer.swift */,
+				3FFC4DA277DD0CD5B04504A9 /* ChatLink.swift */,
 				02B4F678CDC94B6AA0EBE3B2 /* ChatModel.swift */,
 				6100F7F693C7F153053D66E2 /* ChatNotifications.swift */,
+				4334886B079E4F597D3F8988 /* ChatRows.swift */,
 				6C3D219A4A37E119CBBBC58C /* ChatView.swift */,
+				9426EC7AE4F6494EA6BA8F1D /* ChatWindow.swift */,
+				EB3211E86987D867CE644303 /* MarkdownView.swift */,
 				1C5E5C0B5E04DB59062E65B0 /* PresentationViews.swift */,
 				ABB8DB75F48FD7267FA8B88D /* VoiceNotes.swift */,
 			);
@@ -605,6 +622,7 @@
 		FBAA244337D63B2AFCF55F5E /* HermesCallTests */ = {
 			isa = PBXGroup;
 			children = (
+				D2D612D89592478D506EDDFC /* ChatModelTests.swift */,
 				D6EC0C66622260736F15B2E3 /* HermesCallTests.swift */,
 			);
 			path = HermesCallTests;
@@ -905,6 +923,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A21CE3E56C5B7C9ABAC04063 /* ChatModelTests.swift in Sources */,
 				6AB0C865B170C12438EC62AD /* HermesCallTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -952,9 +971,13 @@
 				5288335CC41F8FFDCF87F293 /* CallAgentIntent.swift in Sources */,
 				031132302F325F3280094EBE /* CallCoordinator.swift in Sources */,
 				D1D807037466A7646BC5ACEE /* CarPlaySceneDelegate.swift in Sources */,
+				26BCF39D49714C533100CF74 /* ChatComposer.swift in Sources */,
+				432DF7A60BD70B4318284DD9 /* ChatLink.swift in Sources */,
 				091CC2FC91849E5703B0881C /* ChatModel.swift in Sources */,
 				E4609E50A935BC9FE2E0D3F5 /* ChatNotifications.swift in Sources */,
+				20A810FDC6F37D33C5AA9E10 /* ChatRows.swift in Sources */,
 				05A917EB39C3926E439EF65C /* ChatView.swift in Sources */,
+				9EB5ACA9955D673DE1C621F4 /* ChatWindow.swift in Sources */,
 				EA1414E356B9B5830503353D /* EngineAudioDevice.swift in Sources */,
 				CA6411C2C9F24C2E833FF187 /* HUD.swift in Sources */,
 				982466646BCA4BD9A86F5D2B /* HealthHomeSources.swift in Sources */,
@@ -962,6 +985,7 @@
 				A3A06FF726BF93757E2CB5CF /* HomeView.swift in Sources */,
 				12829DEF400AD134415B6F3E /* InCallView.swift in Sources */,
 				594478F278A7DD7E654B9B39 /* LookCamera.swift in Sources */,
+				6E65F232E9C339D2180B76BD /* MarkdownView.swift in Sources */,
 				F5B7AD3C1B55D68E7A2D3C07 /* OnboardingView.swift in Sources */,
 				CEDBFA1F8EFF13A0182E884E /* OneShotInput.swift in Sources */,
 				F7C5FF03F8701BC08BD2C612 /* PhoneAccessViews.swift in Sources */,

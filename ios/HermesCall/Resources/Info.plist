@@ -44,7 +44,7 @@
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>When you allow it, your agent can read your upcoming events. They are sent end-to-end encrypted to your own bridge only.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>The camera scans the pairing QR code of your bridge, and during a call it shows your agent what you point it at when you choose Look. Pictures go end-to-end encrypted to your own bridge only.</string>
+	<string>The camera scans the pairing QR code of your bridge, takes the photos you send in the chat, and during a call it shows your agent what you point it at when you choose Look. Pictures go end-to-end encrypted to your own bridge only.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>When you allow it, your agent can look up a contact by name (up to 5 matches). Results are sent end-to-end encrypted to your own bridge only.</string>
 	<key>NSFaceIDUsageDescription</key>
@@ -74,6 +74,7 @@
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>INStartCallIntent</string>
+		<string>INSendMessageIntent</string>
 	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
