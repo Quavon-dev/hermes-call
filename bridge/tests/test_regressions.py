@@ -257,6 +257,26 @@ def test_a4_relay_add_force_refuses_while_the_daemon_runs(tmp_path, monkeypatch)
     assert json.loads(store.path.read_text())["relay"]["bridge_id"] == "old"
 
 
+def test_a4_relay_add_force_works_when_the_daemon_is_stopped(tmp_path, monkeypatch) -> None:
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    listener.close()  # nothing listens there any more
+    (tmp_path / "bridge.toml").write_text(f'state_dir = "{tmp_path / "state"}"\n[api]\nport = {port}\n')
+    config = load(tmp_path / "bridge.toml")
+    store = StateStore(config.state_dir)
+    state = store.load()
+    state.relay = {"host": "old.example", "port": 443, "pin": "", "bridge_id": "old"}
+    store.save(state)
+
+    async def fake_pair(*args, **kwargs):
+        return {}, {"bridge_id": "new"}, ""
+
+    monkeypatch.setattr(cli_mod, "pair_as_initiator", fake_pair)
+    assert cli_mod.relay_add(config, ["hermescall://pair?v=1&k=relay&r=new.example&c=ABC0123456789"], force=True) == 0
+    assert json.loads(store.path.read_text())["relay"]["bridge_id"] == "new"
+
+
 # ---- A5: an acknowledged owner message survives a restart ---------------------------
 
 

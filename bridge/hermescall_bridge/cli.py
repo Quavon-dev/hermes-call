@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -49,7 +50,24 @@ def _parse_invite(args: list[str], pin: str = "") -> codes.PairingInvite:
     return invite
 
 
+def daemon_running(config: Config, timeout: float = 1.0) -> bool:
+    """Whether something (the bridge service) listens on the local API port."""
+    try:
+        with socket.create_connection((config.api_host, config.api_port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def relay_add(config: Config, args: list[str], force: bool, pin: str = "") -> int:
+    if daemon_running(config):
+        # The running service keeps its own copy of the state and would overwrite (or keep using) the old pairing.
+        print(
+            f"error: hermes-call-bridge is running (local API on port {config.api_port}); stop it first:\n"
+            "  systemctl stop hermes-call-bridge\n  hermes-call-bridge relay add … \n  systemctl start hermes-call-bridge",
+            file=sys.stderr,
+        )
+        return 1
     store = StateStore(config.state_dir)
     state = store.load()
     if state.paired and not force:
@@ -63,7 +81,7 @@ def relay_add(config: Config, args: list[str], force: bool, pin: str = "") -> in
     print(f"paired with relay {state.endpoint.authority} (bridge {result['bridge_id'][:6]}…)")
     if pin and not invite.pin:
         print(f"relay uses a self-signed certificate; pinned key {pin} (verified by the pairing code)")
-    print("restart the service: systemctl restart hermes-call-bridge")
+    print("start the service: systemctl start hermes-call-bridge")
     return 0
 
 
