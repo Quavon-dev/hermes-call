@@ -29,6 +29,8 @@ log = logging.getLogger(__name__)
 SEALING_OVERHEAD = sodium.AEAD_NONCEBYTES + sodium.AEAD_ABYTES
 # A file on disk without a row is a download in progress, unless it is older than this.
 STRAY_AFTER = 600.0
+# The directory is scanned for stray files at most this often (collect() runs after every message and poll).
+SCAN_EVERY = 60.0
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,7 @@ class FileSpool:
     def __init__(self, directory: Path, db: AsyncStore) -> None:
         self.directory = directory
         self._db = db
+        self._last_scan = -SCAN_EVERY
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(directory, 0o700)
 
@@ -89,15 +92,28 @@ class FileSpool:
         return {**file.meta(), "blob_id": blob_id, "key": file.key}
 
     async def collect(self) -> int:
-        """Deletes the files nothing needs any more (and stray ones without a row); returns how many."""
+        """Deletes the files nothing needs any more (and, every SCAN_EVERY, stray ones without a row);
+        returns how many. The disk work runs in a worker thread, not on the event loop."""
         unused = await self._db.call(self._db.store.unused_files)
-        known = await self._db.call(self._db.store.file_ids)
-        now = time.time()
-        stray = [p.name for p in self.directory.iterdir() if p.name not in known and now - p.stat().st_mtime > STRAY_AFTER]
-        for name in {*unused, *stray}:
-            (self.directory / name).unlink(missing_ok=True)
+        scan = time.monotonic() - self._last_scan >= SCAN_EVERY
+        known = await self._db.call(self._db.store.file_ids) if scan else None
+        if scan:
+            self._last_scan = time.monotonic()
+        if not unused and known is None:
+            return 0
+        deleted = await asyncio.get_running_loop().run_in_executor(None, self._delete, unused, known)
         if unused:
             log.info("%d spooled attachment(s) deleted", len(unused))
+        return deleted
+
+    def _delete(self, unused: list[str], known: set[str] | None) -> int:
+        """Unlinks `unused`, and files without a row older than STRAY_AFTER when `known` is given."""
+        stray: list[str] = []
+        if known is not None:
+            now = time.time()
+            stray = [p.name for p in self.directory.iterdir() if p.name not in known and now - p.stat().st_mtime > STRAY_AFTER]
+        for name in {*unused, *stray}:
+            (self.directory / name).unlink(missing_ok=True)
         return len(unused) + len(stray)
 
 

@@ -204,3 +204,35 @@ async def test_a_poll_while_an_agent_file_is_recorded_keeps_the_file(tmp_path, m
     assert (await chat.files.get(name)) is not None
     assert await chat.files.read(await chat.files.get(name)) == b"report"
     await chat.close()
+
+
+class RecordingDir:
+    """The spool directory, noting on which thread (and how often) it is scanned."""
+
+    def __init__(self, real) -> None:
+        self.real = real
+        self.scans: list[str] = []
+
+    def iterdir(self):
+        import threading
+
+        self.scans.append(threading.current_thread().name)
+        return self.real.iterdir()
+
+    def __truediv__(self, name: str):
+        return self.real / name
+
+
+async def test_collecting_spooled_files_scans_the_disk_off_the_event_loop_and_not_every_time(tmp_path) -> None:
+    import threading
+
+    chat, _, _ = service(tmp_path)
+    directory = RecordingDir(chat.files.directory)
+    chat.files.directory = directory
+    await chat.send_text("one")
+    await chat.send_text("two")
+    await chat.files.collect()
+    assert directory.scans, "stray files are still looked for"
+    assert threading.main_thread().name not in directory.scans
+    assert len(directory.scans) == 1, "at most one directory scan per interval"
+    await chat.close()
