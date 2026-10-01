@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # verdict() evaluates its condition later, on purpose
-# Full call test: relay container + "LXC 121" twin (Ubuntu 24.04) with the real
+# Full call test: relay container + a Hermes-container twin (Ubuntu 24.04) with the real
 # bridge, faster-whisper and Kokoro; a fake Hermes echoes the caller's question.
 # Requires a Kokoro-FastAPI container named "kokoro" (ghcr.io/remsky/kokoro-fastapi-cpu).
 set -Eeuo pipefail

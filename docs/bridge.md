@@ -1,4 +1,4 @@
-# hermes-call-bridge (runs inside the Hermes container, LXC 121)
+# hermes-call-bridge (runs inside the Hermes container)
 
 The bridge connects **out** to your relay, answers and places calls, and runs
 the voice pipeline next to Hermes:
@@ -31,11 +31,15 @@ phone ⇄ (DTLS-SRTP via TURN) ⇄ aiortc → Silero VAD → faster-whisper → 
   the current utterance. Logs contain timings and 6-character ids only. (Hermes
   itself keeps the conversation text in its session store, as with any chat.)
 
-## Install (as root in LXC 121)
+## Install (as root in the Hermes container)
 
 Explained before you run it:
 
-- `pct push` copies the repository archive from the Proxmox host into the container.
+- `<hermes-id>` below is the ID of the Proxmox container that runs Hermes (`pct list`); on any other
+  host run the commands after `--` directly.
+- Installs and updates come only from signed releases: `bridge/get.sh` downloads the newest release,
+  verifies its signed MANIFEST against the pinned release key and refuses an older version than the
+  installed one unless `HC_ALLOW_DOWNGRADE=1` is set ([releasing.md](releasing.md)).
 - `install.sh` runs as root inside the container. It:
   - installs `python3-venv`, `libsodium23` and `qrencode`
   - creates the unprivileged user `hermes-call-bridge`
@@ -47,7 +51,7 @@ Explained before you run it:
   file stays mode 600). It does not touch anything else in Hermes.
 
 ```bash
-pct exec 121 -- bash -c "curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/bridge/get.sh | bash"
+pct exec <hermes-id> -- bash -c "curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/bridge/get.sh | bash"
 ```
 
 `bridge/get.sh` downloads the latest release, checks its signature against the pinned release key
@@ -64,24 +68,24 @@ normally run `hermes gateway`), then pair with the relay using the link that
 `hermescall-relay pair` printed on the relay:
 
 ```bash
-pct exec 121 -- bash -c "systemctl stop hermes-call-bridge; hermes-call-bridge relay add 'hermescall://pair?v=1&k=relay&r=relay.example.com&c=...' && systemctl start hermes-call-bridge"
+pct exec <hermes-id> -- bash -c "systemctl stop hermes-call-bridge; hermes-call-bridge relay add 'hermescall://pair?v=1&k=relay&r=relay.example.com&c=...' && systemctl start hermes-call-bridge"
 ```
 
 Pair a phone (the app shows a code field and a QR scanner):
 
 ```bash
-pct exec 121 -- hermes-call-bridge device add --name iPhone
+pct exec <hermes-id> -- hermes-call-bridge device add --name iPhone
 ```
 
 Other commands:
 
 ```bash
-pct exec 121 -- hermes-call-bridge doctor
-pct exec 121 -- hermes-call-bridge device list
-pct exec 121 -- hermes-call-bridge device revoke <device-id>
-pct exec 121 -- hermes-call-bridge call --first-message "Hello, this is Hermes." --reason "test"
-pct exec 121 -- hermes-call-bridge status
-pct exec 121 -- journalctl -u hermes-call-bridge -f
+pct exec <hermes-id> -- hermes-call-bridge doctor
+pct exec <hermes-id> -- hermes-call-bridge device list
+pct exec <hermes-id> -- hermes-call-bridge device revoke <device-id>
+pct exec <hermes-id> -- hermes-call-bridge call --first-message "Hello, this is Hermes." --reason "test"
+pct exec <hermes-id> -- hermes-call-bridge status
+pct exec <hermes-id> -- journalctl -u hermes-call-bridge -f
 ```
 
 `--agent-name NAME` sets the name your phone shows for the agent (default
@@ -89,7 +93,7 @@ pct exec 121 -- journalctl -u hermes-call-bridge -f
 app (*Relays → relay → Assistant*).
 
 `base.en` is the default (≈0.45 s per utterance on 2 cores). `--stt-model small.en` is more
-accurate but ≈1.7 s per utterance on 2 cores — too slow for the 2.5 s target on LXC 121.
+accurate but ≈1.7 s per utterance on 2 cores — too slow for the 2.5 s target on a 2-core container.
 
 ## Test client (M2): call the agent without the app
 
@@ -142,7 +146,7 @@ Ask your agent to call you, e.g. "call me when the backup is done", or test it
 without Hermes:
 
 ```bash
-pct exec 121 -- hermes-call-bridge call --first-message "Hello, this is Hermes." --reason "test"
+pct exec <hermes-id> -- hermes-call-bridge call --first-message "Hello, this is Hermes." --reason "test"
 ``` `--wav question.wav --record reply.wav` prints the measured
 end-of-speech → first-audio latency.
 
@@ -245,7 +249,7 @@ bridge. `install.sh uninstall --instance atlas [--purge]` removes only that one.
 | Kokoro-FastAPI (existing) | ~1.5–2 GB |
 | Hermes (existing) | ~0.5 GB+ |
 
-With 6 GB for LXC 121 there is comfortable headroom.
+With 6 GB for the Hermes container there is comfortable headroom.
 
 ## Phone context and result cards (M7)
 

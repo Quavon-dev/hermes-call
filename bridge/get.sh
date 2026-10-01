@@ -3,9 +3,9 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/bridge/get.sh | sudo bash
 #
-# From a Proxmox host into the container that runs Hermes (121 = its ID):
+# From a Proxmox host into the container that runs Hermes (<hermes-id> = its ID):
 #
-#   pct exec 121 -- bash -c "curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/bridge/get.sh | bash"
+#   pct exec <hermes-id> -- bash -c "curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/bridge/get.sh | bash"
 #
 # Downloads the latest release, checks its signature against the pinned release key before
 # anything runs, then runs bridge/install.sh install --configure-hermes for the Hermes user: the one
