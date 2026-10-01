@@ -8,23 +8,99 @@ versioned separately and is at **0.7.0** in this release.
 
 ## [Unreleased]
 
-- iOS chat history in SQLite (app group, WAL, data protection as before), moved over from the JSON
-  files once; no 3000-message limit, and the app and share extension can write at the same time.
-- Chat: paging, search, delete on this iPhone, full Markdown for agent messages (headings, lists,
-  code, quotes, tables), several files at once, camera photos, voice notes with waveform,
-  scrubbing and speed, and a way to Settings when the microphone is off.
+### iOS app
+
+- Consent before anything reaches your agent (what is shared, that the agent may use a third-party
+  AI service); revocable in Settings › Privacy. Calls, chat, phone context and Siri stay off without it.
+- Try a demo: an offline demo agent ("Atlas") with chat, cards and a simulated call, no relay needed.
+- New onboarding with permission explanations; `hermescall://pair` links open pairing; clear pairing
+  errors (unreachable, TLS, rate limited, busy, wrong code, device limit); camera-denied help.
+- `hermescall://call` links from other apps ask "Call <agent>?" first; only the app's own widget
+  links (per-install secret) call at once.
+- Chats: one list of all agents with unread counts per agent (badge = their sum); up to five agents
+  stay connected while the app is open.
+- Chat history in SQLite (app group, WAL, data protection as before), moved over from the JSON files
+  once; no 3000-message limit, and the app and share extension can write at the same time.
+- Chat: paging, search ("Today"/"Yesterday", file names), delete on this iPhone, full Markdown
+  (headings, lists, code blocks with wrap/copy, quotes, tables), several files at once, camera
+  photos, voice notes with waveform, scrubbing and speed; readable owner bubbles (WCAG AA).
 - Fixed: retrying a failed message sent it through the active agent instead of the chat's own.
-- Fixed: the share sheet took the relay connection away from the running app (e.g. during a call);
-  it now hands messages to the app and connects itself only when the app is not running. It
-  defaults to the active agent and says which items it left out.
-- Call entries in the chat are stored structured, not as English text.
+- Fixed: the share sheet took the relay connection away from the running app; it now hands messages
+  to the app (spoof-resistant handshake) and connects itself only when the app is not running.
 - Notifications: communication notifications with the agent as sender, app badge, photo previews;
   Answer and Deny on phone-context questions.
-- Widgets: agent picker, Call and chat buttons; the Live Activity shows the agent that started it
-  and clears a lost task after 11 minutes (was 15).
+- Approvals: a cancelled Face ID keeps the request open ("Try again"); one approval panel for calls
+  and chat.
+- Calls follow audio route changes and interruptions; route picker and captions on the call screen;
+  agent names on incoming rings; CallKit template icon.
+- Settings reorganised per agent, plus Diagnostics (network, push registration, relay version and
+  round trip, redacted log export); offline banner and instant reconnect on network changes.
+- The presence pauses under sheets and in the background and slows down in Low Power Mode, with
+  Reduce Motion or when hot; Dynamic Type, Increase Contrast and Reduce Transparency support.
+- Siri: "Call <agent>", "Ask <agent>", "Open Chat" with an agent parameter; Focus filter per agent.
+- The agent can add reminders and calendar events (off by default; Ask shows the exact item).
+- Widgets: agent picker, Call and chat buttons; the Live Activity names its agent and clears a lost
+  task after 11 minutes.
 - Apple Watch: messages queue while the iPhone is out of reach, voice notes, deny approvals, call
   haptics; updates follow new messages also in the background.
-- Fixed: voice note playback could stop the app (audio callbacks ran as main-actor code).
+- Relay protocol: the app sends its version and caps, handles `unsupported`, retries busy (503)
+  blob transfers, reconnects quickly after a relay restart and uses TURNS when offered.
+- Fixed: voice note playback could stop the app (audio callbacks ran as main-actor code); framework
+  callbacks no longer run on the main actor; force unwraps removed.
+- UI tests on the demo agent; App Store review notes, privacy answers and captioned screenshots in
+  `ios/appstore/`.
+
+### Bridge and Hermes plugin
+
+- Chat messages survive bridge restarts and relay outages: stored before "delivered", with a
+  persistent outbox that retries.
+- Fixed: owner messages lost after a bridge restart (adapter cursor epoch), ghost calls after
+  hanging up during setup, and silence when Hermes or Kokoro fails mid-call.
+- Live-call speech recognition is no longer held up by long voice notes.
+- "Approve for this session" for command approvals; approvals expire instead of hanging.
+- Calls use one Hermes session per phone and day instead of one ever-growing session.
+- Configurable call timeouts; a spoken warning a minute before the call limit; calls without audio
+  end on their own; pending approvals and captions are re-sent after a relay reconnect.
+- TURN over TCP/TLS can be preferred (`[turn] transport`); blob transfers retry when the relay is busy.
+- Phone context asks the phone you are using first; new "create reminder" and "create calendar
+  event" capabilities.
+- `hermes-call-bridge doctor`, `/healthz`, `/metrics`, JSON logs, systemd watchdog and graceful
+  shutdown; several agents on one host (`install.sh --instance NAME`).
+- Plugin: Hermes compatibility probe, tools return at once when the owner interrupts the agent.
+- Revoking a phone works while the relay is offline; `relay add` refuses while the bridge runs.
+- `bridge/get.sh` verifies releases with the shared block (signed MANIFEST, no downgrades).
+
+### Relay and push gateway
+
+- Every limit configurable in `[limits]` (`relay.local.toml` survives updates); max devices per
+  bridge; global storage cap and free-space floor; background expiry and vacuum; versioned schema
+  migrations.
+- Blob transfers survive a busy relay (503 + retry), with deadlines and a download cap; unknown
+  message types answered with `unsupported` instead of disconnecting; `ready` carries version and caps.
+- Graceful shutdown (1001, pending chat alerts sent); APNs and gateway retries with backoff.
+- `/healthz` with real checks (cached, rate-limited, version only locally); opt-in Prometheus
+  `/metrics`; JSON logs.
+- CLI: devices, revoke-device, stats, doctor, backup, restore, compact.
+- Installer: rollback, backup/restore, rotate turn-secret/push-key/apns-key, `--turn-ports`,
+  `--turn-quota`, `--turns` (5349), TURN credential TTL 90 min, hardened coturn unit. Old relays
+  are no longer switched to the push gateway on update. Uninstall removes the firewall table without
+  flushing other rules.
+- Push gateway: persistent replay cache that resists floods, soft token binding (≤ 5 relays per
+  token in 30 days, hashed), atomic blocklist reload, unblock and rotate-apns-key, health, metrics.
+- Docker: HEALTHCHECK, volumes, non-root; `docker-compose.yml` with relay + coturn + Caddy (only
+  Caddy's fixed address trusted for `X-Forwarded-For`); `:latest` only from release tags.
+
+### Releases, CI and docs
+
+- Releases carry a signed MANIFEST (version, commit); installers refuse downgrades unless
+  `HC_ALLOW_DOWNGRADE=1` / `--allow-downgrade`; a legacy `SHA256SUMS` must be exactly one line.
+- `tools/release.sh` builds reproducibly and signs CI drafts offline; `v*` tags create a draft
+  release with provenance; the relay image gets semver tags, Trivy, cosign signatures.
+- CI runs app unit and UI tests, the relay installer in systemd containers, pip-audit, CodeQL, a
+  coverage floor, SHA-pinned actions with Dependabot, bridge end-to-end and Hermes compatibility
+  workflows, and an external push gateway monitor.
+- Docs: architecture with diagrams, troubleshooting, releasing, operations (backup, rollback,
+  rotation), generic home-server guide; code of conduct, support policy; threat model updated.
 
 ## [0.6.2]
 
