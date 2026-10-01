@@ -70,6 +70,17 @@ versioned separately and is at **0.7.0** in this release.
 - Revoking a phone works while the relay is offline; `relay add` refuses while the bridge runs.
 - `bridge/get.sh` verifies releases with the shared block (signed MANIFEST, no downgrades).
 
+### Calls, chat sync and versions (bridge + app)
+
+- Calls survive Wi-Fi ↔ cellular changes: "Reconnecting…" and up to 20 s to resume the same
+  conversation (both sides need `call_resume`; older peers end the call as before).
+- A newly paired phone gets the recent chat from the bridge (up to 200 messages, with attachments
+  within limits); photos and files sent from one phone appear on your other phones.
+- Attachments no longer pass through the bridge's memory as base64; they are spooled on disk, sealed.
+- "Allow for this session" for approvals (needs Face ID); Diagnostics shows the bridge version.
+- App and bridge exchange protocol versions and caps (E2E `hello`), unknown types are answered with
+  `unsupported`; `state.json` has a schema version.
+
 ### Relay and push gateway
 
 - Every limit configurable in `[limits]` (`relay.local.toml` survives updates); max devices per
