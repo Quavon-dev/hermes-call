@@ -875,7 +875,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.8.4,<4" },
     { name = "cryptography", specifier = ">=38.0.4" },
     { name = "hermescall-common", editable = "common" },
-    { name = "httpx", extras = ["http2"], specifier = ">=0.23.3,<1" },
+    { name = "httpx", extras = ["http2"], specifier = ">=0.28.1,<1" },
 ]
 
 [[package]]
