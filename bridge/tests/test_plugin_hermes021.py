@@ -135,3 +135,16 @@ async def test_an_undeliverable_slash_confirmation_is_cancelled_not_typed(hermes
 
 def test_the_adapter_splits_long_messages(adapter_module) -> None:  # noqa: F811
     assert adapter_module.HermesCallAdapter.splits_long_messages is True
+
+
+# ---- 5: a cancelled turn is not reported as done ------------------------------------------------
+
+
+@pytest.mark.parametrize(("outcome", "failed"), [("success", False), ("failure", True), ("cancelled", True)])
+async def test_a_cancelled_turn_ends_its_task_as_not_done(adapter_module, monkeypatch, outcome, failed) -> None:  # noqa: F811
+    ended: list[tuple[str, bool]] = []
+    reporter = types.SimpleNamespace(turn_ended=lambda turn, failed: ended.append((turn, failed)))
+    monkeypatch.setattr(adapter_module, "REPORTER", reporter)
+    adapter = adapter_module.HermesCallAdapter(None)
+    await adapter.on_processing_complete(MessageEvent(message_id="m1"), types.SimpleNamespace(value=outcome))
+    assert ended == [("m1", failed)]

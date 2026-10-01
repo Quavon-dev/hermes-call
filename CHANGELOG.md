@@ -25,6 +25,8 @@ versioned separately and is at **0.8.1** in this release.
   which this platform refuses.
 - Hermes plugin: cron output longer than 4000 characters reaches the chat in full (the adapter
   declares that it splits long messages itself).
+- Hermes plugin: a chat turn Hermes reports as cancelled (`/stop`) ends its task as `failed`
+  instead of `done` (phones know no other end state).
 
 ## [0.7.1] — 2026-10-01
 

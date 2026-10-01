@@ -306,10 +306,11 @@ class HermesCallAdapter(BasePlatformAdapter):
             self._answering[str(event.message_id)] = None
 
     async def on_processing_complete(self, event: MessageEvent, outcome: Any) -> None:
-        """The reply for this owner message was sent (or the turn failed): the task ends."""
+        """The reply for this owner message was sent, or the turn failed or was cancelled (/stop):
+        the task ends; a cancelled one as `failed`, the end state phones know besides `done`."""
         self._answering.pop(str(event.message_id), None)
         turn_id = str(event.message_id or DEFAULT_TURN)[:MAX_TURN_ID]
-        REPORTER.turn_ended(turn_id, failed=getattr(outcome, "value", outcome) == "failure")
+        REPORTER.turn_ended(turn_id, failed=getattr(outcome, "value", outcome) in ("failure", "cancelled"))
 
     # ---- outbound ----------------------------------------------------------
 
