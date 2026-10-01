@@ -3,10 +3,14 @@ Older Hermes (no version in /health, or no /v1/runs) keeps /v1/chat/completions.
 
 import asyncio
 import json
+import os
+import socket
+from pathlib import Path
 
 import httpx
 import pytest
 
+from hermescall_bridge import hermes as hermes_mod
 from hermescall_bridge.calls import ActiveCall
 from hermescall_bridge.hermes import ApprovalRequest, HermesClient, HermesRunError, TextDelta, ToolProgress
 
@@ -186,3 +190,43 @@ async def test_runs_are_used_by_hermes_that_reports_a_version_from_0_21(version,
     api = FakeApi(version=version, events=runs_events(ev("message.delta", delta="Hi."), ev("run.completed")))
     [e async for e in client_for(api).turn("sys", "hi")]
     assert ("POST /v1/runs" in api.paths()) is runs
+
+
+# ---- against Hermes' real API server (skipped without a local Hermes >= 0.21) ---------------------
+
+HERMES_DIR = Path(os.environ.get("HERMES_AGENT_DIR") or Path.home() / ".hermes" / "hermes-agent")
+HERMES_PYTHON = Path(os.environ.get("HERMES_AGENT_PYTHON") or HERMES_DIR / "venv" / "bin" / "python3")
+
+
+@pytest.mark.skipif(not HERMES_PYTHON.exists(), reason="needs a local Hermes checkout (~/.hermes/hermes-agent)")
+async def test_runs_against_real_hermes_api_server(tmp_path) -> None:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path), "HERMES_HOME": str(tmp_path / "hermes-home")}
+    process = await asyncio.create_subprocess_exec(
+        str(HERMES_PYTHON),
+        str(Path(__file__).parent / "hermes_runs_smoke.py"),
+        str(HERMES_DIR),
+        str(Path(hermes_mod.__file__)),
+        str(port),
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await asyncio.wait_for(process.communicate(), 120)
+    lines = [line for line in out.decode().splitlines() if line.startswith("{")]
+    assert lines, err.decode()[-3000:]
+    result = json.loads(lines[-1])
+    if "skipped" in result:
+        pytest.skip(result["skipped"])
+    assert result["runs"] is True
+    kinds = [event[0] for event in result["events"]]
+    assert kinds == ["ToolProgress", "ApprovalRequest", "answered", "ToolProgress", "TextDelta", "TextDelta"]
+    approval = result["events"][1][1]
+    assert approval["command"] == "rm -rf /tmp/x" and approval["request_id"] and approval["choices"] == ["once", "deny"]
+    assert result["events"][2] == ["answered", "once"] and result["seen"]["decision"] == "once"
+    assert result["events"][4][1]["text"] == "Done." and result["events"][5][1]["text"] == "One. "
+    assert result["seen"]["stopped"] is True, "cutting the turn off must stop the Hermes run"
+    first = result["seen"]["turns"][0]
+    assert first == {"input": "delete it", "instructions": "call note", "session": "hermes-call-phone-smoke"}
