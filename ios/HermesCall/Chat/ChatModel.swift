@@ -476,7 +476,10 @@ final class ChatModel {
         guard profile.isDemo || app.requireConsent() else { return nil }
         let trimmed = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(ChatWire.maxText))
         guard !trimmed.isEmpty || !files.isEmpty else { return nil }
-        var message = ChatMessage(id: E2EChannel.newMessageID(), role: .owner, text: trimmed, status: .pending)
+        // `/stop` shows as a small "Stop requested" line (on the wire it stays a plain chat message).
+        var message = files.isEmpty && StopCommand.matches(trimmed)
+            ? StopCommand.message(id: E2EChannel.newMessageID())
+            : ChatMessage(id: E2EChannel.newMessageID(), role: .owner, text: trimmed, status: .pending)
         do {
             for file in files.prefix(4) {
                 var attachment = ChatAttachment(kind: file.kind, name: file.name, mime: file.mime, size: file.data.count,
@@ -493,6 +496,23 @@ final class ChatModel {
         apply(message, profile: profile.id)
         await deliver(message.id, profile: profile)
         return message.id
+    }
+
+    enum StopResult: Sendable, Equatable {
+        /// The bridge confirmed it.
+        case delivered
+        /// Stored; it waits in the outbox until the relay is reachable.
+        case queued
+        /// No agent, or no consent to share with it.
+        case unavailable
+    }
+
+    /// The owner's emergency stop (docs/protocol.md "Stop"): `/stop` through the durable chat path, so every
+    /// bridge passes it to Hermes, whose gateway interrupts the running turn. nil: the active agent.
+    func requestStop(profileID: UUID? = nil) async -> StopResult {
+        guard let profile = profileID.flatMap({ id in app.profiles.first { $0.id == id } }) ?? app.activeProfile,
+              let id = await send(text: StopCommand.text, profileID: profile.id) else { return .unavailable }
+        return await store.message(id, in: profile.id)?.status == .delivered ? .delivered : .queued
     }
 
     enum AskResult: Sendable, Equatable { case answered(String), sent, failed }

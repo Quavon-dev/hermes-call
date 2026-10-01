@@ -23,6 +23,12 @@ final class DemoLinkProvider: ChatLinkProvider {
     weak var chat: ChatModel?
     /// Seconds between the owner's message and the reply (0 in tests).
     var thinking: Duration = .milliseconds(1100)
+    /// The reply being prepared (`/stop` cancels it).
+    private var replying: Task<Void, Never>?
+
+    /// What Hermes' gateway answers a `/stop` (its `gateway.stop.stopped` / `no_active` texts).
+    static let stoppedReply = "⚡ Stopped. You can continue this session."
+    static let nothingToStopReply = "No active task to stop."
 
     func withLink<T: Sendable>(_ profile: RelayProfile, _ work: @escaping (any ChatLink) async throws -> T) async -> T? {
         try? await work(DemoLink(profile: profile, owner: self))
@@ -33,13 +39,35 @@ final class DemoLinkProvider: ChatLinkProvider {
         let link = DemoLink(profile: profile, owner: self)
         let text = body["text"]?.string ?? ""
         let attachments: Int = if case .array(let items)? = body["attachments"] { items.count } else { 0 }
+        if attachments == 0, StopCommand.matches(text) { return stop(id, profile: profile, link: link) }
+        Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            chat?.handle(["type": "chat_ack", "id": .string(id)], profile: profile, link: link)
+        }
+        replying?.cancel()
+        replying = Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            chat?.handle(["type": "typing"], profile: profile, link: link)
+            try? await Task.sleep(for: thinking)
+            guard !Task.isCancelled else { return }
+            chat?.handle(DemoAgent.reply(to: text, attachments: attachments), profile: profile, link: link)
+            replying = nil
+        }
+    }
+
+    /// The demo's `/stop`: the pending reply never comes; answered the way Hermes answers it.
+    private func stop(_ id: String, profile: RelayProfile, link: DemoLink) {
+        let wasReplying = replying != nil
+        replying?.cancel()
+        replying = nil
+        let text = wasReplying ? Self.stoppedReply : Self.nothingToStopReply
         Task {
             try? await Task.sleep(for: .milliseconds(150))
             chat?.handle(["type": "chat_ack", "id": .string(id)], profile: profile, link: link)
             try? await Task.sleep(for: .milliseconds(250))
-            chat?.handle(["type": "typing"], profile: profile, link: link)
-            try? await Task.sleep(for: thinking)
-            chat?.handle(DemoAgent.reply(to: text, attachments: attachments), profile: profile, link: link)
+            chat?.handle(["type": "chat", "id": .string(E2EChannel.newMessageID()), "role": "agent", "text": .string(text)],
+                         profile: profile, link: link)
         }
     }
 }

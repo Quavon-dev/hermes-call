@@ -6,6 +6,7 @@ struct ChatView: View {
     @Environment(AppModel.self) private var app
     @Environment(ChatModel.self) private var chat
     @Environment(CallCoordinator.self) private var calls
+    @Environment(TaskActivityModel.self) private var tasks
     @State private var preview: URL?
     @State private var searching = false
     @State private var query = ""
@@ -308,19 +309,38 @@ struct ChatView: View {
             .disabled(searching)
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
+            if agentWorking && !searching { stopButton }
             Menu {
                 Button { Task { await calls.startCall() } } label: { Label("Call now", systemImage: "phone.fill") }
                     .disabled(app.relayStatus != .connected || calls.inCall)
                 Button { Task { await chat.send(text: ChatModel.callMeText) } } label: {
                     Label("Ask \(chat.agentName) to call me", systemImage: "phone.arrow.down.left")
                 }
+                Divider()
+                // Always here, also while the agent looks idle (a turn without tools shows nothing).
+                Button(role: .destructive) { AgentStop.tapped(chat: chat, calls: calls) } label: {
+                    Label("Stop agent", systemImage: "stop.circle")
+                }
             } label: {
                 Label("Call", systemImage: "phone")
             } primaryAction: {
-                Task { await calls.startCall() }
+                if !calls.inCall { Task { await calls.startCall() } }
             }
-            .disabled(calls.inCall)
         }
+    }
+
+    /// The agent is typing or a task of it runs: Stop sits next to the call button.
+    private var agentWorking: Bool { StopCommand.agentIsWorking(typing: chat.agentTyping, task: tasks.activeTask) }
+
+    private var stopButton: some View {
+        Button { AgentStop.tapped(chat: chat, calls: calls) } label: {
+            Label("Stop", systemImage: "stop.fill").labelStyle(.titleAndIcon)
+                .font(.subheadline.weight(.semibold))
+        }
+        .tint(hud ? HUD.alert : .red)
+        .buttonStyle(.borderedProminent)
+        .accessibilityLabel("Stop \(chat.agentName)")
+        .accessibilityIdentifier("chat.stop")
     }
 
     private var subtitle: String {

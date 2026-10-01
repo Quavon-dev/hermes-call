@@ -7,8 +7,14 @@ import HermesCallCore
 /// `-UITestConsent YES`: sharing already allowed (skips the consent screen).
 /// `-UITestAgents YES` (with reset): two paired agents on an unreachable relay, each with a message and
 /// unread ones, for the chat list.
+/// `-DemoThinkingSeconds <s>`: how long the demo agent types before it answers.
 enum UITestSupport {
     static var isResetRequested: Bool { UserDefaults.standard.bool(forKey: "UITestReset") }
+    /// `-DemoThinkingSeconds 8`: the demo agent "types" that long before it answers (the Stop button test).
+    static var demoThinkingSeconds: Double? {
+        let seconds = UserDefaults.standard.double(forKey: "DemoThinkingSeconds")
+        return seconds > 0 ? seconds : nil
+    }
 
     static func resetIfRequested() {
         let defaults = UserDefaults.standard

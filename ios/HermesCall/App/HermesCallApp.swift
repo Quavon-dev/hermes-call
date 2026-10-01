@@ -27,6 +27,9 @@ struct HermesCallApp: App {
         let links = AgentLinks(app: app)
         let chat = ChatModel(app: app, links: links)
         links.demo.chat = chat
+        #if DEBUG
+        if let seconds = UITestSupport.demoThinkingSeconds { links.demo.thinking = .seconds(seconds) }
+        #endif
         let phone = PhoneContextModel(app: app)
         let tasks = TaskActivityModel(app: app)
         router.onTask = { [weak tasks] message, session in tasks?.receive(message, from: session) }

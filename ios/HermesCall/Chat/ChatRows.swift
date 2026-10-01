@@ -33,6 +33,9 @@ struct MessageRow: View {
         if let presentation = message.presentation {
             PresentationBubble(message: message, presentation: presentation, hud: hud)
                 .contextMenu { deleteButton }
+        } else if message.isStopRequest {
+            StopRequestRow(message: message, hud: hud, retry: retry)
+                .contextMenu { deleteButton }
         } else if message.role == .system {
             Label(message.systemText, systemImage: systemSymbol)
                 .font(.caption)
@@ -335,5 +338,32 @@ struct ChatApprovalSheet: View {
                       onDeny: { Task { await chat.answerApproval(.deny) } },
                       onApprove: { Task { await chat.answerApproval(.once) } },
                       onApproveSession: approval.allowsSession ? { Task { await chat.answerApproval(.session) } } : nil)
+    }
+}
+
+/// The owner's `/stop`: a small centred line, not a bubble (it failed: tap to send it again).
+private struct StopRequestRow: View {
+    let message: ChatMessage
+    let hud: Bool
+    let retry: () -> Void
+
+    var body: some View {
+        Group {
+            if message.status == .failed {
+                Button(action: retry) {
+                    Label("Stop not delivered – tap to retry", systemImage: "exclamationmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.red)
+            } else {
+                Label(StopCommand.label, systemImage: "stop.circle")
+                    .foregroundStyle(hud ? HUD.alert.opacity(0.9) : .secondary)
+                    .opacity(message.status == .delivered ? 1 : 0.6)
+            }
+        }
+        .font(.caption)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity)
+        .accessibilityIdentifier("chat.stopRequested")
     }
 }

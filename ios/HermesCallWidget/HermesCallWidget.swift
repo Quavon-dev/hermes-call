@@ -272,11 +272,25 @@ struct CallControl: ControlWidget {
     }
 }
 
+/// Control Center / Lock Screen / Action button: runs `StopAgentIntent` in the app's process, without its UI.
+struct StopControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: "de.quavon.hermescall.stop") {
+            ControlWidgetButton(action: StopAgentIntent()) {
+                Label("Stop Agent", systemImage: "stop.circle.fill")
+            }
+        }
+        .displayName("Stop Agent")
+        .description("Stops what your agent is doing right now.")
+    }
+}
+
 @main
 struct HermesCallWidgets: WidgetBundle {
     var body: some Widget {
         ChatWidget()
         CallControl()
+        StopControl()
         TaskLiveActivity()
     }
 }

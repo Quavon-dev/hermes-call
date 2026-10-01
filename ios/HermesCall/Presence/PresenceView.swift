@@ -29,6 +29,9 @@ struct PresenceView: View {
     @State private var importingFile = false
     @State private var dropTargeted = false
     @State private var focusedRing: Int?
+    @State private var offeringStop = false
+    /// "stop requested" under the name for a few seconds after Stop.
+    @State private var stopNoteShown = false
     @AppStorage("presenceHints") private var hintUses = 0
 
     enum PresenceSheet: String, Identifiable {
@@ -75,6 +78,11 @@ struct PresenceView: View {
             return true
         }
         .sheet(item: $sheet) { sheet in sheetView(sheet) }
+        .confirmationDialog("Stop \(agentName)?", isPresented: $offeringStop, titleVisibility: .visible) {
+            Button("Stop agent", role: .destructive, action: stopAgent)
+        } message: {
+            Text("What it is doing now ends; the conversation stays.")
+        }
         .sheet(item: Binding(get: { calls.pendingApproval }, set: { if $0 == nil { calls.pendingApproval = nil } })) {
             ApprovalSheet(approval: $0).interactiveDismissDisabled().hudStyle(true)
         }
@@ -172,7 +180,12 @@ struct PresenceView: View {
 
     /// What the agent is doing on a longer task (the tasks ring shows how far).
     @ViewBuilder private var taskLabel: some View {
-        if let task = tasks.activeTask {
+        if stopNoteShown {
+            HUD.label("stop requested", size: 8).foregroundStyle(HUD.alert)
+                .padding(.top, app.profiles.count > 1 ? 22 : 10)
+                .transition(.opacity)
+                .accessibilityIdentifier("presence.stopRequested")
+        } else if let task = tasks.activeTask {
             HStack(spacing: 8) {
                 HUD.label(task.state == .running ? task.label : (task.state == .done ? "done" : "failed"), size: 8)
                 if let total = task.total { HUD.label("\(task.step) / \(total)", size: 8).opacity(0.6) }
@@ -329,6 +342,7 @@ struct PresenceView: View {
                 },
                 RadialMenuItem(id: "chat", title: "Chat", symbol: "text.bubble") { sheet = .history },
                 RadialMenuItem(id: "look", title: "Look", symbol: "camera.viewfinder") { sheet = .look },
+                RadialMenuItem(id: "stop", title: "Stop agent", symbol: "stop.fill", destructive: true, action: stopAgent),
                 RadialMenuItem(id: "end", title: "End", symbol: "phone.down.fill", destructive: true) { perform(.endCall) },
             ]
         }
@@ -339,7 +353,18 @@ struct PresenceView: View {
             RadialMenuItem(id: "access", title: "Access", symbol: "iphone.gen3") { sheet = .phoneAccess },
             RadialMenuItem(id: "relays", title: "Relays", symbol: "antenna.radiowaves.left.and.right") { sheet = .relays },
             RadialMenuItem(id: "settings", title: "Settings", symbol: "gearshape") { sheet = .settings },
+            RadialMenuItem(id: "stop", title: "Stop agent", symbol: "stop.fill", destructive: true, action: stopAgent),
         ]
+    }
+
+    /// The emergency stop (menu, tasks ring): light haptic, "stop requested" for a moment.
+    private func stopAgent() {
+        AgentStop.tapped(chat: chat, calls: calls)
+        withAnimation(.easeInOut(duration: 0.3)) { stopNoteShown = true }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(4))
+            withAnimation(.easeInOut(duration: 0.3)) { stopNoteShown = false }
+        }
     }
 
     // MARK: touch
@@ -434,6 +459,8 @@ struct PresenceView: View {
             if let latest = latestResults { chat.showOnPresence(latest) }
         case .showRequests:
             haptics.tick(sharpness: 0.3)
+        case .offerStop:
+            if tasks.activeTask?.state == .running { offeringStop = true }
         case .switchAgent(let step):
             switchAgent(step)
         case .none:

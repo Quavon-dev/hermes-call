@@ -13,7 +13,8 @@ public struct ChatMessage: Codable, Sendable, Identifiable, Hashable {
 
     public let id: String
     public var role: Role
-    /// `text`, `missed_call`, `declined_call`, `call` (local call summary, see `call`), `presentation`.
+    /// `text`, `missed_call`, `declined_call`, `call` (local call summary, see `call`), `presentation`,
+    /// `stop` (the owner's `/stop`, see `StopCommand`).
     public var kind: String
     public var text: String
     public var attachments: [ChatAttachment]
@@ -62,6 +63,7 @@ public struct ChatMessage: Codable, Sendable, Identifiable, Hashable {
 
     /// One line for notifications, the widget and Siri.
     public var preview: String {
+        if isStopRequest { return StopCommand.label }
         switch kind {
         case "call" where call != nil: return call?.text ?? ""
         case "missed_call": return "Missed call: \(text)"
@@ -186,7 +188,9 @@ public enum ChatWire {
         let presentation = kind == "presentation" && role == .agent ? Presentation.parse(body["presentation"]) : nil
         guard !text.isEmpty || !attachments.isEmpty || presentation != nil else { return nil }
         let status: ChatMessage.Status = role == .owner ? .delivered : .received
-        return ChatMessage(id: id, role: role, kind: presentation == nil && kind == "presentation" ? "text" : kind, text: text,
+        let shownKind = role == .owner && StopCommand.matches(text) ? StopCommand.kind
+            : presentation == nil && kind == "presentation" ? "text" : kind
+        return ChatMessage(id: id, role: role, kind: shownKind, text: text,
                            attachments: attachments, date: date, status: status, replyTo: body["reply_to"]?.string,
                            presentation: presentation)
     }

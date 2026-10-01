@@ -67,6 +67,49 @@ final class HermesCallUITests: XCTestCase {
         XCTAssertFalse(end.waitForExistence(timeout: 2))
     }
 
+    /// The emergency stop: a red Stop next to the call button while the agent works; the demo reply never comes.
+    func testStopFromTheChat() throws {
+        app.launchArguments += ["-UITestConsent", "YES", "-DemoThinkingSeconds", "8"]
+        app.launch()
+        for _ in 0..<3 { tap("onboarding.continue") }
+        tap("onboarding.demo")
+        app.tabBars.buttons["Chat"].tap()
+        let field = app.textFields["Message"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["chat.stop"].exists, "no Stop while the agent is idle")
+        field.tap()
+        field.typeText("Plan my day")
+        app.buttons["Send"].firstMatch.tap()
+        let stop = app.buttons["chat.stop"].firstMatch
+        XCTAssertTrue(stop.waitForExistence(timeout: 5), "Stop shows while the agent types")
+        snap("chat-stop")
+        stop.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["chat.stopRequested"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '⚡ Stopped'")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(stop.waitForNonExistence(timeout: 5), "Stop goes once the agent answered")
+        snap("chat-stopped")
+        XCTAssertFalse(app.staticTexts["Your day"].waitForExistence(timeout: 9), "the stopped reply never comes")
+    }
+
+    /// The presence's menu offers Stop.
+    func testPresenceMenuOffersStop() throws {
+        app.launchArguments = ["-UITestReset", "YES", "-UITestConsent", "YES", "-appearance", "hud"]
+        app.launch()
+        for _ in 0..<3 { tap("onboarding.continue") }
+        tap("onboarding.demo")
+        let more = app.buttons["More"].firstMatch
+        XCTAssertTrue(more.waitForExistence(timeout: 8))
+        sleep(2)
+        more.tap()
+        let stop = app.buttons["Stop agent"].firstMatch
+        XCTAssertTrue(stop.waitForExistence(timeout: 3))
+        sleep(1)
+        snap("presence-menu-stop")
+        stop.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["presence.stopRequested"].firstMatch.waitForExistence(timeout: 3))
+        snap("presence-stop-requested")
+    }
+
     func testSettingsAndDiagnostics() throws {
         app.launchArguments += ["-UITestConsent", "YES"]
         app.launch()

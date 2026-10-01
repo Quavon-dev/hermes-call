@@ -28,6 +28,8 @@ enum PresenceAction: Equatable {
     case openMenu(CGPoint)
     case showResults
     case showRequests
+    /// The tasks ring: offer to stop the agent.
+    case offerStop
     /// Switch to the agent `step` places away (+1 next, −1 previous).
     case switchAgent(Int)
     case none
@@ -51,6 +53,7 @@ enum PresenceIntent {
             case .messages: return .openHistory
             case .requests: return .showRequests
             case .results: return .showResults
+            case .tasks: return .offerStop
             default: return inCall ? .interrupt : (canCall ? .startCall(.handsFree) : .none)
             }
         case .tapSpace: return .none

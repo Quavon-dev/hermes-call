@@ -19,6 +19,10 @@ final class AppServices {
             await calls?.startCall()
         }
         OpenChatIntent.handler = { [weak app] agent in app?.openChat(agent) }
+        StopAgentIntent.handler = { [weak app, weak chat, weak calls] agent in
+            guard let app, let chat else { return .notPaired }
+            return await AgentStop.fromIntent(app: app, chat: chat, calls: calls, agent: agent)
+        }
     }
 }
 
@@ -60,6 +64,9 @@ struct HermesShortcuts: AppShortcutsProvider {
         AppShortcut(intent: CallAgentIntent(), phrases: ["Call \(.applicationName)", "Start a \(.applicationName) call",
                                                          "Call \(\.$agent) with \(.applicationName)"],
                     shortTitle: "Call", systemImageName: "phone.fill")
+        AppShortcut(intent: StopAgentIntent(), phrases: ["Stop \(.applicationName)", "Stop my agent in \(.applicationName)",
+                                                         "Stop \(\.$agent) in \(.applicationName)"],
+                    shortTitle: "Stop", systemImageName: "stop.circle.fill")
         AppShortcut(intent: OpenChatIntent(), phrases: ["Open \(.applicationName) chat", "Open the chat with \(\.$agent) in \(.applicationName)"],
                     shortTitle: "Chat", systemImageName: "bubble.left.and.bubble.right.fill")
     }

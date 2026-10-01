@@ -102,6 +102,7 @@
 		ACB4CEC747AD46BFF06FCDD5 /* VoiceNotes.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABB8DB75F48FD7267FA8B88D /* VoiceNotes.swift */; };
 		ADF4B258A9DCEB0FA724B943 /* HermesCallUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D0F0E8CC40692D674FCAC4D /* HermesCallUITests.swift */; };
 		B44781F861489076E3C760F4 /* PresenceGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = C46B5E45723A531832767176 /* PresenceGeometry.swift */; };
+		BACF3B7B6D9DFD07EB0026AF /* StopAgentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB862AAFBC6BDC6F93DBB86C /* StopAgentTests.swift */; };
 		BE2C00892758D0D888C9D13A /* PresenceDemo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99FC5198B587F12FFF21A16C /* PresenceDemo.swift */; };
 		C08FE008BFC5BD065763671A /* AppIconPresence.icon in Resources */ = {isa = PBXBuildFile; fileRef = 0585C9BC14686AE8E2E6A6C7 /* AppIconPresence.icon */; };
 		C22912A9CE3C328D426461EB /* PresenceHaptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4646A34CA3E08ED0B0D222D4 /* PresenceHaptics.swift */; };
@@ -114,11 +115,13 @@
 		D512E3AD4AA683BAD66520A8 /* AppError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 702AA880F6406EC026C0858C /* AppError.swift */; };
 		D535FE650C919D28B6922ED8 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 66A1D6CBC2CA7794BEEB0322 /* SwiftUI.framework */; };
 		D7BE7CA280A16B372F640B69 /* DemoAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB153C596B8F2FA595EFFE23 /* DemoAgent.swift */; };
+		D8F27B281A7E9AE4658F0485 /* AgentStop.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2170B3BA3845E5E090E96AC /* AgentStop.swift */; };
 		DC115FE863A278761C377048 /* PresenceSketch.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9250EEBE2CF76F1569F7E09 /* PresenceSketch.swift */; };
 		DC1336C1E86B03B3A160B87A /* PresenceDeck.swift in Sources */ = {isa = PBXBuildFile; fileRef = D53623A79B6059B27FD19D79 /* PresenceDeck.swift */; };
 		DDA520F6BBCB5C5E9F910C70 /* WatchLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A81CFE4F75F7A79DA9ADD811 /* WatchLogicTests.swift */; };
 		DDF730A69E6E527B68B816C1 /* HermesCallWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84AF8E19EB69677A5934D575 /* HermesCallWatchApp.swift */; };
 		DEA2B55BF76625700B0E1A3F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C1795C2EE043107F457BFD5E /* Assets.xcassets */; };
+		E40FB882FA4F9176F266248F /* StopAgentIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62AAE2F00FE5E83BDD8A46B2 /* StopAgentIntent.swift */; };
 		E4609E50A935BC9FE2E0D3F5 /* ChatNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6100F7F693C7F153053D66E2 /* ChatNotifications.swift */; };
 		E5ED5495B9ED00BFFE917CE5 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 606A4C5C83183366D9329287 /* PrivacyInfo.xcprivacy */; };
 		E607937CB9135EA4A55C77BB /* CallLinkConfirmView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 345DEEF192F907CE5D0568DD /* CallLinkConfirmView.swift */; };
@@ -128,6 +131,7 @@
 		E8D404398CCCC02CC22E2154 /* TaskActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFD3AE043654DEAC0FE8B650 /* TaskActivityAttributes.swift */; };
 		EA0BC2D397718435547E9996 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = AF651BB5996F416C8B4A6A7C /* AppIcon.icon */; };
 		EA1414E356B9B5830503353D /* EngineAudioDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0CE17DE2FD0B7834525AD95 /* EngineAudioDevice.swift */; };
+		EBDE47A2928B097435B0DA68 /* StopAgentIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62AAE2F00FE5E83BDD8A46B2 /* StopAgentIntent.swift */; };
 		EED052C17002272E752B480A /* HermesCallCore in Frameworks */ = {isa = PBXBuildFile; productRef = DEB1067D911768BD5811BD2E /* HermesCallCore */; };
 		EF64AA73DC0C64B91AEB12D8 /* HistorySyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8BB18A24766F66B2C7A9E98 /* HistorySyncTests.swift */; };
 		F33D76E0833ADDD987600E94 /* PresenceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F23A26673B9C4C7ADCFE209D /* PresenceView.swift */; };
@@ -276,6 +280,7 @@
 		5E7BA35C16726BD5998CC626 /* HermesCallNotifications.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = HermesCallNotifications.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		606A4C5C83183366D9329287 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		6100F7F693C7F153053D66E2 /* ChatNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatNotifications.swift; sourceTree = "<group>"; };
+		62AAE2F00FE5E83BDD8A46B2 /* StopAgentIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StopAgentIntent.swift; sourceTree = "<group>"; };
 		65F0DBE26949EE2A0C2DAC3D /* WebRTCCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebRTCCall.swift; sourceTree = "<group>"; };
 		66A1D6CBC2CA7794BEEB0322 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		68E6173D52C43474ABB6AA0A /* PlaceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceMonitor.swift; sourceTree = "<group>"; };
@@ -320,6 +325,7 @@
 		BB153C596B8F2FA595EFFE23 /* DemoAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoAgent.swift; sourceTree = "<group>"; };
 		BDBC207885F299764D79674D /* AddRelayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddRelayView.swift; sourceTree = "<group>"; };
 		C1795C2EE043107F457BFD5E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		C2170B3BA3845E5E090E96AC /* AgentStop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentStop.swift; sourceTree = "<group>"; };
 		C46B5E45723A531832767176 /* PresenceGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenceGeometry.swift; sourceTree = "<group>"; };
 		C4E75BB071C9638096C9DC06 /* HermesCallWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HermesCallWidget.entitlements; sourceTree = "<group>"; };
 		C68FDE7DC74A5D8A28C825AC /* TaskLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskLiveActivity.swift; sourceTree = "<group>"; };
@@ -353,6 +359,7 @@
 		F81FFBDB4421D1E091543C09 /* HermesCallWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = HermesCallWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F82D7DD45BE14D47EB6400D5 /* HermesCall.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HermesCall.entitlements; sourceTree = "<group>"; };
 		F94FA0A37273625E168E761E /* WatchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchModel.swift; sourceTree = "<group>"; };
+		FB862AAFBC6BDC6F93DBB86C /* StopAgentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StopAgentTests.swift; sourceTree = "<group>"; };
 		FBCB6A991F4ACA1F29E6D0CD /* WatchBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchBridge.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -578,6 +585,7 @@
 		802243D16BFE8CC701648842 /* Chat */ = {
 			isa = PBXGroup;
 			children = (
+				C2170B3BA3845E5E090E96AC /* AgentStop.swift */,
 				B9B20A4702046B5574C957FC /* ChatComposer.swift */,
 				A06754BEBBBAFB7D1CEA12C2 /* ChatDemo.swift */,
 				0F2E6E68057F9A23AC31D9C3 /* ChatInboxView.swift */,
@@ -617,6 +625,7 @@
 			isa = PBXGroup;
 			children = (
 				7AFE537D1CE063A2FBA63211 /* CallAgentIntent.swift */,
+				62AAE2F00FE5E83BDD8A46B2 /* StopAgentIntent.swift */,
 				AFD3AE043654DEAC0FE8B650 /* TaskActivityAttributes.swift */,
 			);
 			path = Shared;
@@ -732,6 +741,7 @@
 				B65AFE29F0E2D63B68B204EB /* PhoneAndTaskTests.swift */,
 				198029FAD108D3DFFFA9E9D5 /* RelayClientTests.swift */,
 				2CDD99D92ED7BC15B65B1940 /* SpeakerTests.swift */,
+				FB862AAFBC6BDC6F93DBB86C /* StopAgentTests.swift */,
 				A81CFE4F75F7A79DA9ADD811 /* WatchLogicTests.swift */,
 			);
 			path = HermesCallTests;
@@ -1039,6 +1049,7 @@
 			files = (
 				4D6496F202BE688BCD7709E7 /* CallAgentIntent.swift in Sources */,
 				17AE24022E706B2C427DF6D6 /* HermesCallWidget.swift in Sources */,
+				E40FB882FA4F9176F266248F /* StopAgentIntent.swift in Sources */,
 				A91DA215CE16DBDF5DF3A433 /* TaskActivityAttributes.swift in Sources */,
 				E6153D6ABECD9B688E9C1631 /* TaskLiveActivity.swift in Sources */,
 			);
@@ -1066,6 +1077,7 @@
 				5EEBB2C91E1F39519D4E30E0 /* PhoneAndTaskTests.swift in Sources */,
 				60F553B91DC3FAF9009985A0 /* RelayClientTests.swift in Sources */,
 				1DE6EA4F237881443A511934 /* SpeakerTests.swift in Sources */,
+				BACF3B7B6D9DFD07EB0026AF /* StopAgentTests.swift in Sources */,
 				DDA520F6BBCB5C5E9F910C70 /* WatchLogicTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1117,6 +1129,7 @@
 			files = (
 				6583B0C13810DA2DEFF34B2F /* AcknowledgementsView.swift in Sources */,
 				9A14698988E7F2C14A002239 /* AddRelayView.swift in Sources */,
+				D8F27B281A7E9AE4658F0485 /* AgentStop.swift in Sources */,
 				D512E3AD4AA683BAD66520A8 /* AppError.swift in Sources */,
 				59092C943A2A9C36F6E98341 /* AppIconPicker.swift in Sources */,
 				140E1CCD09B31357BC48592D /* AppIntents.swift in Sources */,
@@ -1180,6 +1193,7 @@
 				8FFFDE070DDD4BCCA8BFAC3A /* RadialMenu.swift in Sources */,
 				2FA1480B85B35A6662672703 /* RingbackTone.swift in Sources */,
 				359A2781585BBDDF016B86EE /* SettingsView.swift in Sources */,
+				EBDE47A2928B097435B0DA68 /* StopAgentIntent.swift in Sources */,
 				E8D404398CCCC02CC22E2154 /* TaskActivityAttributes.swift in Sources */,
 				39EDB3F46F4B4284959BBA17 /* TaskActivityModel.swift in Sources */,
 				9F713F00136EA3665D6DD5DC /* UITestSupport.swift in Sources */,
