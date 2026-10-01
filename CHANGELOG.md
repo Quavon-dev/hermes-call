@@ -8,6 +8,13 @@ versioned separately and is at **0.8.1** in this release.
 
 ## [Unreleased]
 
+- Emergency stop: a red Stop in the chat while the agent works (and *Stop agent* in the chat's menu, the
+  presence's long-press menu and on the tasks ring), plus a *Stop Agent* App Intent for Siri, Shortcuts,
+  the Action button and Control Center. It sends `/stop`, which Hermes' gateway turns into a real
+  interrupt of the running turn; the bridge also cuts off the call's turn and ends the task ring and Live
+  Activity. The chat shows "Stop requested" instead of a bubble.
+- Bridge: an owner message right after a call no longer gets the call transcript in front when it is
+  `/stop`, so Hermes recognises the command.
 - Presence (HUD) calls speak through the loudspeaker unless AirPods, headphones or a car carry the
   call (Settings › Appearance › "Speak through the loudspeaker"); Speaker and Mute buttons next to
   End instead of only in the long-press menu.

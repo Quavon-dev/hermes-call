@@ -132,7 +132,16 @@ account to get incoming calls.
   Motion or a serious thermal state, 20 fps when critical; voice levels are read per frame instead of
   polling. HUD labels follow Dynamic Type (up to twice their size), hairlines get stronger with Increase
   Contrast, surfaces opaque with Reduce Transparency.
-- **App Intents**: *Call Agent*, *Ask Agent*, *Open Chat* take an agent ("Call Atlas with Hermes Call");
+- **Stop** (emergency stop, `AgentStop`, docs/protocol.md "Stop"): a red **Stop** button next to the chat's
+  call button while the agent types or a task of it runs, and always *Stop agent* in the call button's menu;
+  in the HUD *Stop agent* in the long-press menu (idle and in a call), and a tap on the running tasks ring
+  asks "Stop <agent>?". It sends `/stop` through the durable chat path (outbox when offline, consent like
+  every send), with a light haptic; the chat shows "Stop requested", the presence "stop requested" for a
+  few seconds. The demo agent drops its pending reply and a demo call ends. *Stop Agent*
+  (`StopAgentIntent`, a `LiveActivityIntent` so it runs in the app's process without its UI) works from
+  Siri ("Stop Hermes Call"), Shortcuts, the Action button and the *Stop Agent* Control Center control.
+  UI test: `-DemoThinkingSeconds <s>` makes the demo agent type longer.
+- **App Intents**: *Call Agent*, *Ask Agent*, *Open Chat*, *Stop Agent* take an agent ("Call Atlas with Hermes Call");
   Focus › Hermes Call chooses which agents may notify (notifications carry the agent id as
   `filterCriteria`).
 - **Phone access**: *Add reminders* (`reminder_create`: `title`, `due?`, `notes?`) and *Add calendar events*

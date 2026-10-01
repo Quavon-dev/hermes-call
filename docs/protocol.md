@@ -344,6 +344,25 @@ blob_id, key, size}]` (AAC-LC mono ≈ 32 kbit/s in MP4). Only that first reply 
 fails or takes over 20 s, encoding or the upload fails, or the message would exceed the mail
 limit, the text arrives alone.
 
+### Stop (`/stop`)
+
+The owner's emergency stop is an ordinary owner `chat` message whose `text` is `/stop` (the bridge
+compares trimmed and case-insensitively), so it works with every bridge and needs no new E2E type.
+Hermes' gateway intercepts it as its `/stop` command: the running chat turn is interrupted even if it
+hangs, the session stays, and the agent answers "⚡ Stopped. You can continue this session." (or "No
+active task to stop."). A bridge with stop support additionally, once per message id (not for a resend):
+
+- interrupts the current turn of an active call (like the call's `interrupt`: speech flushed, the rest
+  of the turn cancelled);
+- ends the running task as `done` (live, by mail and as a Live Activity end push); late tool events of
+  that turn are ignored for 60 s;
+- hands `/stop` to Hermes as the bare text, without the pending call context in front (it stays for
+  the next message), and does not treat the reply as the spoken answer to an earlier voice note.
+
+The phone stores the message with the local kind `stop` and shows it as a small "Stop requested" line
+(also when mirrored from another phone or loaded from the history); it also sends the call's
+`interrupt` itself when a call with that agent is on.
+
 ## Tasks (M9)
 
 The agent's tool progress, for the presence's tasks ring and the Live Activity.
