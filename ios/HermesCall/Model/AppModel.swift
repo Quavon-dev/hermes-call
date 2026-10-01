@@ -398,6 +398,8 @@ final class AppModel {
                 guard let self, self.sessionTokens[id] == token else { return }
                 self.statuses[id] = status
                 self.connectedAt[id] = status == .connected ? Date() : nil
+                // A new connection may reach another bridge version: its caps count only after its `hello`.
+                if status == .connecting { self.bridgeInfo[id] = nil }
                 if status == .connected, let open = self.openSession(for: id) { self.onConnected?(open) }
             }
         }, onReady: { [weak self] info in

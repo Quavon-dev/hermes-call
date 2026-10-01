@@ -275,6 +275,8 @@ public actor RelaySession {
                 guard !stopped else { return socket.close() }
                 self.socket = socket
                 connectedAt = Date()
+                // The bridge may have changed while we were away (update, downgrade): only its new `hello` counts.
+                bridgeInfo = nil
                 onStatus(.connected)
                 let ready = waiters
                 waiters.removeAll()
