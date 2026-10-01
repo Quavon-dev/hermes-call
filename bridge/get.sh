@@ -116,18 +116,25 @@ die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "run as root: curl -fsSL https://raw.githubusercontent.com/Quavon-dev/hermes-call/main/bridge/get.sh | sudo bash"
 
+# BEGIN hermes_user (tools/tests/test_release.py runs it)
+# A real Hermes home, not the bare ~/.hermes/cache a root run of `hermes` leaves behind.
+has_hermes() { [[ -f $1/.hermes/config.yaml || -f $1/.hermes/.env || -d $1/.hermes/hermes-agent ]]; }
+
 hermes_user() {
   if [[ -n ${HERMES_USER:-} ]]; then
     printf '%s' "$HERMES_USER"
     return
   fi
-  local home user found=()
+  local home user installed found=()
+  # An update keeps the user the bridge was installed for.
+  installed=$({ sed -n 's/^HERMES_USER=//p' "${HC_BRIDGE_ETC:-/etc/hermes-call-bridge}/install.env" 2>/dev/null || true; } | head -1)
+  [[ -n $installed ]] && { printf '%s' "$installed"; return; }
   if [[ -n ${SUDO_USER:-} && $SUDO_USER != root ]]; then
     home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-    [[ -d $home/.hermes ]] && { printf '%s' "$SUDO_USER"; return; }
+    has_hermes "$home" && { printf '%s' "$SUDO_USER"; return; }
   fi
   while IFS=: read -r user _ _ _ _ home _; do
-    [[ -d $home/.hermes ]] && found+=("$user")
+    has_hermes "$home" && found+=("$user")
   done < <(getent passwd)
   case ${#found[@]} in
     1) printf '%s' "${found[0]}" ;;
@@ -135,6 +142,7 @@ hermes_user() {
     *) die "several users have ~/.hermes (${found[*]}); choose one: ... | sudo HERMES_USER=<user> bash" ;;
   esac
 }
+# END hermes_user
 
 user=$(hermes_user)
 say "Hermes user: $user"

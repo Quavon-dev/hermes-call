@@ -413,3 +413,46 @@ def test_install_sh_records_the_installed_version(tmp_path: Path) -> None:
     (src / "RELEASE").write_text("version=0.7.3\ntag=v0.7.3\n")
     assert version().stdout == "0.7.3"
     assert "VERSION" in INSTALL_SH.read_text().split("deploy_code() {", 1)[1].split("\n}\n", 1)[0]
+
+
+# ---- bridge/get.sh: which user runs Hermes ----------------------------------------------
+
+USER_BLOCK = re.compile(r"^# BEGIN hermes_user.*?^# END hermes_user\n", re.S | re.M)
+
+
+def find_user(tmp_path: Path, homes: dict[str, Path], installed: str = "") -> subprocess.CompletedProcess:
+    block = USER_BLOCK.search(GET_SH.read_text())
+    assert block, "bridge/get.sh must contain the hermes_user block"
+    etc = tmp_path / "etc"
+    etc.mkdir(exist_ok=True)
+    if installed:
+        (etc / "install.env").write_text(f"HERMES_USER={installed}\n")
+    passwd = "\n".join(f"{name}:x:1:1::{home}:/bin/sh" for name, home in homes.items())
+    script = tmp_path / "user.sh"
+    script.write_text(
+        "set -Eeuo pipefail\n"
+        'die() { echo "$*" >&2; exit 1; }\n'
+        f"getent() {{ printf '%s\\n' '{passwd}'; }}\n"
+        f"HC_BRIDGE_ETC={etc}\n" + block.group(0) + "hermes_user\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k not in ("HERMES_USER", "SUDO_USER")}
+    return subprocess.run(["bash", str(script)], capture_output=True, text=True, env=env, check=False)
+
+
+def test_get_sh_ignores_a_bare_hermes_directory(tmp_path: Path) -> None:
+    root, hermes = tmp_path / "root", tmp_path / "hermes"
+    (root / ".hermes" / "cache").mkdir(parents=True)  # what a root run of `hermes` leaves behind
+    (hermes / ".hermes").mkdir(parents=True)
+    (hermes / ".hermes" / "config.yaml").write_text("model: x\n")
+    found = find_user(tmp_path, {"root": root, "hermes": hermes})
+    assert found.returncode == 0 and found.stdout == "hermes", found.stderr
+
+
+def test_get_sh_updates_keep_the_installed_user(tmp_path: Path) -> None:
+    a, b = tmp_path / "a", tmp_path / "b"
+    for home in (a, b):
+        (home / ".hermes").mkdir(parents=True)
+        (home / ".hermes" / ".env").write_text("X=1\n")
+    assert "several users" in find_user(tmp_path, {"a": a, "b": b}).stderr
+    found = find_user(tmp_path, {"a": a, "b": b}, installed="b")
+    assert found.returncode == 0 and found.stdout == "b", found.stderr
