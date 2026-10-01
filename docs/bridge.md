@@ -17,13 +17,16 @@ phone ⇄ (DTLS-SRTP via TURN) ⇄ aiortc → Silero VAD → faster-whisper → 
   code), so the phone never learns your home IP and nothing connects in. The
   control API listens on `127.0.0.1:8765` and needs a bearer token.
 - **Hermes stays in charge.** The bridge talks to the official Hermes API
-  server (`/v1/chat/completions`, streaming) with `X-Hermes-Session-Id:
-  hermes-call-phone-<phone>-<date>`: one Hermes session per phone and day (a new one
+  server: with Hermes ≥ 0.21 (the version in its `/health`, asked once) each call turn is a
+  run (`POST /v1/runs` with `session_id`, streamed from `GET /v1/runs/{id}/events`; cutting the
+  agent off stops it with `POST /v1/runs/{id}/stop`); older Hermes, or one without `/v1/runs`,
+  gets `/v1/chat/completions` (streaming, `X-Hermes-Session-Id`), which never asks for approvals.
+  The session is `hermes-call-phone-<phone>-<date>`: one Hermes session per phone and day (a new one
   also after 200 turns), so sessions do not grow forever; the recent chat and the last
   call's transcript carry over between calls and chat (kept in the state directory, so
   also across restarts). Tool approvals are **never granted by voice**: the exact
-  command is shown on the phone (Approve once / Approve for this session / Deny); no
-  answer within 60 s = deny.
+  command is shown on the phone with the choices Hermes allows (Approve once / Approve for
+  this session / Deny); no answer within 60 s = deny.
 - **If Hermes or Kokoro fails mid-call** the agent says "Sorry, I couldn't reach
   <agent> just now." (or, if speech synthesis itself is down, two short tones), never
   silence; the log says which one failed and how (HTTP status or error class).

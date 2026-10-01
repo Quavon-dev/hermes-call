@@ -31,6 +31,10 @@ versioned separately and is at **0.8.1** in this release.
   (`_notify_fatal_error`), not only marked fatal.
 - Hermes plugin: `plugin.yaml` declares `requires_hermes: ">=0.15"`, the field Hermes enforces
   (`min_hermes` was ignored); the plugin's own version check stays for older Hermes.
+- Calls ask for tool approvals again: with Hermes ≥ 0.21 a call turn runs through `/v1/runs`, the
+  only Hermes API that streams approval requests (`/v1/chat/completions` never does), so a gated
+  command during a call shows its approval sheet on the phone with the choices Hermes allows.
+  Interrupting the agent stops the Hermes run. Older Hermes keeps `/v1/chat/completions`.
 
 ## [0.7.1] — 2026-10-01
 
