@@ -18,6 +18,8 @@ versioned separately and is at **0.8.1** in this release.
   Hermes ≥ 0.21) and lives only as long as Hermes waits for it (`approvals.timeout`, default 300 s;
   it was 11 minutes), so a late answer or the expiry deny can no longer approve or deny a newer
   command. The bridge's `/v1/chat/approvals` takes an optional `ttl`.
+- Hermes plugin: an approval is handed to the bridge within 10 s, inside the 15 s Hermes waits for
+  the prompt to be sent (it used the 35 s long-poll timeout).
 
 ## [0.7.1] — 2026-10-01
 

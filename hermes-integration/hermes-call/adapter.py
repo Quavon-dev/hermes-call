@@ -54,6 +54,8 @@ DEFAULT_APPROVAL_TIMEOUT = 300.0
 APPROVAL_MARGIN = 5.0
 MIN_APPROVAL_TTL = 10.0
 APPROVAL_CHOICES = ("once", "session")
+# Hermes' runner gives up on an approval prompt after 15 s; the bridge answers at once.
+APPROVAL_POST_TIMEOUT = 10.0
 BACKOFF_SECONDS = (1, 2, 5, 10, 30)
 TYPING_INTERVAL = 4.0
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"}
@@ -114,8 +116,8 @@ def _kind_for(path: str) -> str:
     return "photo" if Path(path).suffix.lower() in IMAGE_EXTENSIONS else "file"
 
 
-async def _post(client: httpx.AsyncClient, path: str, body: dict[str, Any]) -> dict[str, Any]:
-    response = await client.post(path, json=body)
+async def _post(client: httpx.AsyncClient, path: str, body: dict[str, Any], timeout: float | None = None) -> dict[str, Any]:
+    response = await (client.post(path, json=body, timeout=timeout) if timeout else client.post(path, json=body))
     response.raise_for_status()
     return response.json()
 
@@ -459,7 +461,8 @@ class HermesCallAdapter(BasePlatformAdapter):
                     "choices": choices,
                     "ttl": int(ttl),
                 }
-                status = (await _post(self._http, "/v1/chat/approvals", body)).get("status", "error")
+                result = await _post(self._http, "/v1/chat/approvals", body, timeout=APPROVAL_POST_TIMEOUT)
+                status = result.get("status", "error")
             except httpx.HTTPError as exc:
                 log.warning("hermes_call: approval not delivered (%s)", exc.__class__.__name__)
         if status != "sent":

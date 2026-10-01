@@ -83,3 +83,13 @@ async def test_older_hermes_without_request_ids_still_resolves(adapter_module) -
     await adapter._on_approval({"request_id": next(iter(adapter._approvals)), "choice": "once"})
     assert adapter_module.resolved == [("s0", "once")]
     assert approvals_posted(http)[0]["ttl"] == 295  # Hermes' default 300 s minus the margin
+
+
+# ---- 7: the approval POST does not outlast Hermes' 15 s wait --------------------------------
+
+
+async def test_approval_is_posted_with_a_short_timeout(hermes021) -> None:
+    adapter = hermes021.module.HermesCallAdapter(None)
+    adapter._http = http = FakeHttp([])
+    await adapter.send_exec_approval("owner", "ls", "s")
+    assert http.timeouts["/v1/chat/approvals"] is not None and http.timeouts["/v1/chat/approvals"] <= 10
