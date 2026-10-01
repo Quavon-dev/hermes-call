@@ -184,3 +184,14 @@ async def test_a_missing_description_is_still_shown(adapter_module) -> None:  # 
     adapter._http = http = FakeHttp([])
     await adapter.send_exec_approval("owner", "rm -rf /x", "s", description=None)
     assert approvals_posted(http)[-1]["description"] == "dangerous command"
+
+
+@pytest.mark.parametrize(("installed", "too_old"), [("0.14.2", "0.14.2"), ("0.15.1", None), ("0.21.5", None), ("0.0.0", None)])
+def test_only_a_real_old_version_counts_as_too_old(monkeypatch, installed, too_old) -> None:
+    """Hermes' main branch ships pyproject version 0.0.0 (its version comes from git tags or a stamp)."""
+    import importlib.metadata
+
+    from .test_hermes_plugin import plugin
+
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: installed)
+    assert plugin.hermes_too_old() == too_old

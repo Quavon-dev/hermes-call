@@ -35,6 +35,8 @@ versioned separately and is at **0.8.1** in this release.
   only Hermes API that streams approval requests (`/v1/chat/completions` never does), so a gated
   command during a call shows its approval sheet on the phone with the choices Hermes allows.
   Interrupting the agent stops the Hermes run. Older Hermes keeps `/v1/chat/completions`.
+- Hermes plugin: no false "needs Hermes >= 0.15" warning on Hermes' main branch (its package
+  version is 0.0.0).
 
 ## [0.7.1] — 2026-10-01
 

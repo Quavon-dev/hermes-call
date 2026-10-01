@@ -333,8 +333,10 @@ def hermes_too_old() -> str | None:
         installed = version("hermes-agent")
     except (ImportError, PackageNotFoundError):
         return None
-    parts = [int(p) for p in re.findall(r"\d+", installed)[:2]]
-    return installed if parts < [int(p) for p in MIN_HERMES.split(".")] else None
+    parts = [int(p) for p in re.findall(r"\d+", installed)[:3]]
+    if not any(parts):  # 0.0.0: Hermes' main branch, whose version lives in git tags, not the package
+        return None
+    return installed if parts[:2] < [int(p) for p in MIN_HERMES.split(".")] else None
 
 
 def _interrupted() -> bool:
