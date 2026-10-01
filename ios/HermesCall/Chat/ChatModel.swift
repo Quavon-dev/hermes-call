@@ -81,8 +81,10 @@ final class ChatModel {
     private var loadingPage = false
     private var replyWaiters: [UUID: ReplyWaiter] = [:]
     private var listeners: [Task<Void, Never>] = []
-    /// History sync in progress: pages asked so far per agent (ChatModel+History).
-    var historyPages: [UUID: Int] = [:]
+    /// History sync in this launch, per agent (ChatModel+History).
+    var historyRequests: [UUID: HistoryRequest] = [:]
+    /// How long a requested history page may take (ChatModel+History).
+    var historyPageTimeout: Duration = .seconds(ChatHistorySync.pageTimeout)
 
     private struct ReplyWaiter {
         let profile: UUID

@@ -41,6 +41,48 @@ import Testing
         #expect(requests(fixture).count == 2, "once per agent")
     }
 
+    /// L2: a page that never arrives does not block the sync forever: after the page timeout the next
+    /// `hello` (a reconnect) asks again.
+    @Test func aLostPageIsAskedForAgainOnTheNextHello() async throws {
+        let fixture = try ChatFixture()
+        fixture.chat.historyPageTimeout = .milliseconds(100)
+        let info = try #require(Self.bridge)
+        fixture.chat.bridgeHello(fixture.home.id, info)
+        #expect(await fixture.eventually { requests(fixture).count == 1 })
+        fixture.chat.bridgeHello(fixture.home.id, info)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(requests(fixture).count == 1, "not twice while a page is on its way")
+        try await Task.sleep(for: .milliseconds(200))
+        fixture.chat.bridgeHello(fixture.home.id, info)
+        #expect(await fixture.eventually { requests(fixture).count == 2 })
+        #expect(requests(fixture)[1]["before"] == nil)
+        #expect(!fixture.chat.historySynced(fixture.home.id))
+    }
+
+    /// L2: an import cut short (app quit after the first page) continues at its cursor on the next launch,
+    /// although the chat is no longer empty.
+    @Test func aPartialImportResumesAfterARestart() async throws {
+        let fixture = try ChatFixture()
+        let info = try #require(Self.bridge)
+        fixture.chat.bridgeHello(fixture.home.id, info)
+        #expect(await fixture.eventually { requests(fixture).count == 1 })
+        await fixture.chat.receiveHistory(Self.page(["newest", "older"], more: true, next: 9), profile: fixture.home,
+                                          session: FakeLink(profile: fixture.home, owner: fixture.links))
+        #expect(await fixture.eventually { requests(fixture).count == 2 })
+        // Restart: a new chat model over the same store and settings; the second page never came.
+        let relaunched = ChatModel(app: fixture.app, store: fixture.store, links: fixture.links, listens: false,
+                                   unreadDefaults: fixture.defaults)
+        fixture.links.chat = relaunched
+        #expect(!relaunched.historySynced(fixture.home.id))
+        relaunched.bridgeHello(fixture.home.id, info)
+        #expect(await fixture.eventually { requests(fixture).count == 3 })
+        #expect(requests(fixture)[2]["before"] == .int(9))
+        await relaunched.receiveHistory(Self.page(["oldest"], more: false, next: nil, base: 1_789_000_000_000), profile: fixture.home,
+                                        session: FakeLink(profile: fixture.home, owner: fixture.links))
+        #expect(await fixture.store.messages(fixture.home.id).map(\.text) == ["oldest", "older", "newest"])
+        #expect(relaunched.historySynced(fixture.home.id))
+    }
+
     @Test func aChatWithMessagesIsLeftAlone() async throws {
         let fixture = try ChatFixture()
         try await fixture.store.upsert(ChatMessage(id: E2EChannel.newMessageID(), role: .owner, text: "mine", status: .delivered),

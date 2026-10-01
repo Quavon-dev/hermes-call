@@ -59,6 +59,7 @@ struct ChatFixture {
     let links = FakeLinks()
     let home: RelayProfile
     let office: RelayProfile
+    let defaults: UserDefaults
 
     init() throws {
         let service = "de.quavon.hermescall.tests.\(UUID().uuidString)"
@@ -71,6 +72,7 @@ struct ChatFixture {
         app = AppModel(store: ProfileStore(service: service), preferences: preferences)
         store = ChatStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("chat-\(UUID().uuidString)"),
                           changedSignal: nil)
+        self.defaults = defaults
         chat = ChatModel(app: app, store: store, links: links, listens: false, unreadDefaults: defaults)
         chat.ackTimeout = .milliseconds(300)
         links.chat = chat

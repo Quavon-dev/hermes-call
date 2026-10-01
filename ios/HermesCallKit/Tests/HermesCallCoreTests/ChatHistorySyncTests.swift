@@ -7,6 +7,31 @@ import Testing
 struct ChatHistorySyncTests {
     static func id(_ n: UInt8) -> String { Base64URL.encode(Data(repeating: n, count: 16)) }
 
+    /// L2: an interrupted import (lost page, app quit) resumes at its cursor, even though the chat is no
+    /// longer empty; a chat with messages and no import in progress is left alone.
+    @Test func planResumesAnInterruptedImport() {
+        #expect(ChatHistorySync.plan(progress: nil, localCount: 0) == .request(before: nil))
+        #expect(ChatHistorySync.plan(progress: nil, localCount: 3) == .markSynced)
+        #expect(ChatHistorySync.plan(progress: .init(pages: 2, next: 77), localCount: 100) == .request(before: 77))
+        #expect(ChatHistorySync.plan(progress: .init(pages: 0, next: nil), localCount: 0) == .request(before: nil))
+        #expect(ChatHistorySync.plan(progress: .init(pages: ChatHistorySync.maxPages, next: 5), localCount: 9) == .markSynced)
+    }
+
+    @Test func progressPersistsPerAgent() throws {
+        let suite = "de.quavon.hermescall.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let one = UUID(), two = UUID()
+        #expect(ChatHistorySync.progress(for: one, in: defaults) == nil)
+        ChatHistorySync.setProgress(.init(pages: 1, next: 42), for: one, in: defaults)
+        ChatHistorySync.setProgress(.init(pages: 0, next: nil), for: two, in: defaults)
+        #expect(ChatHistorySync.progress(for: one, in: defaults) == .init(pages: 1, next: 42))
+        #expect(ChatHistorySync.progress(for: two, in: defaults) == .init(pages: 0, next: nil))
+        ChatHistorySync.setProgress(nil, for: one, in: defaults)
+        #expect(ChatHistorySync.progress(for: one, in: defaults) == nil)
+        #expect(ChatHistorySync.progress(for: two, in: defaults) != nil)
+    }
+
     @Test func requestsArePaged() {
         #expect(ChatHistorySync.request(before: nil) == ["type": "history_request", "limit": .int(Int64(ChatHistorySync.pageSize))])
         #expect(ChatHistorySync.request(before: 42)["before"] == .int(42))
