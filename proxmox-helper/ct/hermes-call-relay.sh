@@ -220,7 +220,7 @@ pct exec "$CTID" -- bash -c '[ -e /usr/local/bin/hermescall-relay ] || printf "%
 msg_ok "Completed Successfully!\n"
 echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"
 echo -e "${INFO}${YW}Create a bridge pairing code inside the container with:${CL}"
-echo -e "${TAB}${BGN}pct exec ${CTID} -- hermescall-relay pair${CL}"
+echo -e "${TAB}${BGN}pct exec ${CTID} -- /usr/local/sbin/hermescall-relay pair${CL}"
 if [[ ${var_relay_tls:-} == proxy ]]; then
   echo -e "${INFO}${YW}In your reverse proxy: proxy host ${var_relay_address}, scheme http, forward to ${IP} port 8743, Websockets on, SSL + Force SSL.${CL}"
   echo -e "${INFO}${YW}TURN bypasses the proxy: forward TCP/UDP 3478 and UDP 49160-49200 from the router to ${IP}.${CL}"

@@ -19,7 +19,7 @@ readonly PREFIX=/opt/hermescall-relay
 readonly ETC=/etc/hermescall-relay
 readonly SETTINGS=$ETC/install.env
 readonly CADDY_TLS=/etc/caddy/hermescall
-# In /usr/local/bin so `pct exec <id> -- hermescall-relay pair` finds it (no login shell, no sbin
+# In /usr/local/bin for shells without sbin in PATH; `pct exec` has neither, so docs use the full
 # in PATH); the old sbin path stays as a link.
 readonly WRAPPER=/usr/local/bin/hermescall-relay
 readonly OLD_WRAPPER=/usr/local/sbin/hermescall-relay

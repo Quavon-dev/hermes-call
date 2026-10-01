@@ -68,23 +68,23 @@ normally run `hermes gateway`), then pair with the relay using the link that
 `hermescall-relay pair` printed on the relay:
 
 ```bash
-pct exec <hermes-id> -- bash -c "systemctl stop hermes-call-bridge; hermes-call-bridge relay add 'hermescall://pair?v=1&k=relay&r=relay.example.com&c=...' && systemctl start hermes-call-bridge"
+pct exec <hermes-id> -- bash -c "systemctl stop hermes-call-bridge; /usr/local/bin/hermes-call-bridge relay add 'hermescall://pair?v=1&k=relay&r=relay.example.com&c=...' && systemctl start hermes-call-bridge"
 ```
 
 Pair a phone (the app shows a code field and a QR scanner):
 
 ```bash
-pct exec <hermes-id> -- hermes-call-bridge device add --name iPhone
+pct exec <hermes-id> -- /usr/local/bin/hermes-call-bridge device add --name iPhone
 ```
 
 Other commands:
 
 ```bash
-pct exec <hermes-id> -- hermes-call-bridge doctor
-pct exec <hermes-id> -- hermes-call-bridge device list
-pct exec <hermes-id> -- hermes-call-bridge device revoke <device-id>
-pct exec <hermes-id> -- hermes-call-bridge call --first-message "Hello, this is Hermes." --reason "test"
-pct exec <hermes-id> -- hermes-call-bridge status
+pct exec <hermes-id> -- /usr/local/bin/hermes-call-bridge doctor
+pct exec <hermes-id> -- /usr/local/bin/hermes-call-bridge device list
+pct exec <hermes-id> -- /usr/local/bin/hermes-call-bridge device revoke <device-id>
+pct exec <hermes-id> -- /usr/local/bin/hermes-call-bridge call --first-message "Hello, this is Hermes." --reason "test"
+pct exec <hermes-id> -- /usr/local/bin/hermes-call-bridge status
 pct exec <hermes-id> -- journalctl -u hermes-call-bridge -f
 ```
 
@@ -146,7 +146,7 @@ Ask your agent to call you, e.g. "call me when the backup is done", or test it
 without Hermes:
 
 ```bash
-pct exec <hermes-id> -- hermes-call-bridge call --first-message "Hello, this is Hermes." --reason "test"
+pct exec <hermes-id> -- /usr/local/bin/hermes-call-bridge call --first-message "Hello, this is Hermes." --reason "test"
 ``` `--wav question.wav --record reply.wav` prints the measured
 end-of-speech → first-audio latency.
 

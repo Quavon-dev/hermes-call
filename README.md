@@ -73,10 +73,10 @@ one installed ([how releases are made](docs/releasing.md)).
 **3 · Pair**:
 
 ```bash
-pct exec <relay-id> -- hermescall-relay pair                    # prints a link
-pct exec <hermes-id> -- hermes-call-bridge relay add '<link>'
+pct exec <relay-id> -- /usr/local/sbin/hermescall-relay pair                    # prints a link
+pct exec <hermes-id> -- /usr/local/bin/hermes-call-bridge relay add '<link>'
 pct exec <hermes-id> -- systemctl restart hermes-call-bridge
-pct exec <hermes-id> -- hermes-call-bridge device add --name iPhone   # shows a QR code
+pct exec <hermes-id> -- /usr/local/bin/hermes-call-bridge device add --name iPhone   # shows a QR code
 ```
 
 Scan the QR code with the app, then restart Hermes and its gateway once so they load the plugin.
