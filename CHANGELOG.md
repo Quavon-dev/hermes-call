@@ -4,9 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/). The relay, bridge, common library, test client
 and iOS app share one version; the Hermes plugin (`hermes-integration/hermes-call`) is
-versioned separately and is at **0.8.1** in this release.
+versioned separately and is at **0.8.2** in this release.
 
-## [Unreleased]
+## [0.7.2] — 2026-10-01
+
+- Hermes Agent v0.21 and its current main branch: command approvals reach the phone again (Face ID
+  sheet, only the choices Hermes allows), resolve exactly the request that was shown, within
+  Hermes' own timeout; call turns run through `/v1/runs` so approvals work during calls too;
+  `/new`, `/reset`, `/undo`, `/model`, `/reload-mcp` confirmations on the phone; long cron output is
+  no longer truncated. The compatibility check in CI runs against the pinned and the latest Hermes.
+- Emergency stop: a red Stop in the chat while the agent works, "Stop agent" in the presence menu,
+  and a "Stop Agent" App Intent (Siri, Shortcuts, Action button, Control Center). It sends Hermes'
+  own `/stop`, interrupts a call's turn and ends the running task.
+- HUD chat swipes up to full screen; composer buttons are as tall as the field; the time to hold
+  before the presence menu opens is a setting.
 
 - Emergency stop: a red Stop in the chat while the agent works (and *Stop agent* in the chat's menu, the
   presence's long-press menu and on the tasks ring), plus a *Stop Agent* App Intent for Siri, Shortcuts,
