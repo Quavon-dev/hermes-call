@@ -44,9 +44,11 @@ themselves) accept only releases signed with the new one.
 | `SHA256SUMS`, `SHA256SUMS.sig` | tarball checksum, signed in namespace `hermes-call-release` | installers of 0.6.x |
 | `MANIFEST`, `MANIFEST.sig` | `version`, `tag`, `commit`, commit date, tarball name and SHA-256, signed in namespace `hermes-call-manifest` | installers from 0.7 on |
 
-The build is reproducible: the tar content depends only on the tag (`tools/tests/test_release.py`
-checks it). `release.sh` refuses a tag that is not `vX.Y.Z` or whose `relay/hermescall_relay/version.py`
-and `bridge/pyproject.toml` do not say the same version.
+The tar content is reproducible: it depends only on the tag (`tools/tests/test_release.py`
+checks it). The gzip bytes are not: GNU gzip (CI) and Apple's gzip (macOS) compress the same tar
+differently, so a tarball built on a Mac never matches CI's checksum. That is why releases sign
+CI's files with `--sign`, which compares the unpacked content with the tag, instead of uploading a
+local build over them (that would also break the build attestation).
 
 ### Rollback protection
 
@@ -68,18 +70,11 @@ tarball themselves (a signed list that names other files proves nothing about th
 `release.sh --sign` refuses to sign any other `SHA256SUMS`. `HC_REQUIRE_MANIFEST=1` in front of a
 command refuses every release without a MANIFEST.
 
-Fresh installs versus updates: `HC_ALLOW_LEGACY_FRESH_INSTALL=0` refuses a release without MANIFEST
-when nothing is installed yet, while an existing 0.6.x install can still update. It defaults to 1
-for now because the release marked *latest* (0.6.2) has no MANIFEST, and the helper scripts run
-from `main`: with 0, every fresh install would fail until 0.7 is published.
-
-> **TODO after the first 0.7 release is *latest*:** in the `verify_release` block (both Proxmox
-> scripts and `bridge/get.sh`, one commit; the test checks they stay identical) change
-> `${HC_ALLOW_LEGACY_FRESH_INSTALL:-1}` to `${HC_ALLOW_LEGACY_FRESH_INSTALL:-0}`. From then on a
-> fresh install needs a release with a signed MANIFEST and cannot be served an old release;
-> existing 0.6.x installs still update through the legacy path. Later, once no 0.6.x installs are
-> expected, set `HC_REQUIRE_MANIFEST` to 1 as well (`: "${HC_REQUIRE_MANIFEST:=1}"` next to
-> `RELEASE_SIGNER`).
+Fresh installs versus updates: since 0.7.0 is *latest*, a fresh install (nothing installed yet)
+refuses a release without MANIFEST, so it cannot be served an old release; an existing 0.6.x
+install still updates through the legacy path. `HC_ALLOW_LEGACY_FRESH_INSTALL=1` in front of the
+command allows a legacy fresh install on purpose. Once no 0.6.x installs are expected, set
+`HC_REQUIRE_MANIFEST` to 1 as well (`: "${HC_REQUIRE_MANIFEST:=1}"` next to `RELEASE_SIGNER`).
 
 ### Verify a release by hand
 

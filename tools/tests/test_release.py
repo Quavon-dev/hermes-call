@@ -233,7 +233,7 @@ def test_verify_signatures_are_not_interchangeable(verifier: Verifier) -> None:
 
 
 def test_verify_legacy_release_without_manifest(verifier: Verifier) -> None:
-    legacy = verifier(drop=("MANIFEST", "MANIFEST.sig"))
+    legacy = verifier(drop=("MANIFEST", "MANIFEST.sig"), HC_ALLOW_LEGACY_FRESH_INSTALL="1")
     assert legacy.returncode == 0 and "without MANIFEST" in legacy.stderr
     assert verifier("0.6.2", drop=("MANIFEST", "MANIFEST.sig")).returncode == 0
     newer = verifier("0.7.0", drop=("MANIFEST", "MANIFEST.sig"))
@@ -279,6 +279,14 @@ def test_verify_legacy_only_for_upgrades_once_fresh_installs_need_a_manifest(ver
     assert fresh.returncode == 1 and "fresh install" in fresh.stderr
     assert verifier("0.6.1", drop=legacy, HC_ALLOW_LEGACY_FRESH_INSTALL="0").returncode == 0  # existing install
     assert verifier(HC_ALLOW_LEGACY_FRESH_INSTALL="0").returncode == 0  # MANIFEST releases always
+
+
+def test_verify_fresh_installs_need_a_manifest_by_default(verifier: Verifier) -> None:
+    legacy = ("MANIFEST", "MANIFEST.sig")
+    fresh = verifier(drop=legacy)
+    assert fresh.returncode == 1 and "fresh install" in fresh.stderr
+    assert verifier("0.6.1", drop=legacy).returncode == 0  # an existing 0.6.x install still updates
+    assert verifier(drop=legacy, HC_ALLOW_LEGACY_FRESH_INSTALL="1").returncode == 0  # explicit opt-in
 
 
 def test_sign_refuses_sums_that_do_not_name_exactly_the_tarball(repo: Path, tmp_path: Path) -> None:
