@@ -136,6 +136,8 @@ class ActiveCall:
     inbound: InboundAudio | None = None
     resuming: bool = False
     resume_timer: asyncio.TimerHandle | None = None
+    # An audio frame arrived from the phone (not just a track announced).
+    media: bool = False
 
 
 class CallManager:
@@ -327,7 +329,7 @@ class CallManager:
             return False
         resumable = self.peers.supports(device.id, RESUME_CAP)
         call = ActiveCall(call_id, device, None, device_stt=device_stt, ring=ring, resumable=resumable)
-        call.inbound = InboundAudio(resumable)
+        call.inbound = InboundAudio(resumable, lambda: self._media_arrived(call))
         self.active = call
         try:
             answer = await self._connect(call, turn, sdp)
@@ -355,8 +357,7 @@ class CallManager:
         def on_track(track: Any) -> None:
             if track.kind != "audio" or call.pc is not pc or call.inbound is None:
                 return
-            call.inbound.attach(track)
-            self._resumed(call)
+            call.inbound.attach(track)  # announced, not yet audio: `_media_arrived` on its first frame
             if call.task is None:
                 self._begin_conversation(call)
 
@@ -423,6 +424,11 @@ class CallManager:
         log.info("call media lost; waiting up to %.0f s for the phone to reconnect", resume.RESUME_WINDOW)
         call.resuming = True
         call.resume_timer = asyncio.get_running_loop().call_later(resume.RESUME_WINDOW, self._give_up, call)
+
+    def _media_arrived(self, call: ActiveCall) -> None:
+        """The first audio frame of a connection's track: the call has media (again)."""
+        call.media = True
+        self._resumed(call)
 
     def _resumed(self, call: ActiveCall) -> None:
         if call.resume_timer is not None:
@@ -564,7 +570,7 @@ class CallManager:
             call.conversation.announce(CALL_ENDING_LINE)
 
     def _check_media(self, call: ActiveCall, waited: float) -> None:
-        if self.active is call and call.task is None:
+        if self.active is call and not call.media:
             log.warning("no audio from the phone %.0f s after answering; ending the call", waited)
             asyncio.ensure_future(self.end(call.call_id))
 

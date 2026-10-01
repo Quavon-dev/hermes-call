@@ -4,6 +4,7 @@ new peer connection and keeps the conversation. Only with phones that listed `ca
 
 import asyncio
 
+import av
 import numpy as np
 import pytest
 from aiortc.mediastreams import MediaStreamError
@@ -11,7 +12,7 @@ from aiortc.mediastreams import MediaStreamError
 from hermescall_bridge import calls as calls_mod
 from hermescall_bridge import resume as resume_mod
 from hermescall_bridge.audio import SpeechTrack
-from hermescall_bridge.calls import CallManager, new_call_id
+from hermescall_bridge.calls import CallManager, CallTimeouts, new_call_id
 from hermescall_bridge.resume import ForwardTrack, InboundAudio
 from hermescall_bridge.state import State, new_device
 from hermescall_common import wire
@@ -61,10 +62,39 @@ class FakeTrack:
         return frame
 
 
+def frame() -> av.AudioFrame:
+    pcm = np.zeros((1, 960), dtype=np.int16)
+    out = av.AudioFrame.from_ndarray(pcm, format="s16", layout="mono")
+    out.sample_rate = 48_000
+    return out
+
+
+class AiortcPc(FakePc):
+    """Like aiortc: the remote track is announced inside `setRemoteDescription`, long before (or without)
+    any audio arriving on it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.track = FakeTrack()
+
+    async def setRemoteDescription(self, description) -> None:
+        self.handlers["track"](self.track)
+
+    async def close(self) -> None:
+        await super().close()
+        await self.track.frames.put(None)  # aiortc ends the remote track with its connection
+
+
+async def audio_flows(pc: AiortcPc) -> None:
+    await pc.track.frames.put(frame())
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+
 @pytest.fixture
 def setup(monkeypatch):
-    pcs: list[FakePc] = []
-    monkeypatch.setattr(calls_mod, "peer_connection", lambda turn, *_: pcs.append(FakePc()) or pcs[-1])
+    pcs: list[AiortcPc] = []
+    monkeypatch.setattr(calls_mod, "peer_connection", lambda turn, *_: pcs.append(AiortcPc()) or pcs[-1])
     conversations: list[FakeConversation] = []
 
     def factory(*args, **kwargs):
@@ -81,8 +111,7 @@ def setup(monkeypatch):
 async def start(manager, device, pcs) -> str:
     call_id = new_call_id()
     await manager.on_e2e(device.id, {"type": "offer", "call_id": call_id, "sdp": "v=0\r\n"})
-    pcs[-1].handlers["track"](FakeTrack())
-    await asyncio.sleep(0)
+    await audio_flows(pcs[-1])
     return call_id
 
 
@@ -112,8 +141,8 @@ async def test_media_from_the_new_connection_feeds_the_same_conversation(setup) 
     await pcs[0].handlers["connectionstatechange"]()
     assert manager.active is not None and manager.active.resuming
     await manager.on_e2e(device.id, {"type": "offer", "call_id": call_id, "sdp": "v=0\r\n"})
-    pcs[1].handlers["track"](FakeTrack())
-    await asyncio.sleep(0)
+    assert manager.active.resuming, "a new connection is not media: the wait continues until audio arrives"
+    await audio_flows(pcs[1])
     assert manager.active is not None and not manager.active.resuming
     assert len(conversations) == 1
 
@@ -150,10 +179,10 @@ async def test_a_reoffer_that_never_brings_audio_also_gives_up(setup, monkeypatc
     assert manager.active is None and relay.bodies("hangup")[0]["why"] == "connection_lost"
 
 
-class SlowClosePc(FakePc):
+class SlowClosePc(AiortcPc):
     async def close(self) -> None:
         await asyncio.sleep(0.05)
-        self.closed = True
+        await super().close()
 
 
 async def test_a_hangup_while_the_old_connection_closes_leaves_no_new_connection_open(setup, monkeypatch) -> None:
@@ -170,6 +199,15 @@ async def test_a_hangup_while_the_old_connection_closes_leaves_no_new_connection
     assert len(relay.bodies("answer")) == 1, "no answer for a call that has ended"
 
 
+async def test_a_track_without_audio_ends_the_call_after_the_media_timeout(setup) -> None:
+    manager, relay, device, _, pcs, _ = setup
+    manager._timeouts = CallTimeouts(media=0.1)
+    await manager.on_e2e(device.id, {"type": "offer", "call_id": new_call_id(), "sdp": "v=0\r\n"})
+    assert manager.active is not None
+    await asyncio.sleep(0.3)
+    assert manager.active is None and relay.bodies("hangup")
+
+
 async def test_only_the_calling_phone_can_resume(setup) -> None:
     manager, relay, device, other, pcs, _ = setup
     for phone in (device, other):
@@ -184,14 +222,6 @@ async def test_only_the_calling_phone_can_resume(setup) -> None:
 async def test_inbound_audio_continues_on_the_next_track() -> None:
     inbound = InboundAudio(resumable=True)
     first, second = FakeTrack(), FakeTrack()
-    import av
-
-    def frame() -> av.AudioFrame:
-        pcm = np.zeros((1, 960), dtype=np.int16)
-        out = av.AudioFrame.from_ndarray(pcm, format="s16", layout="mono")
-        out.sample_rate = 48_000
-        return out
-
     inbound.attach(first)
     blocks = inbound.blocks()
     await first.frames.put(frame())

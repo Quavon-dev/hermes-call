@@ -9,7 +9,7 @@ own `ForwardTrack` (aiortc stops a sender's track when its connection closes).
 """
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import av
 import numpy as np
@@ -42,8 +42,11 @@ class InboundAudio:
     """The phone's audio across connections. `resumable`: when a track ends, wait for the next one
     (`attach`) instead of ending; `close` ends it for good."""
 
-    def __init__(self, resumable: bool) -> None:
+    def __init__(self, resumable: bool, on_audio: Callable[[], None] | None = None) -> None:
+        """`on_audio`: called on the first audio block of every track. aiortc announces a track inside
+        `setRemoteDescription`, before (or without) any audio, so only a received frame means media is back."""
         self.resumable = resumable
+        self._on_audio = on_audio
         self._tracks: asyncio.Queue[MediaStreamTrack | None] = asyncio.Queue()
 
     def attach(self, track: MediaStreamTrack) -> None:
@@ -54,7 +57,11 @@ class InboundAudio:
 
     async def blocks(self) -> AsyncIterator[np.ndarray]:
         while (track := await self._tracks.get()) is not None:
+            first = True
             async for block in read_16k(track):
+                if first and self._on_audio is not None:
+                    self._on_audio()
+                first = False
                 yield block
             if not self.resumable:
                 return
