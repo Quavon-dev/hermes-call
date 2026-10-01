@@ -316,10 +316,12 @@ final class AppModel {
         return session
     }
 
-    /// The network came back: try every relay now instead of waiting for the backoff.
+    /// The network came back: try every relay now instead of waiting for the backoff. In the foreground missing
+    /// connections are opened too; in the background only the ones still held (borrowed: a call, a push
+    /// registration) are retried, since nothing would close a newly opened one there.
     func reconnectNow() {
-        guard session != nil else { return connect() }
         for open in openSessions { Task { await open.reconnectNow() } }
+        if isForeground { connect() }
     }
 
     /// Every relay connection the app holds: the active one, standby agents and borrowed ones (a call or a

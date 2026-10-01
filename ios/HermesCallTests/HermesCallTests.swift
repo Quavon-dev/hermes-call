@@ -164,6 +164,32 @@ import Testing
         for session in model.openSessions { await session.stop() }
     }
 
+    /// L5: a network change in the background only retries connections the app still holds (a call, a push
+    /// registration); it must not open the active agent's connection, which nothing would close.
+    @Test func reconnectNowInTheBackgroundOpensNothingNew() async throws {
+        let store = ProfileStore(service: "de.quavon.hermescall.tests.\(UUID().uuidString)")
+        let suite = "de.quavon.hermescall.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? store.deleteAll()
+        }
+        let profiles = [try sampleProfile(label: "home"), try sampleProfile(label: "vps")]
+        try store.save(profiles)
+        let model = AppModel(store: store, preferences: Preferences(defaults: defaults))
+        model.isForeground = false
+        model.reconnectNow()
+        #expect(model.session == nil && model.openSessions.isEmpty)
+        let ring = try model.borrowSession(for: profiles[1])
+        model.reconnectNow()
+        #expect(model.session == nil)
+        #expect(model.openSessions.count == 1 && model.openSessions.first === ring)
+        model.isForeground = true
+        model.reconnectNow()
+        #expect(model.session != nil, "in the foreground the active agent connects")
+        for session in model.openSessions { await session.stop() }
+    }
+
     @Test func pushRegistrationsPersistAndReset() {
         let suite = "de.quavon.hermescall.tests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
