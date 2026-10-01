@@ -146,7 +146,8 @@ def test_compose_must_pin_the_released_image(repo: Path) -> None:
     run("git", "tag", "-f", "v1.2.3", cwd=repo, env=env)
     failed = release(repo, "v1.2.3", check=False)
     assert failed.returncode == 2 and "must default to image tag 1.2.3" in failed.stderr
-    compose.write_text("services:\n  relay:\n    image: ghcr.io/quavon-dev/hermes-call-relay:${HERMESCALL_RELAY_VERSION:-1.2.3}\n")
+    pinned = "ghcr.io/quavon-dev/hermes-call-relay:${HERMESCALL_RELAY_VERSION:-1.2.3}"
+    compose.write_text(f"services:\n  relay:\n    image: {pinned}\n")
     run("git", "commit", "-qam", "pin", cwd=repo, env=env)
     run("git", "tag", "-f", "v1.2.3", cwd=repo, env=env)
     assert release(repo, "v1.2.3").returncode == 0
