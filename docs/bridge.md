@@ -135,7 +135,7 @@ Restart Hermes afterwards. The agent then has one tool:
 waits up to 45 s. If you answer, the bridge speaks `first_message` and the
 conversation continues on the call (that phone's call session, which
 is told the `reason`). If the owner stops the agent while a tool waits, the tool returns at
-once (`interrupted`). The plugin needs Hermes ≥ 0.15 (`min_hermes`); on startup it checks the
+once (`interrupted`). The plugin needs Hermes ≥ 0.15 (`requires_hermes`); on startup it checks the
 Hermes internals it uses and disables only what is missing (with a warning in Hermes' log).
 The tool returns `answered`, `declined`, `no_answer`,
 `busy`, `no_devices` or `rate_limited` (at most 3 rings per 10 minutes and

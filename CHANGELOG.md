@@ -29,6 +29,8 @@ versioned separately and is at **0.8.1** in this release.
   instead of `done` (phones know no other end state).
 - Hermes plugin: a bridge that rejects the token is reported to the Hermes gateway at once
   (`_notify_fatal_error`), not only marked fatal.
+- Hermes plugin: `plugin.yaml` declares `requires_hermes: ">=0.15"`, the field Hermes enforces
+  (`min_hermes` was ignored); the plugin's own version check stays for older Hermes.
 
 ## [0.7.1] — 2026-10-01
 

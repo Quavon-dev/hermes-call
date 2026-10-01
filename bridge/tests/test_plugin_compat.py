@@ -97,9 +97,13 @@ def adapter_module(monkeypatch):
 
 
 def test_min_hermes_is_declared() -> None:
+    """`requires_hermes` is the manifest field Hermes v0.21 enforces before import (older Hermes
+    ignores it; the plugin's own runtime check covers those)."""
     text = (plugin.__file__.rsplit("/", 1)[0] + "/plugin.yaml").strip()
     with open(text) as handle:
-        assert 'min_hermes: "0.15"' in handle.read()
+        manifest = handle.read()
+    assert f'requires_hermes: ">={plugin.MIN_HERMES}"' in manifest
+    assert "min_hermes" not in manifest
 
 
 def test_missing_hermes_internals_disable_only_their_feature(monkeypatch, caplog) -> None:

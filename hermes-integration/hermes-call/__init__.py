@@ -325,8 +325,8 @@ def probe_features() -> dict[str, bool]:
 
 
 def hermes_too_old() -> str | None:
-    """The installed Hermes version if it is older than MIN_HERMES (plugin.yaml's min_hermes is not
-    enforced by Hermes itself), else None (new enough, or not installed as a package)."""
+    """The installed Hermes version if it is older than MIN_HERMES (plugin.yaml's requires_hermes is
+    enforced only by Hermes v0.21+), else None (new enough, or not installed as a package)."""
     try:
         from importlib.metadata import PackageNotFoundError, version
 
