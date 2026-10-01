@@ -384,7 +384,7 @@ def test_get_sh_requires_a_manifest_when_an_installed_bridge_has_no_known_versio
     text = GET_SH.read_text()
     main = text[text.index("# END bridge_version") :]
     assert 'hc_installed_version "$BRIDGE_PREFIX" "$SRC"' in main
-    assert re.search(r'-z \$installed && -d \$BRIDGE_PREFIX/bridge[^\n]*\n(?:[^\n]*\n){0,2}\s*HC_REQUIRE_MANIFEST=1\n', main)
+    assert re.search(r"-z \$installed && -d \$BRIDGE_PREFIX/bridge[^\n]*\n(?:[^\n]*\n){0,2}\s*HC_REQUIRE_MANIFEST=1\n", main)
 
 
 def test_install_sh_records_the_installed_version(tmp_path: Path) -> None:
@@ -396,7 +396,7 @@ def test_install_sh_records_the_installed_version(tmp_path: Path) -> None:
     function = re.search(r"^release_version\(\) \{.*?^\}\n", INSTALL_SH.read_text(), re.S | re.M)
     assert function, "bridge/install.sh must define release_version"
     script = tmp_path / "release-version.sh"
-    script.write_text('set -Eeuo pipefail\nSRC_ROOT=$1\n' + function.group(0) + "release_version\n")
+    script.write_text("set -Eeuo pipefail\nSRC_ROOT=$1\n" + function.group(0) + "release_version\n")
 
     def version() -> subprocess.CompletedProcess:
         return run("bash", str(script), str(src), check=False)
