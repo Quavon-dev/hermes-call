@@ -131,6 +131,25 @@ def device_add(config: Config, name: str) -> int:
     return 1
 
 
+def protect_ids(argv: list[str]) -> list[str]:
+    """Device ids are base64url and may start with "-": keep argparse from taking them for options."""
+    out: list[str] = []
+    index = 0
+    while index < len(argv):
+        word = argv[index]
+        following = argv[index + 1] if index + 1 < len(argv) else ""
+        if word == "--device" and following.startswith("-"):
+            out.append(f"--device={following}")
+            index += 2
+        elif word == "revoke" and following.startswith("-") and following not in ("-h", "--help", "--"):
+            out += [word, "--", following]
+            index += 2
+        else:
+            out.append(word)
+            index += 1
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hermes-call-bridge")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
@@ -152,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     call.add_argument("--device", default="all")
     sub.add_parser("status")
     sub.add_parser("doctor", help="check config, relay, Hermes, Kokoro, speech model and disk")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(protect_ids(sys.argv[1:] if argv is None else argv))
     configure_logging()
     try:
         config = load(args.config)

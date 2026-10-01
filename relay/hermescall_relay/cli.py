@@ -216,8 +216,20 @@ def _dispatch(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+ID_COMMANDS = ("revoke-device", "revoke-bridge")
+
+
+def _protect_ids(argv: list[str]) -> list[str]:
+    """Ids are base64url and may start with "-": put "--" in front so argparse does not take them for options."""
+    for index, word in enumerate(argv[:-1]):
+        following = argv[index + 1]
+        if word in ID_COMMANDS and following.startswith("-") and following not in ("-h", "--help", "--"):
+            return [*argv[: index + 1], "--", *argv[index + 1 :]]
+    return argv
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    args = _parser().parse_args(_protect_ids(sys.argv[1:] if argv is None else argv))
     logs.setup()
     try:
         config = load(args.config)

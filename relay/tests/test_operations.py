@@ -369,3 +369,12 @@ def test_local_config_overrides_the_installer_file(tmp_path: Path) -> None:
     assert config.turn_ttl == 7200 and config.turn_urls == ("turn:a:3478",)
     assert config.limits.max_connections == 300 and config.limits.max_devices_per_bridge == 2
     assert config.log_format == "json"
+
+
+def test_cli_ids_may_start_with_a_dash(tmp_path: Path, capsys) -> None:
+    # Ids are base64url: about one in 64 starts with "-", which argparse would take for an option.
+    path = _write_config(tmp_path, f'secrets_dir = "{tmp_path}"\n')
+    Store(tmp_path / "relay.db").close()
+    assert cli.main(["--config", str(path), "revoke-device", "-AbCdEfGh"]) == 1
+    assert cli.main(["--config", str(path), "revoke-bridge", "-AbCdEfGh"]) == 1
+    assert "unknown" in capsys.readouterr().err
