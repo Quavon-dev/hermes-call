@@ -18,7 +18,7 @@ name: hermes-call
 
 services:
   relay:
-    image: ghcr.io/quavon-dev/hermes-call-relay:${HERMESCALL_RELAY_VERSION:-0.6.2}
+    image: ghcr.io/quavon-dev/hermes-call-relay:${HERMESCALL_RELAY_VERSION:-0.7.0}
     command: ["-m", "hermescall_relay.cli", "--config", "/etc/hermescall-relay/relay.toml", "serve"]
     environment:
       HEALTH_PORT: "8743"

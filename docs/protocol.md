@@ -74,7 +74,7 @@ Payload fields beyond `sign_pk` are defined by the bridge/app (M2/M3).
 ```
 relay  → client {"t":"challenge","nonce":32 bytes,"v":1[,"time":ms since epoch]}
 client → relay  {"t":"auth","role":"bridge"|"device","id":ID,"sig":Ed25519(msg)[,"v":N,"caps":[…]]}
-relay  → client {"t":"ready","v":1,"relay":"0.6.2","caps":["unsupported","mail","blobs","live_activity","turns"]}
+relay  → client {"t":"ready","v":1,"relay":"0.7.0","caps":["unsupported","mail","blobs","live_activity","turns"]}
 msg = "hermescall/v1/auth" | authority | role | id | nonce     (joined with "|")
 ```
 

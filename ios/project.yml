@@ -18,7 +18,7 @@ settings:
   base:
     DEVELOPMENT_TEAM: $(HC_TEAM)
     # One version for the app, its extensions and the watch app; CI overrides the build number.
-    MARKETING_VERSION: "0.6.0"
+    MARKETING_VERSION: "0.7.0"
     CURRENT_PROJECT_VERSION: "1"
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "6.0"
