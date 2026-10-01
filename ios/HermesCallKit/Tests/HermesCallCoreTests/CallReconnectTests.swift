@@ -39,12 +39,37 @@ struct CallReconnectTests {
         #expect(machine.tick(now: t0.addingTimeInterval(CallReconnect.disconnectGrace + 0.2)) == .none, "one offer at a time")
     }
 
-    @Test func networkChangeReoffersRightAway() {
+    @Test func aNetworkChangeLeavesAHealthyCallAlone() {
+        // The bridge closes its connection when a re-offer arrives: re-offering a working call would break it.
         var machine = CallReconnect(supported: true)
-        #expect(machine.networkChanged(now: t0) == .reoffer)
+        #expect(machine.networkChanged(now: t0) == .none)
+        #expect(!machine.isReconnecting)
+        #expect(machine.needsClock, "the health is checked after the grace")
+        #expect(machine.tick(now: t0.addingTimeInterval(1), healthy: false) == .none, "not before the grace")
+        #expect(machine.tick(now: t0.addingTimeInterval(CallReconnect.disconnectGrace + 0.1), healthy: true) == .none)
+        #expect(!machine.isReconnecting && !machine.needsClock)
+        #expect(machine.tick(now: t0.addingTimeInterval(CallReconnect.window + 1), healthy: true) == .none)
+    }
+
+    @Test func aNetworkChangeThatBrokeTheAudioReoffersAfterTheGrace() {
+        var machine = CallReconnect(supported: true)
+        #expect(machine.networkChanged(now: t0) == .none)
+        let checked = t0.addingTimeInterval(CallReconnect.disconnectGrace + 0.1)
+        #expect(machine.tick(now: checked, healthy: false) == .reoffer)
         #expect(machine.isReconnecting)
-        #expect(machine.networkChanged(now: t0.addingTimeInterval(1)) == .none, "not twice within the retry interval")
-        #expect(machine.networkChanged(now: t0.addingTimeInterval(CallReconnect.retryInterval + 0.1)) == .reoffer)
+        #expect(machine.networkChanged(now: checked.addingTimeInterval(1)) == .none)
+        #expect(machine.tick(now: checked.addingTimeInterval(1), healthy: false) == .none, "not twice within the retry interval")
+        #expect(machine.tick(now: checked.addingTimeInterval(CallReconnect.retryInterval + 0.1), healthy: false) == .reoffer)
+    }
+
+    @Test func aBrokenCallWhoseAudioFlowsAgainRecoversInsteadOfEnding() {
+        // E.g. the re-offer could not be sent but the old connection kept working.
+        var machine = CallReconnect(supported: true)
+        _ = machine.mediaFailed(now: t0)
+        _ = machine.reofferFailed(now: t0.addingTimeInterval(1))
+        #expect(machine.tick(now: t0.addingTimeInterval(2), healthy: true) == .recovered)
+        #expect(!machine.isReconnecting)
+        #expect(machine.tick(now: t0.addingTimeInterval(CallReconnect.window + 1), healthy: true) == .none, "never ends a call with audio")
     }
 
     @Test func aReofferWaitsForItsAnswerLessThanTheRetryInterval() {

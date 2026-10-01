@@ -9,7 +9,8 @@ import HermesCallCore
 extension CallCoordinator {
     /// The phone moved to another network (Wi-Fi ↔ cellular): the current path is gone.
     /// The call's relay socket may still look open on the old path, so it is replaced first: signaling
-    /// (a re-offer, its answer, a hangup) must not go out on a dead connection.
+    /// (a re-offer, its answer, a hangup) must not go out on a dead connection. The audio connection is
+    /// only replaced if it stopped working (the bridge drops its side when a re-offer arrives).
     func networkChanged() {
         guard let session = call?.session else { return }
         let uuid = call?.uuid
@@ -17,8 +18,21 @@ extension CallCoordinator {
             await session.reconnectNow(force: true)
             guard call?.uuid == uuid, isConnected, call?.reconnect != nil else { return }
             log.info("network changed during the call")
+            _ = await mediaHealthy()  // the baseline for the check after the grace
             reconnectEvent { $0.networkChanged(now: Date()) }
         }
+    }
+
+    /// The call's connection is connected and audio from the bridge keeps arriving (packets since the last
+    /// sample; the bridge sends audio, silence included, all the time).
+    func mediaHealthy() async -> Bool {
+        guard let rtc = call?.rtc, rtc.state == .connected else { return false }
+        let id = ObjectIdentifier(rtc)
+        guard let packets = await rtc.telemetry().inboundPackets, call?.rtc === rtc else { return false }
+        let previous = call?.inboundSample
+        call?.inboundSample = (id, packets)
+        guard let previous, previous.rtc == id else { return packets > 0 }
+        return packets > previous.packets
     }
 
     /// Feeds one event to the call's reconnect state and carries out what it decides.
@@ -28,7 +42,7 @@ extension CallCoordinator {
         current.reconnect = machine
         call = current
         liveReconnecting = machine.isReconnecting
-        if machine.isReconnecting { startReconnectClock() }
+        if machine.needsClock { startReconnectClock() }
         perform(action, uuid: current.uuid)
     }
 
@@ -46,7 +60,8 @@ extension CallCoordinator {
         }
     }
 
-    /// Ticks about once a second while reconnecting (the grace before a re-offer, retries, the 20 s limit).
+    /// Ticks about once a second while reconnecting (the grace before a re-offer, retries, the 20 s limit)
+    /// or while a network change's health check is due.
     private func startReconnectClock() {
         guard let current = call, current.reconnectClock == nil else { return }
         let uuid = current.uuid
@@ -54,8 +69,10 @@ extension CallCoordinator {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard !Task.isCancelled, let self, self.call?.uuid == uuid else { return }
-                self.reconnectEvent { $0.tick(now: Date()) }
-                if self.call?.reconnect?.isReconnecting != true {
+                let healthy = await self.mediaHealthy()
+                guard !Task.isCancelled, self.call?.uuid == uuid else { return }
+                self.reconnectEvent { $0.tick(now: Date(), healthy: healthy) }
+                if self.call?.reconnect?.needsClock != true {
                     self.call?.reconnectClock = nil
                     return
                 }
@@ -99,7 +116,13 @@ extension CallCoordinator {
             log.error("re-offer failed: \(String(describing: error), privacy: .public)")
             // A connection that never became the call's (no answer in time) would otherwise stay open.
             if let candidate, call?.rtc !== candidate { candidate.close() }
-            reconnectEvent { $0.reofferFailed(now: Date()) }
+            // The re-offer never reached the bridge (no relay, no TURN) and the old connection still carries
+            // audio: the call is fine, so "Reconnecting…" ends instead of running into the 20 s limit.
+            if call?.uuid == uuid, await mediaHealthy() {
+                reconnectEvent { $0.mediaConnected() }
+            } else {
+                reconnectEvent { $0.reofferFailed(now: Date()) }
+            }
         }
     }
 }

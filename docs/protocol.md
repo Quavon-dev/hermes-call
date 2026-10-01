@@ -232,8 +232,10 @@ without an ack); the bridge downloads and deletes it, re-encodes it (JPEG ≤ 12
 aiortc has no ICE restart, so a call moves to a **new** peer connection when the phone's network
 changes. Only when both sides listed `call_resume`:
 
-- The phone notices a network change (path monitor) or its connection going `disconnected` (re-offer
-  after 2 s unless it healed) or `failed` (at once), shows "Reconnecting…" and keeps the CallKit call up.
+- The phone notices its connection going `disconnected` (re-offer after 2 s unless it healed) or
+  `failed` (at once), or a network change (path monitor) after which, 2 s later, the connection is not
+  `connected` or no audio arrives (a working call is left alone: the bridge drops its old connection as
+  soon as a re-offer arrives). It shows "Reconnecting…" and keeps the CallKit call up.
   It sends a new `offer` with the **same** `call_id` (TURN credentials fetched again), every 6 s while
   no audio arrives (an offer without an answer within 5 s is repeated after 1 s), and ends the call 20 s
   after the audio broke ("Connection lost"). Its relay connection is replaced first, since the old

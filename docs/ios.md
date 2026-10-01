@@ -82,7 +82,8 @@ account to get incoming calls.
   does not have (`ChatStore.insertNew`); imported messages are not counted as unread. Deleting a
   message stays local to this phone (the history is never asked again for that agent).
 - **Call resume** (`CallReconnect`, `CallCoordinator+Reconnect`): with a bridge listing `call_resume`,
-  a network change or a broken connection shows *Reconnecting…* (Standard: under the name; HUD:
+  a broken connection (also one found 2 s after a network change: not connected, or no audio arriving;
+  a call that still works is left alone) shows *Reconnecting…* (Standard: under the name; HUD:
   RECONNECTING in the header) while CallKit's call stays up; the app replaces the call's relay connection,
   re-offers for the same call id with a new peer connection (an offer unanswered after 5 s is repeated
   after 1 s) and gives up after 20 s ("Connection lost. The call could not be resumed.").

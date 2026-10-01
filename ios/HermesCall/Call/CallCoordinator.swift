@@ -97,6 +97,8 @@ final class CallCoordinator: NSObject {
         var reconnect: CallReconnect?
         var reconnectClock: Task<Void, Never>?
         var reoffering = false
+        /// The last inbound packet count of a connection (`mediaHealthy`).
+        var inboundSample: (rtc: ObjectIdentifier, packets: Int)?
     }
 
     static let answerTimeout: Duration = .seconds(20)

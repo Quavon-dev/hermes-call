@@ -6,6 +6,8 @@ struct CallTelemetry: Sendable, Equatable {
     var mic = 0.0
     var agent = 0.0
     var rttMs: Double?
+    /// RTP packets received from the bridge so far (nil: no inbound audio stream yet).
+    var inboundPackets: Int?
 }
 
 /// One audio-only WebRTC connection to the bridge.
@@ -34,6 +36,8 @@ final class WebRTCCall: NSObject {
     private var gatheringDone: CheckedContinuation<Void, Never>?
     private var gatheringComplete = false
     var onStateChange: ((State) -> Void)?
+    /// The connection's last reported state.
+    private(set) var state: State = .connecting
 
     /// Only TURN on the relay's own host: a relay must not route the phone's media (and IP) elsewhere.
     static func isRelayTURN(_ url: String, host: String) -> Bool { TURNServers.isRelayTURN(url, host: host) }
@@ -103,7 +107,9 @@ final class WebRTCCall: NSObject {
                 let level = (stat.values["audioLevel"] as? NSNumber)?.doubleValue
                 switch stat.type {
                 case "media-source": telemetry.mic = level ?? telemetry.mic
-                case "inbound-rtp" where stat.values["kind"] as? String == "audio": telemetry.agent = level ?? telemetry.agent
+                case "inbound-rtp" where stat.values["kind"] as? String == "audio":
+                    telemetry.agent = level ?? telemetry.agent
+                    telemetry.inboundPackets = (stat.values["packetsReceived"] as? NSNumber)?.intValue
                 case "candidate-pair" where stat.values["state"] as? String == "succeeded":
                     if let rtt = (stat.values["currentRoundTripTime"] as? NSNumber)?.doubleValue { telemetry.rttMs = rtt * 1000 }
                 default: break
@@ -135,13 +141,16 @@ final class WebRTCCall: NSObject {
     }
 
     fileprivate func connectionChanged(_ state: RTCPeerConnectionState) {
+        let mapped: State
         switch state {
-        case .connected: onStateChange?(.connected)
-        case .disconnected: onStateChange?(.disconnected)
-        case .failed: onStateChange?(.failed)
-        case .closed: onStateChange?(.closed)
-        default: break
+        case .connected: mapped = .connected
+        case .disconnected: mapped = .disconnected
+        case .failed: mapped = .failed
+        case .closed: mapped = .closed
+        default: return
         }
+        self.state = mapped
+        onStateChange?(mapped)
     }
 }
 

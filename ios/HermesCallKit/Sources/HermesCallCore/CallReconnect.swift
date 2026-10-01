@@ -45,6 +45,8 @@ public struct CallReconnect: Sendable, Equatable {
     /// Since when the audio is gone (nil: the call is fine).
     public private(set) var brokenSince: Date?
     private var lastOffer: Date?
+    /// A network change during a healthy call: the audio is checked at this time (nil: no check due).
+    private var networkCheckAt: Date?
     private var ended = false
 
     public init(supported: Bool) {
@@ -52,7 +54,8 @@ public struct CallReconnect: Sendable, Equatable {
     }
 
     public var isReconnecting: Bool { brokenSince != nil && !ended }
-    public var needsClock: Bool { isReconnecting }
+    /// The caller's clock must tick: reconnecting, or a network change's health check is due.
+    public var needsClock: Bool { !ended && (brokenSince != nil || networkCheckAt != nil) }
 
     /// ICE `disconnected`: may heal by itself; "Reconnecting…" shows, the re-offer waits for the grace.
     public mutating func mediaDisconnected(now: Date) -> Action {
@@ -69,15 +72,22 @@ public struct CallReconnect: Sendable, Equatable {
         return offer(now: now)
     }
 
-    /// The phone moved to another network during the call: the old path is gone, re-offer right away.
+    /// The phone moved to another network during the call. The old path often keeps working (cellular
+    /// stays up while Wi-Fi joins), and the bridge drops its connection as soon as a re-offer arrives, so a
+    /// working call is not touched: after the grace the caller's health check decides (`tick`). While
+    /// already reconnecting, the new network gets an offer at once (within the retry interval).
     public mutating func networkChanged(now: Date) -> Action {
         guard supported, !ended else { return .none }
-        if brokenSince == nil { brokenSince = now }
+        guard brokenSince != nil else {
+            networkCheckAt = networkCheckAt ?? now.addingTimeInterval(Self.disconnectGrace)
+            return .none
+        }
         return offer(now: now)
     }
 
     /// The (new) connection carries audio.
     public mutating func mediaConnected() -> Action {
+        networkCheckAt = nil
         guard brokenSince != nil, !ended else { return .none }
         brokenSince = nil
         lastOffer = nil
@@ -91,8 +101,19 @@ public struct CallReconnect: Sendable, Equatable {
         return .none
     }
 
+    /// `healthy`: the call's current connection is connected and audio from the bridge keeps arriving.
     public mutating func tick(now: Date, healthy: Bool = false) -> Action {
-        guard let since = brokenSince, !ended else { return .none }
+        guard !ended else { return .none }
+        guard let since = brokenSince else {
+            guard let check = networkCheckAt, now >= check else { return .none }
+            networkCheckAt = nil
+            if healthy { return .none }
+            brokenSince = check.addingTimeInterval(-Self.disconnectGrace)
+            return offer(now: now)
+        }
+        networkCheckAt = nil
+        // E.g. a re-offer could not be sent while the old connection kept working: never end a call with audio.
+        if healthy { return mediaConnected() }
         if now.timeIntervalSince(since) >= Self.window { return finish(.connectionLost) }
         if let lastOffer {
             return now.timeIntervalSince(lastOffer) >= Self.retryInterval ? offer(now: now) : .none
