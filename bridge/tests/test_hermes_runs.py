@@ -174,3 +174,15 @@ async def test_the_phone_is_offered_only_the_choices_hermes_allows() -> None:
     assert relay.sent[-1]["data"]["choices"] == ["once", "deny"]
     await manager._on_approval_answer(device, {"call_id": "c1", "request_id": "r9", "choice": "session"})
     assert await ask == "deny"
+
+
+@pytest.mark.parametrize(
+    ("version", "runs"),
+    [("0.21.5", True), ("0.22.0", True), ("unknown", True), ("git.abc1234", True), ("0.18.2", False), (None, False)],
+)
+async def test_runs_are_used_by_hermes_that_reports_a_version_from_0_21(version, runs) -> None:
+    """Hermes' main branch reports `unknown` (no release tag in a shallow checkout): it is newer than
+    0.21. A version before 0.21, or none at all (0.15), keeps chat completions."""
+    api = FakeApi(version=version, events=runs_events(ev("message.delta", delta="Hi."), ev("run.completed")))
+    [e async for e in client_for(api).turn("sys", "hi")]
+    assert ("POST /v1/runs" in api.paths()) is runs

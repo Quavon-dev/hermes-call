@@ -17,7 +17,8 @@ phone ⇄ (DTLS-SRTP via TURN) ⇄ aiortc → Silero VAD → faster-whisper → 
   code), so the phone never learns your home IP and nothing connects in. The
   control API listens on `127.0.0.1:8765` and needs a bearer token.
 - **Hermes stays in charge.** The bridge talks to the official Hermes API
-  server: with Hermes ≥ 0.21 (the version in its `/health`, asked once) each call turn is a
+  server: with Hermes ≥ 0.21 (the version in its `/health`, asked once; a main-branch checkout
+  that reports `unknown` counts as newer) each call turn is a
   run (`POST /v1/runs` with `session_id`, streamed from `GET /v1/runs/{id}/events`; cutting the
   agent off stops it with `POST /v1/runs/{id}/stop`); older Hermes, or one without `/v1/runs`,
   gets `/v1/chat/completions` (streaming, `X-Hermes-Session-Id`), which never asks for approvals.

@@ -245,8 +245,12 @@ def _content(user_text: str, images: Sequence[bytes]) -> str | list[dict[str, An
 
 
 def _version_at_least(version: Any, minimum: tuple[int, int]) -> bool:
-    match = re.match(r"v?(\d+)\.(\d+)", version) if isinstance(version, str) else None
-    return match is not None and (int(match[1]), int(match[2])) >= minimum
+    """/health names a version from Hermes 0.21 on (0.15 has none); a checkout without release tags
+    (Hermes' main branch) reports e.g. `unknown`, which is newer than 0.21 too."""
+    if not isinstance(version, str) or not version:
+        return False
+    match = re.match(r"v?(\d+)\.(\d+)", version)
+    return match is None or (int(match[1]), int(match[2])) >= minimum
 
 
 def _json(data: str) -> dict:
