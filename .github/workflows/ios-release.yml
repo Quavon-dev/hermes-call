@@ -34,9 +34,9 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: brew install libsodium
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - run: uv sync --locked
       - name: swift test
         working-directory: ios/HermesCallKit
@@ -50,7 +50,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: brew install xcodegen
       - name: Metal toolchain (Presence.metal)
         run: xcodebuild -downloadComponent MetalToolchain
@@ -83,7 +83,7 @@ jobs:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -100,7 +100,7 @@ jobs:
           major=$(xcodebuild -version | awk 'NR==1 { split($2, v, "."); print v[1] }')
           [ "$major" -ge 26 ] || { echo "::error::Xcode 26 or newer is required (found $major)"; exit 1; }
 
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 
       - name: Install signing material
         env:
@@ -184,7 +184,7 @@ jobs:
           mv "$RUNNER_TEMP/export-export/HermesCall.ipa" "$RUNNER_TEMP/HermesCall-${{ steps.version.outputs.version }}-$BUILD_NUMBER.ipa"
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ runner.temp }}/HermesCall-${{ steps.version.outputs.version }}-${{ steps.version.outputs.build }}.ipa
 
@@ -224,10 +224,10 @@ jobs:
     timeout-minutes: 50
     environment: app-store
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: Internal group, external group "Beta" and Beta App Review
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -260,8 +260,8 @@ jobs:
       group: ios-app-review
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: Submit for App Review, release after approval
         # "What's New" comes from ios/appstore/notes/<version>/<locale>.txt (generic text if missing).
         env:
