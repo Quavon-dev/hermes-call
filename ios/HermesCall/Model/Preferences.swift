@@ -38,6 +38,28 @@ enum AppIconChoice: String, CaseIterable, Identifiable, Sendable {
     static let presenceIcon = "AppIconPresence"
 }
 
+/// How long a finger rests on empty space in the presence before the menu opens.
+enum MenuHold: String, CaseIterable, Identifiable, Sendable {
+    case short, normal, long, veryLong
+    var id: String { rawValue }
+    var seconds: Double {
+        switch self {
+        case .short: 0.3
+        case .normal: 0.42
+        case .long: 0.8
+        case .veryLong: 1.2
+        }
+    }
+    var title: String {
+        switch self {
+        case .short: "Short (0.3 s)"
+        case .normal: "Normal (0.4 s)"
+        case .long: "Long (0.8 s)"
+        case .veryLong: "Very long (1.2 s)"
+        }
+    }
+}
+
 /// Non-secret UI preferences.
 @MainActor @Observable
 final class Preferences {
@@ -60,6 +82,8 @@ final class Preferences {
     var showCaptions: Bool { didSet { defaults.set(showCaptions, forKey: "showCaptions") } }
     /// HUD calls: the agent speaks through the loudspeaker (unless AirPods, headphones or a car carry the call).
     var presenceSpeaker: Bool { didSet { defaults.set(presenceSpeaker, forKey: "presenceSpeaker") } }
+    /// HUD: how long to hold on empty space before the menu opens.
+    var menuHold: MenuHold { didSet { defaults.set(menuHold.rawValue, forKey: "menuHold") } }
     var appIcon: AppIconChoice { didSet { defaults.set(appIcon.rawValue, forKey: "appIcon") } }
     /// Voice notes ask the agent to answer by voice too (sent with each voice note).
     var voiceReplies: Bool { didSet { defaults.set(voiceReplies, forKey: "voiceReplies") } }
@@ -98,6 +122,7 @@ final class Preferences {
         voiceHaptics = defaults.object(forKey: "voiceHaptics") as? Bool ?? true
         showCaptions = defaults.object(forKey: "showCaptions") as? Bool ?? true
         presenceSpeaker = defaults.object(forKey: "presenceSpeaker") as? Bool ?? true
+        menuHold = MenuHold(rawValue: defaults.string(forKey: "menuHold") ?? "") ?? .normal
         speechRecognition = SpeechRecognition(rawValue: defaults.string(forKey: "speechRecognition") ?? "") ?? .bridge
         appIcon = AppIconChoice(rawValue: defaults.string(forKey: "appIcon") ?? "") ?? .automatic
         voiceReplies = defaults.object(forKey: "voiceReplies") as? Bool ?? true
@@ -123,7 +148,7 @@ final class Preferences {
             defaults.removeObject(forKey: key)
         }
         for key in ["talkMode", "includeInRecents", "activeProfile", "onboardingDone", "pushRegistrations", "appearance",
-                    "speechRecognition", "alertRegistrations", "voiceHaptics", "showCaptions", "presenceSpeaker", "presenceHints",
+                    "speechRecognition", "alertRegistrations", "voiceHaptics", "showCaptions", "presenceSpeaker", "menuHold", "presenceHints",
                     "appIcon", "voiceReplies", "autoPlayVoiceReplies", "taskDetailsOnLockScreen", "demoActive"] {
             defaults.removeObject(forKey: key)
         }

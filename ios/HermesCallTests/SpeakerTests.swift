@@ -32,3 +32,24 @@ struct SpeakerTests {
         #expect(Preferences(defaults: defaults, shared: shared).presenceSpeaker)
     }
 }
+
+/// How long a finger rests on empty space before the menu opens is the owner's choice; holding the
+/// sphere (push to talk) keeps its own short delay.
+@MainActor
+struct MenuHoldTests {
+    @Test func theMenuWaitsAsLongAsTheOwnerChose() {
+        #expect(PresenceTouch.holdDelay(onSphere: false, menuHold: .long) == 0.8)
+        #expect(PresenceTouch.holdDelay(onSphere: false, menuHold: .short) == 0.3)
+        #expect(PresenceTouch.holdDelay(onSphere: true, menuHold: .veryLong) == PresenceTouch.holdSeconds)
+    }
+
+    @Test func theMenuHoldDefaultsToNormalAndIsKept() throws {
+        let suite = "menuhold-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let shared = try #require(UserDefaults(suiteName: suite + ".shared"))
+        let preferences = Preferences(defaults: defaults, shared: shared)
+        #expect(preferences.menuHold == .normal)
+        preferences.menuHold = .veryLong
+        #expect(Preferences(defaults: defaults, shared: shared).menuHold == .veryLong)
+    }
+}

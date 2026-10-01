@@ -69,6 +69,11 @@ struct PresenceTouch {
 
     static let slop: CGFloat = 10
     static let holdSeconds = 0.42
+
+    /// Holding the sphere (push to talk) starts quickly; the menu on empty space waits as long as the owner chose.
+    static func holdDelay(onSphere: Bool, menuHold: MenuHold) -> Double {
+        onSphere ? holdSeconds : menuHold.seconds
+    }
     static let swipeDistance: CGFloat = 70
 
     let start: CGPoint

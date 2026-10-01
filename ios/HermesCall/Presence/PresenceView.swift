@@ -369,10 +369,11 @@ struct PresenceView: View {
 
     private func touchMoved(_ value: DragGesture.Value) {
         guard var current = touch else {
-            touch = PresenceTouch(at: value.startLocation, onHeart: engine.isInHeart(value.startLocation),
-                                  onSphere: engine.isOnSphere(value.startLocation))
+            let onSphere = engine.isOnSphere(value.startLocation)
+            touch = PresenceTouch(at: value.startLocation, onHeart: engine.isInHeart(value.startLocation), onSphere: onSphere)
+            let delay = PresenceTouch.holdDelay(onSphere: onSphere, menuHold: app.preferences.menuHold)
             holdTimer = Task { @MainActor in
-                try? await Task.sleep(for: .seconds(PresenceTouch.holdSeconds))
+                try? await Task.sleep(for: .seconds(delay))
                 guard !Task.isCancelled, var held = touch, let gesture = held.holdElapsed() else { return }
                 touch = held
                 haptics.tick(sharpness: 0.4)

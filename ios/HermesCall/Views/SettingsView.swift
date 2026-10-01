@@ -159,6 +159,9 @@ private struct AppearanceSettingsSection: View {
             AppIconPicker()
             if preferences.appearance == .hud {
                 Toggle("Speak through the loudspeaker", isOn: $preferences.presenceSpeaker)
+                Picker("Hold to open menu", selection: $preferences.menuHold) {
+                    ForEach(MenuHold.allCases) { Text($0.title).tag($0) }
+                }
                 Toggle("Captions during calls", isOn: $preferences.showCaptions)
                 Toggle("Feel the voice (haptics)", isOn: $preferences.voiceHaptics)
             }
