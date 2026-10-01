@@ -396,13 +396,26 @@ class CallManager:
         old, call.pc = call.pc, None
         if old is not None:
             await old.close()  # first, so two connections never read the speech track at once
+        if self.active is not call:
+            return  # hung up (or given up) while the old connection closed: no new one
         try:
             answer = await self._connect(call, turn, sdp)
         except Exception as exc:
+            await self._close_if_ended(call)
             raise ProtocolError("re-offer rejected") from exc
+        if await self._close_if_ended(call):
+            return
+        await self._send(call.device.id, {"type": "answer", "call_id": call.call_id, "sdp": answer})
+        log.info("call moving to a new connection (network change)")
+
+    async def _close_if_ended(self, call: ActiveCall) -> bool:
+        """True when the call ended while its new connection was being built; that connection is closed
+        here (`end()` may have run before it existed), so its sockets and TURN allocation do not leak."""
         if self.active is call:
-            await self._send(call.device.id, {"type": "answer", "call_id": call.call_id, "sdp": answer})
-            log.info("call moving to a new connection (network change)")
+            return False
+        if call.pc is not None:
+            await call.pc.close()
+        return True
 
     def _await_resume(self, call: ActiveCall) -> None:
         if call.resume_timer is not None:

@@ -150,6 +150,26 @@ async def test_a_reoffer_that_never_brings_audio_also_gives_up(setup, monkeypatc
     assert manager.active is None and relay.bodies("hangup")[0]["why"] == "connection_lost"
 
 
+class SlowClosePc(FakePc):
+    async def close(self) -> None:
+        await asyncio.sleep(0.05)
+        self.closed = True
+
+
+async def test_a_hangup_while_the_old_connection_closes_leaves_no_new_connection_open(setup, monkeypatch) -> None:
+    manager, relay, device, _, pcs, _ = setup
+    monkeypatch.setattr(calls_mod, "peer_connection", lambda turn, *_: pcs.append(SlowClosePc()) or pcs[-1])
+    manager.peers.on_hello(device.id, {"type": "hello", "v": 1, "caps": ["call_resume"]})
+    call_id = await start(manager, device, pcs)
+    reoffer = asyncio.ensure_future(manager.on_e2e(device.id, {"type": "offer", "call_id": call_id, "sdp": "v=0\r\n"}))
+    await asyncio.sleep(0.01)  # the old connection is closing
+    await manager.on_e2e(device.id, {"type": "hangup", "call_id": call_id})
+    await reoffer
+    assert manager.active is None
+    assert all(pc.closed for pc in pcs), [pc.closed for pc in pcs]
+    assert len(relay.bodies("answer")) == 1, "no answer for a call that has ended"
+
+
 async def test_only_the_calling_phone_can_resume(setup) -> None:
     manager, relay, device, other, pcs, _ = setup
     for phone in (device, other):
