@@ -16,7 +16,7 @@ from .version import PROTOCOL_VERSION, VERSION
 log = logging.getLogger(__name__)
 
 # Optional features this bridge offers (docs/protocol.md, "App ↔ bridge versions").
-BRIDGE_CAPS: tuple[str, ...] = ("unsupported", "call_resume")
+BRIDGE_CAPS: tuple[str, ...] = ("unsupported", "call_resume", "history")
 NAME = re.compile(r"[a-z0-9_]{1,32}")
 MAX_CAPS = 32
 MAX_APP_VERSION = 40

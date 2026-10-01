@@ -46,6 +46,8 @@ final class AppModel {
     private(set) var relayInfo: [UUID: RelayInfo] = [:]
     /// What each agent's bridge said in its E2E `hello` (version, caps); missing for older bridges.
     private(set) var bridgeInfo: [UUID: BridgeInfo] = [:]
+    /// A bridge answered `hello` (after every connect): the chat may sync its history.
+    var onBridgeHello: ((UUID, BridgeInfo) -> Void)?
     /// Lets the call coordinator listen to every relay connection the app opens.
     var onSessionCreated: ((RelaySession) -> Void)?
     /// A relay connection (the app's own or a borrowed one) is up: fetch mail, resend the outbox.
@@ -393,7 +395,10 @@ final class AppModel {
         }, onReady: { [weak self] info in
             Task { @MainActor in self?.relayInfo[id] = info }
         }, hello: AppHello.body(appVersion: DiagnosticsView.appVersion), onBridgeHello: { [weak self] info in
-            Task { @MainActor in self?.bridgeInfo[id] = info }
+            Task { @MainActor in
+                self?.bridgeInfo[id] = info
+                self?.onBridgeHello?(id, info)
+            }
         })
         sessionTokens[id] = token
         statuses[id] = .disconnected

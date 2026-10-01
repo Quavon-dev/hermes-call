@@ -199,6 +199,8 @@ class ChatService:
             await self._on_chat(device, body)
         elif kind == "approval":
             await self._on_approval(device, body)
+        elif kind == "history_request":
+            await self._on_history_request(device, body)
         else:
             raise ProtocolError("unknown message type")
 
@@ -308,6 +310,15 @@ class ChatService:
         text = await self._transcribe(audio) if len(audio) else ""
         log.info("voice note: %.1f s audio, stt %.0f ms", len(audio) / 16_000, (time.monotonic() - started) * 1000)
         return text or "(no speech recognized)"
+
+    async def _on_history_request(self, device: Device, body: dict[str, Any]) -> None:
+        """A phone (usually just paired) asks for the recent chat, one page at a time (history.py)."""
+        if not self.history.allowed(device.id):
+            log.warning("history requests from %s ignored: too many", device.id[:6])
+            return
+        page = await self.history.page(device.id, body.get("before"), body.get("limit"))
+        log.info("history page for %s: %d message(s)", device.id[:6], len(page["messages"]))
+        await self._live(device, page)
 
     async def _on_approval(self, device: Device, body: dict[str, Any]) -> None:
         request_id = body.get("request_id")

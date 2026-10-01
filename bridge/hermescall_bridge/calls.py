@@ -55,6 +55,8 @@ MAX_CALL_IMAGES = 30
 CALL_IMAGE_SIDE = 1280
 # All call_image messages per device (accepted or not): each costs a download or a blob delete.
 CALL_IMAGE_MESSAGES = (60.0, 40)
+# E2E types for chat, phone context and tasks (handed to `other_messages`).
+OTHER_TYPES = ("chat", "phone_answer", "task_prefs", "history_request")
 
 
 def _open_image(key: bytes, sealed: bytes) -> bytes:
@@ -217,7 +219,7 @@ class CallManager:
             body = self._channel.open(device.id, device.box_key, data)
             self._activity[device.id] = time.monotonic()
             if self._other_messages is not None and (
-                body["type"] in ("chat", "phone_answer", "task_prefs") or (body["type"] == "approval" and "call_id" not in body)
+                body["type"] in OTHER_TYPES or (body["type"] == "approval" and "call_id" not in body)
             ):
                 await self._other_messages(device, body)
                 return

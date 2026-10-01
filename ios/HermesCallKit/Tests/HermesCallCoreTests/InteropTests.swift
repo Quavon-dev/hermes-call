@@ -72,6 +72,15 @@ import Testing
         #expect(reply?["type"]?.string == "cancel")
         #expect(reply?["call_id"]?.string == callID)
         #expect(reply?["why"]?.string == "unknown_call")
+        // History sync (D4): the Python bridge answers a page, empty for a fresh bridge.
+        #expect(await session.bridgeInfo?.supports(ChatHistorySync.cap) == true)
+        try await session.send(ChatHistorySync.request(before: nil))
+        var page: ChatHistorySync.Page?
+        for await message in session.messages {
+            page = ChatHistorySync.page(from: message)
+            break
+        }
+        #expect(page == ChatHistorySync.Page(messages: [], more: false, next: nil))
         await session.stop()
     }
 

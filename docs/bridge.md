@@ -169,7 +169,8 @@ answers `/healthz`; it exits 1 when a check failed.
 
 - **Chat never loses a message on a restart.** An owner message is stored (SQLite,
   `/var/lib/hermes-call-bridge/chat.db`, 0600) before the phone sees *delivered*, and stays
-  there until the Hermes adapter took it. Agent messages wait (end-to-end encrypted) in an
+  there until the Hermes adapter took it (and, as history, until 200 newer messages pushed it out).
+  Agent messages wait (end-to-end encrypted) in an
   outbox until the relay's mailbox took them: retried with backoff and after every relay
   reconnect for up to 7 days; if one is given up, the adapter logs it. Owner message text sits
   in that file only until Hermes has it (Hermes keeps the conversation in its own session store).
@@ -180,6 +181,10 @@ answers `/healthz`; it exits 1 when a check failed.
   per phone, as the relay keeps blobs per recipient), so other phones see the photo itself instead of
   a `[photo: name]` line. A file is deleted once Hermes has its event and the message left the
   history (below); at most one attachment (≤ 10 MiB) is in memory at a time.
+- **Chat history for new phones**: the last 200 owner and agent messages (text, transcripts, card
+  decks without images, spooled attachments) stay in chat.db, so a phone paired later sees the
+  recent conversation (`history_request`, [protocol](protocol.md#chat-history-history)). Owner text
+  therefore stays in that 0600 file after Hermes took it; deletes on a phone are local to it.
 - **Replay protection** marks are appended to a small log per message and compacted in the
   background (no file rewrite per message).
 - **Calls survive a network change** (phones that list `call_resume`): when the phone moves from

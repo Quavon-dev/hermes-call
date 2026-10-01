@@ -80,6 +80,9 @@ class ChatHistory:
         for seq, item in rows[:count]:
             message = await self._message(device_id, item)
             size = len(json.dumps(message, separators=(",", ":")).encode())
+            if size > PAGE_BYTES and "presentation" in message:  # a very large card deck: its text only
+                message = {k: v for k, v in message.items() if k != "presentation"} | {"kind": "text"}
+                size = len(json.dumps(message, separators=(",", ":")).encode())
             if messages and used + size > PAGE_BYTES:
                 break
             messages.append(message)

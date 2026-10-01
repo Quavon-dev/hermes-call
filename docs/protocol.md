@@ -194,6 +194,7 @@ unknown mailbox message from its mailbox.
 |---|---|---|
 | `unsupported` | both | answers unknown types with `unsupported` |
 | `call_resume` | both | a call survives a network change (see "Call resume") |
+| `history` | bridge: serves `history_request`; app: may ask for it | recent chat for a newly paired phone (see "Chat history") |
 
 The bridge's `state.json` carries `"schema": 1`; files without it are schema 0. On start the bridge
 runs its migration hooks from the file's schema up to its own and writes the file back; a file from a
@@ -309,6 +310,23 @@ A resent chat message (same `id`, new `mid`) is acked again but delivered once. 
 an owner message durably before it sends `delivered` (so `delivered` survives a bridge restart);
 agent messages wait in a persistent outbox on the bridge until the relay's mailbox took them
 (retried with backoff and after every reconnect, for up to 7 days, with the same `mid`).
+
+### Chat history (`history`)
+
+The bridge keeps the newest 200 owner and agent messages of the shared chat (chat.db, see
+[bridge.md](bridge.md#reliability)) with their attachments. A phone asks with live E2E messages:
+
+| Direction | `type` | Fields |
+|---|---|---|
+| device → bridge | `history_request` | `before?` (the `next` of the previous page; absent: newest), `limit?` (1–50, default 50) |
+| bridge → device | `history_page` | `messages` (newest first; each like a bridge → device `chat` body plus `ts`, ms since epoch, and `transcript?` for owner voice notes), `more` (bool), `next` (cursor for the following page, or null) |
+
+A page holds at most 50 messages and about 30 KiB; card images are not kept (a card deck that alone
+exceeds the page shows as text). Attachments are uploaded for the requesting phone as in a `chat`
+message, at most 10 (30 MiB) per phone and hour (the relay's blob quota); beyond that, and for files
+the bridge no longer has, the message carries a `[kind: name]` line instead. At most 20 requests per
+phone per 10 minutes. The app asks only while its chat with that agent is empty (a new pairing), once,
+and stores messages by id without duplicates; deleting a message on a phone stays local to that phone.
 
 **Spoken replies (M9).** An owner voice note with `voice_replies: true` asks for a spoken answer.
 The bridge remembers it for 10 minutes (a text message or a voice note without the flag clears it).

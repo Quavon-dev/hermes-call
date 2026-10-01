@@ -125,6 +125,24 @@ public actor ChatStore {
         }
     }
 
+    /// Stores the messages whose ids are not here yet (history from the bridge); returns those it stored.
+    @discardableResult
+    public func insertNew(_ messages: [ChatMessage], in profile: UUID) throws -> [ChatMessage] {
+        try write { db in
+            var added: [ChatMessage] = []
+            for message in messages {
+                var exists = false
+                try db.query("SELECT 1 FROM messages WHERE profile = ? AND id = ?", [.text(profile.uuidString), .text(message.id)]) { _ in
+                    exists = true
+                }
+                guard !exists else { continue }
+                try store(db, message, profile: profile)
+                added.append(message)
+            }
+            return added
+        }
+    }
+
     /// Changes a stored message; returns it as stored (nil when unknown).
     @discardableResult
     public func update(_ id: String, in profile: UUID, _ change: @Sendable (inout ChatMessage) -> Void) throws -> ChatMessage? {

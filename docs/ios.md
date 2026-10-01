@@ -76,6 +76,11 @@ account to get incoming calls.
   `choices` list `session` (bridges with Hermes ≥ 0.15), a third button *Allow for this session* sends
   `choice: "session"`, also only after Face ID / passcode; older bridges keep *Approve once* / *Deny*.
   Screenshot: `-UITestReset YES -UITestConsent YES -ChatDemo YES -ChatDemoApproval YES`.
+- **Chat history for a new phone** (`ChatHistorySync`, `ChatModel+History`): when a bridge lists
+  `history` and this phone's chat with that agent is empty (a fresh pairing), the app asks once for
+  the recent chat, page by page, downloads the attachments the bridge sends and stores only messages it
+  does not have (`ChatStore.insertNew`); imported messages are not counted as unread. Deleting a
+  message stays local to this phone (the history is never asked again for that agent).
 - **Call resume** (`CallReconnect`, `CallCoordinator+Reconnect`): with a bridge listing `call_resume`,
   a network change or a broken connection shows *Reconnecting…* (Standard: under the name; HUD:
   RECONNECTING in the header) while CallKit's call stays up; the app re-offers for the same call id with

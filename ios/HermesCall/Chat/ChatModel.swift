@@ -66,13 +66,14 @@ final class ChatModel {
     /// Outbox claims (`ChatStore.claim`): longer than connecting (15 s), uploading and the ack wait.
     static let claimOwner = "app"
     static let claimDuration: TimeInterval = 120
-    private nonisolated static let chatTypes: Set<String> = ["chat", "chat_ack", "typing", "approval_done"]
+    private nonisolated static let chatTypes: Set<String> = ["chat", "chat_ack", "typing", "approval_done", "history_page"]
 
-    private let app: AppModel
-    private let store: ChatStore
+    let app: AppModel
+    // Internal (not private) for the extension files (ChatModel+History).
+    let store: ChatStore
     private let links: ChatLinkProvider
-    private let unreadDefaults: UserDefaults
-    private let log = Logger(subsystem: "de.quavon.hermescall", category: "chat")
+    let unreadDefaults: UserDefaults
+    let log = Logger(subsystem: "de.quavon.hermescall", category: "chat")
     private var shownProfile: UUID?
     private var typingReset: Task<Void, Never>?
     private var acks: [String: CheckedContinuation<Bool, Never>] = [:]
@@ -80,6 +81,8 @@ final class ChatModel {
     private var loadingPage = false
     private var replyWaiters: [UUID: ReplyWaiter] = [:]
     private var listeners: [Task<Void, Never>] = []
+    /// History sync in progress: pages asked so far per agent (ChatModel+History).
+    var historyPages: [UUID: Int] = [:]
 
     private struct ReplyWaiter {
         let profile: UUID
@@ -95,6 +98,7 @@ final class ChatModel {
         self.unreadDefaults = unreadDefaults
         unreadCounts = UnreadCounts.load(defaults: unreadDefaults)
         self.links = links ?? RelayLinkProvider(app: app)
+        app.onBridgeHello = { [weak self] profile, info in self?.bridgeHello(profile, info) }
         if listens { listen() }
     }
 
@@ -282,6 +286,7 @@ final class ChatModel {
             switch body["type"]?.string {
             case "chat": await receiveChat(body, profile: profile, session: session)
             case "chat_ack": await receiveAck(body, profile: profile.id)
+            case "history_page": await receiveHistory(body, profile: profile, session: session)
             case "typing" where profile.id == shownProfile: showTyping()
             case "approval_request":
                 if showApproval(body, profile: profile.id, mailID: mailID) { return }
@@ -333,7 +338,7 @@ final class ChatModel {
     }
 
     /// Agent attachments are fetched right away (the relay keeps them 7 days) and deleted there.
-    private func download(_ attachment: ChatAttachment, profile: UUID, session: any ChatLink) async -> ChatAttachment {
+    func download(_ attachment: ChatAttachment, profile: UUID, session: any ChatLink) async -> ChatAttachment {
         guard let blobID = attachment.blobID, let keyText = attachment.key,
               let key = try? Base64URL.decode(keyText, length: 32) else { return attachment }
         do {
@@ -614,7 +619,7 @@ final class ChatModel {
 
     /// Runs `work` on a connection to `profile`'s relay that stays open while it runs (also in the background).
     @discardableResult
-    private func withSession<T: Sendable>(_ profile: RelayProfile, _ work: @escaping (any ChatLink) async throws -> T) async -> T? {
+    func withSession<T: Sendable>(_ profile: RelayProfile, _ work: @escaping (any ChatLink) async throws -> T) async -> T? {
         await links.withLink(profile, work)
     }
 }
