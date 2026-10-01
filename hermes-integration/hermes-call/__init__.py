@@ -325,16 +325,18 @@ def probe_features() -> dict[str, bool]:
 
 
 def hermes_too_old() -> str | None:
-    """The installed Hermes version if it is older than MIN_HERMES (plugin.yaml's min_hermes is not
-    enforced by Hermes itself), else None (new enough, or not installed as a package)."""
+    """The installed Hermes version if it is older than MIN_HERMES (plugin.yaml's requires_hermes is
+    enforced only by Hermes v0.21+), else None (new enough, or not installed as a package)."""
     try:
         from importlib.metadata import PackageNotFoundError, version
 
         installed = version("hermes-agent")
     except (ImportError, PackageNotFoundError):
         return None
-    parts = [int(p) for p in re.findall(r"\d+", installed)[:2]]
-    return installed if parts < [int(p) for p in MIN_HERMES.split(".")] else None
+    parts = [int(p) for p in re.findall(r"\d+", installed)[:3]]
+    if not any(parts):  # 0.0.0: Hermes' main branch, whose version lives in git tags, not the package
+        return None
+    return installed if parts[:2] < [int(p) for p in MIN_HERMES.split(".")] else None
 
 
 def _interrupted() -> bool:

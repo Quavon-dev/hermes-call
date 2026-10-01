@@ -1,6 +1,6 @@
 name: hermes-call
 version: "0.8.1"
-min_hermes: "0.15"
+requires_hermes: ">=0.15"
 description: Lets the agent phone its owner, chat with them, ask their phone for context and show them results through Hermes Call (hermes-call-bridge on 127.0.0.1).
 provides_hooks:
   - pre_tool_call

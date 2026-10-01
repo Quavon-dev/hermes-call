@@ -1,10 +1,14 @@
 name: Hermes compatibility
 
-# Runs the Hermes adapter smoke test (bridge/tests/test_chat.py, test_adapter_against_real_hermes_*,
-# which drives bridge/tests/hermes_adapter_smoke.py) against a pinned, public Hermes Agent release:
-# the plugin is loaded into Hermes' real platform registry and talks to a running bridge. The test
-# looks for Hermes in ~/.hermes/hermes-agent with its venv, where the Hermes installer puts it.
-# Bump HERMES_TAG and HERMES_COMMIT together (git ls-remote --tags <repo> <tag>^{}).
+# Runs the Hermes smoke tests against Hermes Agent: test_chat.py::test_adapter_against_real_hermes_*
+# (bridge/tests/hermes_adapter_smoke.py: the plugin in Hermes' real platform registry, talking to a
+# running bridge) and test_hermes_runs.py::test_runs_against_real_hermes_* (hermes_runs_smoke.py: the
+# bridge's call client against Hermes' real /v1/runs API server routes). The tests look for Hermes in
+# ~/.hermes/hermes-agent with its venv, where the Hermes installer puts it.
+# Two jobs: the pinned public release (must pass; bump HERMES_TAG and HERMES_COMMIT together,
+# git ls-remote --tags <repo> <tag>^{}) and Hermes' default branch, which is what `hermes update`
+# brings users. The latter may fail without blocking: it is the early warning for the next release.
+
 on:
   pull_request:
     paths:
@@ -12,6 +16,8 @@ on:
       - "bridge/hermescall_bridge/**"
       - "bridge/tests/test_chat.py"
       - "bridge/tests/hermes_adapter_smoke.py"
+      - "bridge/tests/test_hermes_runs.py"
+      - "bridge/tests/hermes_runs_smoke.py"
       - ".github/workflows/hermes-compat.yml"
   push:
     branches: [main]
@@ -32,23 +38,44 @@ env:
 
 jobs:
   adapter:
-    name: Plugin against the pinned Hermes Agent
+    name: ${{ matrix.title }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - title: Plugin against the pinned Hermes Agent  # the name branch protection may require
+            pinned: true
+            python: "3.11"
+            experimental: false
+          - title: Plugin against Hermes Agent's default branch (early warning)
+            pinned: false
+            python: "3.14"  # main pins its dependencies for Python 3.14 only
+            experimental: true
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq libsodium-dev
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
       - run: uv sync --locked
-      - name: Hermes Agent at the pinned release
+      - name: Hermes Agent
+        env:
+          PINNED: ${{ matrix.pinned }}
+          PYTHON: ${{ matrix.python }}
         run: |
           dir="$HOME/.hermes/hermes-agent"
-          git clone -q --depth 1 --branch "$HERMES_TAG" "$HERMES_REPO" "$dir"
-          actual=$(git -C "$dir" rev-parse HEAD)
-          [ "$actual" = "$HERMES_COMMIT" ] || { echo "::error::$HERMES_TAG is $actual, expected $HERMES_COMMIT"; exit 1; }
-          uv venv -q --python 3.11 "$dir/venv"
-          uv pip install -q --python "$dir/venv/bin/python" -e "$dir"
-      - name: Adapter smoke test (must run, not skip)
+          if [ "$PINNED" = "true" ]; then
+            git clone -q --depth 1 --branch "$HERMES_TAG" "$HERMES_REPO" "$dir"
+            actual=$(git -C "$dir" rev-parse HEAD)
+            [ "$actual" = "$HERMES_COMMIT" ] || { echo "::error::$HERMES_TAG is $actual, expected $HERMES_COMMIT"; exit 1; }
+          else
+            git clone -q --depth 1 "$HERMES_REPO" "$dir"
+            echo "::notice::Hermes default branch at $(git -C "$dir" rev-parse HEAD)"
+          fi
+          uv venv -q --python "$PYTHON" "$dir/venv"
+          uv pip install -q --python "$dir/venv/bin/python" -e "${dir}[sms]"  # sms: aiohttp for the API server
+      - name: Hermes smoke tests (must run, not skip)
         run: |
-          uv run pytest -q -p no:cacheprovider -rs bridge/tests/test_chat.py -k adapter_against_real_hermes | tee "$RUNNER_TEMP/pytest.log"
-          grep -q "1 passed" "$RUNNER_TEMP/pytest.log" || { echo "::error::the Hermes adapter test did not run"; exit 1; }
+          uv run pytest -q -p no:cacheprovider -rs bridge/tests/test_chat.py bridge/tests/test_hermes_runs.py -k real_hermes | tee "$RUNNER_TEMP/pytest.log"
+          grep -q "2 passed" "$RUNNER_TEMP/pytest.log" || { echo "::error::the Hermes smoke tests did not all run"; exit 1; }

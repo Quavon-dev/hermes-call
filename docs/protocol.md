@@ -374,7 +374,8 @@ duration?: number ≥ 0, preview?: str ≤ 200, total?: int 1–999 (tools the t
 known), toolset?: str ([a-z0-9_-] 1–64, Hermes' toolset of the tool: labels unknown tools)}`.
 Unknown keys → 400; success → 204 (503 when the
 bridge runs without task support). `done`/`failed`
-end the turn (the plugin sends them when the reply for the owner's message was sent). Only the
+end the turn (the plugin sends them when the reply for the owner's message was sent; a turn the
+owner cancelled, e.g. with `/stop`, ends as `failed`, as phones know no other end state). Only the
 newest turn counts: a new `turn_id` replaces a running one, and later events of the replaced turn
 are ignored. A turn that never started a tool shows nothing. A turn without any event for 10 minutes ends as
 `done` (a lost end). Calls feed the same path from the

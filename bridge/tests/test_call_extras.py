@@ -39,6 +39,8 @@ async def test_hermes_stream_tool_progress_and_image_parts() -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})  # no version: before 0.21, chat completions
         seen.append(request)
         body = sse(
             ("hermes.tool.progress", {"tool": "web_search", "label": "weather", "toolCallId": "c1", "status": "running"}),

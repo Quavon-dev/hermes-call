@@ -83,6 +83,48 @@ def run_tool_hooks(message_id: str) -> None:
         callback(tool_name="terminal", args={"command": "ls"}, task_id="", session_id="", tool_call_id="c2")
 
 
+async def real_approvals(adapter) -> dict:
+    """Two commands wait in Hermes' real approval queue; the phone answers the newer one first. Each
+    answer must reach its own request (Hermes alone would resolve the oldest). Hermes >= 0.21."""
+    try:
+        from tools.approval_gateway_wait import _await_gateway_decision
+    except ImportError:
+        return {"skipped": True}
+    loop = asyncio.get_running_loop()
+
+    def notify(data: dict) -> None:
+        send = adapter.send_exec_approval("owner", data["command"], "smoke-session", "smoke")
+        asyncio.run_coroutine_threadsafe(send, loop).result(10)
+
+    def wait(command: str) -> str | None:
+        data = {"command": command, "description": "smoke", "pattern_key": command, "pattern_keys": [command]}
+        return _await_gateway_decision("smoke-session", notify, data)["choice"]
+
+    older = loop.run_in_executor(None, wait, "touch /tmp/older")
+    await asyncio.sleep(0.5)
+    newer = loop.run_in_executor(None, wait, "touch /tmp/newer")
+    return {"older": await older, "newer": await newer}
+
+
+async def slash_confirm(adapter) -> dict:
+    """/reload-mcp asks first: Hermes' real slash_confirm registry, answered on the phone's sheet."""
+    from tools import slash_confirm as confirms
+
+    ran = []
+
+    async def handler(choice: str) -> str:
+        ran.append(choice)
+        return "MCP servers reloaded."
+
+    confirms.register("confirm-session", "c1", "reload-mcp", handler)
+    result = await adapter.send_slash_confirm("owner", "/reload-mcp", "Reload MCP servers?", "confirm-session", "c1")
+    for _ in range(300):
+        if ran:
+            break
+        await asyncio.sleep(0.05)
+    return {"success": result.success, "ran": ran}
+
+
 async def main() -> None:
     plugin.register(Ctx())
     entry = platform_registry.get("hermes_call")
@@ -130,7 +172,8 @@ async def main() -> None:
     emit(step="standalone", success=standalone.get("success", False))
     resolved = []
     adapter_module = sys.modules["hermes_call_plugin.adapter"]
-    adapter_module._resolve = lambda key, choice: resolved.append((key, choice))
+    real_resolve = adapter_module._resolve
+    adapter_module._resolve = lambda key, choice, request_id=None: resolved.append((key, choice))
     result = await adapter.send_exec_approval("owner", "rm -rf /tmp/x", "session-key-1", "delete files")
     emit(step="approval_sent", success=result.success)
     for _ in range(300):
@@ -141,6 +184,9 @@ async def main() -> None:
     from tools.approval import resolve_gateway_approval
 
     emit(step="real_resolver", pending=resolve_gateway_approval("unknown-session", "deny"))
+    adapter_module._resolve = real_resolve
+    emit(step="real_approvals", **await real_approvals(adapter))
+    emit(step="slash_confirm", **await slash_confirm(adapter))
     await adapter.disconnect()
     emit(step="done")
 

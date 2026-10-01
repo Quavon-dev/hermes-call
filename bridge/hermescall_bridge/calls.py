@@ -646,12 +646,13 @@ class CallManager:
             "request_id": key,
             "command": request.command,
             "description": request.description,
-            "choices": list(APPROVAL_CHOICES),
+            "choices": list(request.choices),
         }
         call.pending_approvals[key] = body
         await self._send(call.device.id, body)
         try:
-            return await asyncio.wait_for(future, self._timeout("approval", APPROVAL_TIMEOUT))
+            choice = await asyncio.wait_for(future, self._timeout("approval", APPROVAL_TIMEOUT))
+            return choice if choice in request.choices else "deny"  # only what Hermes allowed
         except TimeoutError:
             return "deny"
         finally:

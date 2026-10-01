@@ -21,6 +21,29 @@ versioned separately and is at **0.8.1** in this release.
 - Relay `doctor` judges certificate expiry against the certificate's lifetime (Let's Encrypt's
   6-day certificates no longer warn).
 - `bridge/get.sh` keeps the installed Hermes user on updates and ignores a bare `~/.hermes`.
+- Hermes plugin: a chat approval resolves the exact Hermes request it showed (by request id,
+  Hermes ≥ 0.21) and lives only as long as Hermes waits for it (`approvals.timeout`, default 300 s;
+  it was 11 minutes), so a late answer or the expiry deny can no longer approve or deny a newer
+  command. The bridge's `/v1/chat/approvals` takes an optional `ttl`.
+- Hermes plugin: an approval is handed to the bridge within 10 s, inside the 15 s Hermes waits for
+  the prompt to be sent (it used the 35 s long-poll timeout).
+- Hermes plugin: Hermes' confirmations before `/new`, `/reset`, `/undo`, `/reload-mcp` and `/model`
+  appear as the approval sheet on the phone (Approve once / Deny) instead of a typed `/approve`,
+  which this platform refuses.
+- Hermes plugin: cron output longer than 4000 characters reaches the chat in full (the adapter
+  declares that it splits long messages itself).
+- Hermes plugin: a chat turn Hermes reports as cancelled (`/stop`) ends its task as `failed`
+  instead of `done` (phones know no other end state).
+- Hermes plugin: a bridge that rejects the token is reported to the Hermes gateway at once
+  (`_notify_fatal_error`), not only marked fatal.
+- Hermes plugin: `plugin.yaml` declares `requires_hermes: ">=0.15"`, the field Hermes enforces
+  (`min_hermes` was ignored); the plugin's own version check stays for older Hermes.
+- Calls ask for tool approvals again: with Hermes ≥ 0.21 a call turn runs through `/v1/runs`, the
+  only Hermes API that streams approval requests (`/v1/chat/completions` never does), so a gated
+  command during a call shows its approval sheet on the phone with the choices Hermes allows.
+  Interrupting the agent stops the Hermes run. Older Hermes keeps `/v1/chat/completions`.
+- Hermes plugin: no false "needs Hermes >= 0.15" warning on Hermes' main branch (its package
+  version is 0.0.0).
 
 ## [0.7.1] — 2026-10-01
 

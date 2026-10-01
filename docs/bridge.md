@@ -17,13 +17,17 @@ phone ⇄ (DTLS-SRTP via TURN) ⇄ aiortc → Silero VAD → faster-whisper → 
   code), so the phone never learns your home IP and nothing connects in. The
   control API listens on `127.0.0.1:8765` and needs a bearer token.
 - **Hermes stays in charge.** The bridge talks to the official Hermes API
-  server (`/v1/chat/completions`, streaming) with `X-Hermes-Session-Id:
-  hermes-call-phone-<phone>-<date>`: one Hermes session per phone and day (a new one
+  server: with Hermes ≥ 0.21 (the version in its `/health`, asked once; a main-branch checkout
+  that reports `unknown` counts as newer) each call turn is a
+  run (`POST /v1/runs` with `session_id`, streamed from `GET /v1/runs/{id}/events`; cutting the
+  agent off stops it with `POST /v1/runs/{id}/stop`); older Hermes, or one without `/v1/runs`,
+  gets `/v1/chat/completions` (streaming, `X-Hermes-Session-Id`), which never asks for approvals.
+  The session is `hermes-call-phone-<phone>-<date>`: one Hermes session per phone and day (a new one
   also after 200 turns), so sessions do not grow forever; the recent chat and the last
   call's transcript carry over between calls and chat (kept in the state directory, so
   also across restarts). Tool approvals are **never granted by voice**: the exact
-  command is shown on the phone (Approve once / Approve for this session / Deny); no
-  answer within 60 s = deny.
+  command is shown on the phone with the choices Hermes allows (Approve once / Approve for
+  this session / Deny); no answer within 60 s = deny.
 - **If Hermes or Kokoro fails mid-call** the agent says "Sorry, I couldn't reach
   <agent> just now." (or, if speech synthesis itself is down, two short tones), never
   silence; the log says which one failed and how (HTTP status or error class).
@@ -135,7 +139,7 @@ Restart Hermes afterwards. The agent then has one tool:
 waits up to 45 s. If you answer, the bridge speaks `first_message` and the
 conversation continues on the call (that phone's call session, which
 is told the `reason`). If the owner stops the agent while a tool waits, the tool returns at
-once (`interrupted`). The plugin needs Hermes ≥ 0.15 (`min_hermes`); on startup it checks the
+once (`interrupted`). The plugin needs Hermes ≥ 0.15 (`requires_hermes`); on startup it checks the
 Hermes internals it uses and disables only what is missing (with a warning in Hermes' log).
 The tool returns `answered`, `declined`, `no_answer`,
 `busy`, `no_devices` or `rate_limited` (at most 3 rings per 10 minutes and
@@ -162,6 +166,7 @@ end-of-speech → first-audio latency.
 | GET | `/v1/chat/events?cursor=&wait=&epoch=&files=1` | chat adapter long-poll → `{cursor, events, epoch}` (Hermes token); `epoch` names the bridge's event store, a cursor with another epoch acks nothing; with `files=1` attachments carry `file_id` and `size` instead of base64 `data` (older adapters get `data`) |
 | GET | `/v1/chat/files/{file_id}` | the bytes of an owner attachment (Hermes token), until the adapter's cursor passed its event and the message left the history; 404 after |
 | POST | `/v1/chat/messages` | `{text, reply_to?, answers?}` → `{message_id, queued}` (`queued`: the relay has not taken it yet; it is retried) |
+| POST | `/v1/chat/approvals` | `{request_id, command, description, choices?, ttl?}` → `{status: "sent"\|"denied"}`: the approval sheet on the phones; `ttl` (seconds) is how long Hermes waits for the answer, the bridge keeps the request at most that long (and never longer than 10 minutes) |
 | GET | `/healthz` | **no token**: `{ok, relay, hermes, kokoro}`, 503 when something is down |
 | GET | `/metrics` | **no token**: Prometheus text — call latency (end of speech → first audio), STT real-time factor, turn errors by cause, calls, relay connection, chat event/inbox/outbox depth. Counts and timings only |
 
@@ -203,6 +208,12 @@ answers `/healthz`; it exits 1 when a check failed.
   any live utterance.
 - Hermes' tool approvals that cannot be delivered are retried and otherwise denied, so a Hermes
   run never waits on a lost answer.
+- **A chat approval answers exactly the command it showed.** The plugin resolves it by Hermes'
+  request id (Hermes ≥ 0.21) and shows it only as long as Hermes waits (`approvals.timeout`, default
+  300 s, minus 5 s), so a late answer or the expiry deny can never reach a newer approval.
+- **Slash-command confirmations use the same sheet.** When Hermes asks before `/new`, `/reset`,
+  `/undo`, `/reload-mcp` or `/model`, the phone shows it as an approval (Approve once / Deny =
+  run / cancel the command) instead of asking for a typed `/approve`.
 
 ## Settings (`/etc/hermes-call-bridge/bridge.toml`, all optional)
 

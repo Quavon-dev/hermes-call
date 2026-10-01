@@ -97,9 +97,13 @@ def adapter_module(monkeypatch):
 
 
 def test_min_hermes_is_declared() -> None:
+    """`requires_hermes` is the manifest field Hermes v0.21 enforces before import (older Hermes
+    ignores it; the plugin's own runtime check covers those)."""
     text = (plugin.__file__.rsplit("/", 1)[0] + "/plugin.yaml").strip()
     with open(text) as handle:
-        assert 'min_hermes: "0.15"' in handle.read()
+        manifest = handle.read()
+    assert f'requires_hermes: ">={plugin.MIN_HERMES}"' in manifest
+    assert "min_hermes" not in manifest
 
 
 def test_missing_hermes_internals_disable_only_their_feature(monkeypatch, caplog) -> None:
@@ -162,6 +166,7 @@ class FakeHttp:
         self.responses = responses
         self.gets: list[dict] = []
         self.posts: list[tuple[str, dict]] = []
+        self.timeouts: dict[str, float | None] = {}
 
     async def get(self, path: str, params: dict):
         self.gets.append(dict(params))
@@ -169,8 +174,9 @@ class FakeHttp:
             await asyncio.sleep(10)
         return Response(self.responses.pop(0))
 
-    async def post(self, path: str, json: dict):
+    async def post(self, path: str, json: dict, timeout: float | None = None):
         self.posts.append((path, json))
+        self.timeouts[path] = timeout
         return Response({"message_id": "m", "status": "sent"})
 
     async def aclose(self) -> None:
@@ -217,13 +223,12 @@ async def test_session_approval_and_expiry(adapter_module, monkeypatch) -> None:
     adapter._http = FakeHttp([])
     await adapter.send_exec_approval("owner", "ls", "session-1")
     request_id = next(iter(adapter._approvals))
-    adapter._on_approval({"request_id": request_id, "choice": "session"})
+    await adapter._on_approval({"request_id": request_id, "choice": "session"})
     await adapter.send_exec_approval("owner", "rm x", "session-2")
     await adapter.send_exec_approval("owner", "rm y", "session-3")
     second = list(adapter._approvals)[0]
-    adapter._on_approval({"request_id": second, "choice": "always"})  # not offered: denied
-    monkeypatch.setattr(adapter_module, "APPROVAL_TTL", -1.0)
-    adapter._approvals = {k: (key, time.monotonic() - 1) for k, (key, _) in adapter._approvals.items()}
+    await adapter._on_approval({"request_id": second, "choice": "always"})  # not offered: denied
+    adapter._approvals = {k: entry._replace(until=time.monotonic() - 1) for k, entry in adapter._approvals.items()}
     adapter._expire_approvals()
     assert adapter_module.resolved == [("session-1", "session"), ("session-2", "deny"), ("session-3", "deny")]
     assert adapter._approvals == {}
@@ -235,8 +240,8 @@ async def test_a_failing_resolver_does_not_break_the_adapter(adapter_module, mon
 
     monkeypatch.setattr(sys.modules["tools.approval"], "resolve_gateway_approval", broken)
     adapter = adapter_module.HermesCallAdapter(None)
-    adapter._approvals["r"] = ("s", time.monotonic() + 60)
-    adapter._on_approval({"request_id": "r", "choice": "once"})  # logged, no exception
+    adapter._approvals["r"] = adapter_module._Pending("s", time.monotonic() + 60)
+    await adapter._on_approval({"request_id": "r", "choice": "once"})  # logged, no exception
     assert adapter._approvals == {}
 
 

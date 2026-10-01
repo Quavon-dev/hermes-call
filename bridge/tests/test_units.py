@@ -80,6 +80,8 @@ async def test_hermes_stream_parsing_and_session_header() -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})  # no version: before 0.21, chat completions
         seen.append(request)
         if request.url.path.endswith("/approval"):
             return httpx.Response(200, json={})

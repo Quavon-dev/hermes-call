@@ -595,15 +595,24 @@ class ChatService:
         for device in list(self._state.devices.values()):
             await self._live(device, {"type": "typing"})
 
-    async def request_approval(self, request_id: str, command: str, description: str, choices: list[str] | None = None) -> bool:
+    async def request_approval(
+        self,
+        request_id: str,
+        command: str,
+        description: str,
+        choices: list[str] | None = None,
+        ttl: float | None = None,
+    ) -> bool:
         """Face ID sheet on the phones, offering only `choices` (default: all); the answer comes back
-        as an `approval` event, and an answer that was not offered counts as deny."""
+        as an `approval` event, and an answer that was not offered counts as deny. `ttl`: how long
+        Hermes waits for it (at most the bridge's own 10 minutes)."""
         if len(command) > MAX_APPROVAL_TEXT or len(description) > MAX_APPROVAL_TEXT or not self._state.devices:
             return False
         offered = tuple(choices or APPROVAL_CHOICES)
+        lifetime = min(ttl, APPROVAL_TTL) if ttl else APPROVAL_TTL
         now = time.monotonic()
         self._approvals = {key: entry for key, entry in self._approvals.items() if entry[0] > now}
-        self._approvals[request_id] = (now + APPROVAL_TTL, offered)
+        self._approvals[request_id] = (now + lifetime, offered)
         body = {
             "type": "approval_request",
             "request_id": request_id,
@@ -614,7 +623,7 @@ class ChatService:
         }
         # Queued no longer than the bridge waits for the answer: a late sheet could not be answered anyway.
         for device in list(self._state.devices.values()):
-            await self.outbox.queue(device.id, request_id, body, alert=True, max_age=APPROVAL_TTL)
+            await self.outbox.queue(device.id, request_id, body, alert=True, max_age=lifetime)
         return True
 
     async def missed_call(self, reason: str, first_message: str, status: str) -> bool:
