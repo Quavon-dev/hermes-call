@@ -1,10 +1,13 @@
 name: Hermes compatibility
 
 # Runs the Hermes adapter smoke test (bridge/tests/test_chat.py, test_adapter_against_real_hermes_*,
-# which drives bridge/tests/hermes_adapter_smoke.py) against a pinned, public Hermes Agent release:
-# the plugin is loaded into Hermes' real platform registry and talks to a running bridge. The test
-# looks for Hermes in ~/.hermes/hermes-agent with its venv, where the Hermes installer puts it.
-# Bump HERMES_TAG and HERMES_COMMIT together (git ls-remote --tags <repo> <tag>^{}).
+# which drives bridge/tests/hermes_adapter_smoke.py) against Hermes Agent: the plugin is loaded into
+# Hermes' real platform registry and talks to a running bridge. The test looks for Hermes in
+# ~/.hermes/hermes-agent with its venv, where the Hermes installer puts it.
+# Two jobs: the pinned public release (must pass; bump HERMES_TAG and HERMES_COMMIT together,
+# git ls-remote --tags <repo> <tag>^{}) and Hermes' default branch, which is what `hermes update`
+# brings users. The latter may fail without blocking: it is the early warning for the next release.
+
 on:
   pull_request:
     paths:
@@ -32,21 +35,42 @@ env:
 
 jobs:
   adapter:
-    name: Plugin against the pinned Hermes Agent
+    name: ${{ matrix.title }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - title: Plugin against the pinned Hermes Agent  # the name branch protection may require
+            pinned: true
+            python: "3.11"
+            experimental: false
+          - title: Plugin against Hermes Agent's default branch (early warning)
+            pinned: false
+            python: "3.14"  # main pins its dependencies for Python 3.14 only
+            experimental: true
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq libsodium-dev
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
       - run: uv sync --locked
-      - name: Hermes Agent at the pinned release
+      - name: Hermes Agent
+        env:
+          PINNED: ${{ matrix.pinned }}
+          PYTHON: ${{ matrix.python }}
         run: |
           dir="$HOME/.hermes/hermes-agent"
-          git clone -q --depth 1 --branch "$HERMES_TAG" "$HERMES_REPO" "$dir"
-          actual=$(git -C "$dir" rev-parse HEAD)
-          [ "$actual" = "$HERMES_COMMIT" ] || { echo "::error::$HERMES_TAG is $actual, expected $HERMES_COMMIT"; exit 1; }
-          uv venv -q --python 3.11 "$dir/venv"
+          if [ "$PINNED" = "true" ]; then
+            git clone -q --depth 1 --branch "$HERMES_TAG" "$HERMES_REPO" "$dir"
+            actual=$(git -C "$dir" rev-parse HEAD)
+            [ "$actual" = "$HERMES_COMMIT" ] || { echo "::error::$HERMES_TAG is $actual, expected $HERMES_COMMIT"; exit 1; }
+          else
+            git clone -q --depth 1 "$HERMES_REPO" "$dir"
+            echo "::notice::Hermes default branch at $(git -C "$dir" rev-parse HEAD)"
+          fi
+          uv venv -q --python "$PYTHON" "$dir/venv"
           uv pip install -q --python "$dir/venv/bin/python" -e "$dir"
       - name: Adapter smoke test (must run, not skip)
         run: |
