@@ -438,7 +438,9 @@ class HermesCallAdapter(BasePlatformAdapter):
         `_send_exec_approval_prompt`). "Allow for this session" only when Hermes allows that tier;
         the permanent tier is never offered on the phone."""
         choices = ["once", "session", "deny"] if allow_session and not smart_denied else ["once", "deny"]
-        return await self._deliver_approval(chat_id, command, session_key, description, choices)
+        # Newer Hermes declares description: str | None (it sends its own default text).
+        description = description if isinstance(description, str) else "dangerous command"
+        return await self._deliver_approval(chat_id, str(command or ""), session_key, description, choices)
 
     async def _send_exec_approval_prompt(self, prompt: Any) -> SendResult:
         """Hermes v0.21 renders approvals through this hook; overriding it is what tells Hermes the
@@ -448,7 +450,7 @@ class HermesCallAdapter(BasePlatformAdapter):
         if "deny" not in choices:
             choices.append("deny")
         return await self._deliver_approval(
-            prompt.chat_id, prompt.command, prompt.session_key, getattr(prompt, "description", ""), choices
+            prompt.chat_id, str(prompt.command or ""), prompt.session_key, str(getattr(prompt, "description", "") or ""), choices
         )
 
     async def send_slash_confirm(

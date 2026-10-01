@@ -174,3 +174,13 @@ async def test_a_rejected_token_notifies_the_gateway(adapter_module) -> None:  #
     adapter._http, adapter._running = http, True
     await asyncio.wait_for(adapter._poll_loop(), 2)
     assert notified.is_set()
+
+
+# ---- latest Hermes: send_exec_approval(description=None) ----------------------------------------
+
+
+async def test_a_missing_description_is_still_shown(adapter_module) -> None:  # noqa: F811
+    adapter = adapter_module.HermesCallAdapter(None)
+    adapter._http = http = FakeHttp([])
+    await adapter.send_exec_approval("owner", "rm -rf /x", "s", description=None)
+    assert approvals_posted(http)[-1]["description"] == "dangerous command"
