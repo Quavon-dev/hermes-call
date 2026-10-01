@@ -110,6 +110,34 @@ final class HermesCallUITests: XCTestCase {
         snap("presence-stop-requested")
     }
 
+    func testHUDChatSwipesUpToFullScreen() throws {
+        app.launchArguments = ["-UITestReset", "YES", "-UITestConsent", "YES", "-appearance", "hud"]
+        app.launch()
+        for _ in 0..<3 { tap("onboarding.continue") }
+        tap("onboarding.demo")
+        let more = app.buttons["More"].firstMatch
+        XCTAssertTrue(more.waitForExistence(timeout: 8))
+        sleep(2)
+        more.tap()
+        let chat = app.buttons["Chat"].firstMatch
+        XCTAssertTrue(chat.waitForExistence(timeout: 3))
+        chat.tap()
+        let field = app.textFields.firstMatch.exists ? app.textFields.firstMatch : app.textViews.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        sleep(1)
+        snap("hud-chat")
+        let screen = app.windows.firstMatch.frame.height
+        let title = app.descendants(matching: .any)["chat.title"].firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        let before = title.frame.minY
+        XCTAssertGreaterThan(before, screen * 0.3, "the chat opens half height")
+        app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
+            .press(forDuration: 0.05, thenDragTo: app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)))
+        sleep(1)
+        snap("hud-chat-full")
+        XCTAssertLessThan(title.frame.minY, screen * 0.2, "a swipe up on the chat makes it full screen")
+    }
+
     func testSettingsAndDiagnostics() throws {
         app.launchArguments += ["-UITestConsent", "YES"]
         app.launch()

@@ -5,6 +5,8 @@ struct RadialMenuItem: Identifiable {
     let title: String
     let symbol: String
     var destructive = false
+    /// Fixed red (the emergency stop), whatever the palette.
+    var emergency = false
     let action: () -> Void
 }
 
@@ -43,11 +45,12 @@ struct RadialMenu: View {
                         VStack(spacing: 4) {
                             Image(systemName: item.symbol)
                                 .font(.title3.weight(.medium))
-                                .foregroundStyle(item.destructive ? HUD.alert : HUD.light)
+                                .foregroundStyle(item.emergency ? HUD.emergency : item.destructive ? HUD.alert : HUD.light)
                                 .frame(width: Self.itemSize, height: Self.itemSize)
                                 .background(Circle().fill(Color.black.opacity(0.8)))
-                                .overlay(Circle().stroke((item.destructive ? HUD.alert : HUD.glow).opacity(0.5), lineWidth: 0.75))
+                                .overlay(Circle().stroke((item.emergency ? HUD.emergency : item.destructive ? HUD.alert : HUD.glow).opacity(0.5), lineWidth: 0.75))
                             HUD.label(item.title, size: 8).fixedSize()
+                                .foregroundStyle(item.emergency ? HUD.emergency : HUD.glow)
                         }
                     }
                     .buttonStyle(.plain)

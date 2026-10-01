@@ -322,6 +322,9 @@ struct PresenceView: View {
             switch sheet {
             case .history:
                 ChatHome(opensActiveChat: true).presentationDetents([.medium, .large]).presentationBackground(.black)
+                    // A swipe up on the messages first makes the chat full screen, then scrolls.
+                    .presentationContentInteraction(.resizes)
+                    .presentationDragIndicator(.visible)
             case .settings: SettingsView()
             case .relays: ProfilesView()
             case .phoneAccess: NavigationStack { PhoneAccessView() }
@@ -342,7 +345,7 @@ struct PresenceView: View {
                 },
                 RadialMenuItem(id: "chat", title: "Chat", symbol: "text.bubble") { sheet = .history },
                 RadialMenuItem(id: "look", title: "Look", symbol: "camera.viewfinder") { sheet = .look },
-                RadialMenuItem(id: "stop", title: "Stop agent", symbol: "stop.fill", destructive: true, action: stopAgent),
+                RadialMenuItem(id: "stop", title: "Stop agent", symbol: "stop.fill", destructive: true, emergency: true, action: stopAgent),
                 RadialMenuItem(id: "end", title: "End", symbol: "phone.down.fill", destructive: true) { perform(.endCall) },
             ]
         }
@@ -353,7 +356,7 @@ struct PresenceView: View {
             RadialMenuItem(id: "access", title: "Access", symbol: "iphone.gen3") { sheet = .phoneAccess },
             RadialMenuItem(id: "relays", title: "Relays", symbol: "antenna.radiowaves.left.and.right") { sheet = .relays },
             RadialMenuItem(id: "settings", title: "Settings", symbol: "gearshape") { sheet = .settings },
-            RadialMenuItem(id: "stop", title: "Stop agent", symbol: "stop.fill", destructive: true, action: stopAgent),
+            RadialMenuItem(id: "stop", title: "Stop agent", symbol: "stop.fill", destructive: true, emergency: true, action: stopAgent),
         ]
     }
 

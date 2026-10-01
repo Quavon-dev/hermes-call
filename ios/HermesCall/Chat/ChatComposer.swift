@@ -21,18 +21,18 @@ struct ChatComposer: View {
     static let maxFiles = 4
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        HStack(alignment: .bottom, spacing: 10) {
             if recorder.isRecording {
                 recordingBar
             } else {
                 attachMenu
                 field
                 if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Button { Task { await startRecording() } } label: { ComposerIcon(name: "mic.circle.fill") }
+                    Button { Task { await startRecording() } } label: { ComposerIcon(symbol: "mic.fill", hud: hud) }
                         .disabled(calls.inCall)
                         .accessibilityLabel("Record a voice note")
                 } else {
-                    Button(action: sendDraft) { ComposerIcon(name: "arrow.up.circle.fill") }
+                    Button(action: sendDraft) { ComposerIcon(symbol: "arrow.up", hud: hud) }
                         .accessibilityLabel("Send")
                 }
             }
@@ -70,7 +70,7 @@ struct ChatComposer: View {
             }
             Button { importingFiles = true } label: { Label("Files", systemImage: "doc") }
         } label: {
-            ComposerIcon(name: "plus.circle.fill")
+            ComposerIcon(symbol: "plus", hud: hud)
         }
         .accessibilityLabel("Attach")
     }
@@ -94,7 +94,7 @@ struct ChatComposer: View {
     private var recordingBar: some View {
         HStack(spacing: 10) {
             Button(role: .destructive) { _ = recorder.stop(keep: false) } label: {
-                ComposerIcon(name: "trash.circle.fill")
+                ComposerIcon(symbol: "trash.fill", hud: hud, tint: .red)
             }
             .accessibilityLabel("Discard voice note")
             Circle().fill(.red).frame(width: 8, height: 8).accessibilityHidden(true)
@@ -109,7 +109,7 @@ struct ChatComposer: View {
             Button {
                 if let note = recorder.stop(keep: true) { Task { await chat.send(text: "", files: [note]) } }
             } label: {
-                ComposerIcon(name: "arrow.up.circle.fill")
+                ComposerIcon(symbol: "arrow.up", hud: hud)
             }
             .accessibilityLabel("Send voice note")
         }
@@ -170,15 +170,22 @@ struct ChatComposer: View {
     }
 }
 
-/// Composer symbol in a square hit area as tall as the single-line field.
+/// Round composer button exactly as tall as the single-line field (and the round header buttons), its
+/// symbol centred: a filled circle in the tint, the symbol in the background colour.
 struct ComposerIcon: View {
-    let name: String
+    let symbol: String
+    var hud = false
+    var tint: Color?
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
-        Image(systemName: name)
-            .font(.system(size: Metrics.iconSize))
+        Image(systemName: symbol)
+            .font(.system(size: Metrics.iconButton * 0.42, weight: .semibold))
+            .foregroundStyle(hud ? HUD.deep : .white)
             .frame(width: Metrics.iconButton, height: Metrics.iconButton)
-            .contentShape(Rectangle())
+            .background(Circle().fill(tint.map(AnyShapeStyle.init) ?? (hud ? AnyShapeStyle(HUD.glow) : AnyShapeStyle(.tint))))
+            .opacity(isEnabled ? 1 : 0.4)
+            .contentShape(Circle())
     }
 }
 

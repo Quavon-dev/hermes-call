@@ -298,6 +298,7 @@ struct ChatView: View {
                 Text(subtitle).font(.caption2).foregroundStyle(chat.agentTyping ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
             }
             .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("chat.title")
         }
         ToolbarItem(placement: embedded ? .topBarTrailing : .topBarLeading) {
             Button {
@@ -308,8 +309,13 @@ struct ChatView: View {
             }
             .disabled(searching)
         }
+        if agentWorking && !searching {
+            // Its own red circle, not part of the call button's glass capsule.
+            ToolbarItem(placement: .topBarTrailing) { stopButton }
+                .sharedBackgroundVisibility(.hidden)
+            ToolbarSpacer(.fixed, placement: .topBarTrailing)
+        }
         ToolbarItemGroup(placement: .topBarTrailing) {
-            if agentWorking && !searching { stopButton }
             Menu {
                 Button { Task { await calls.startCall() } } label: { Label("Call now", systemImage: "phone.fill") }
                     .disabled(app.relayStatus != .connected || calls.inCall)
@@ -333,12 +339,16 @@ struct ChatView: View {
     private var agentWorking: Bool { StopCommand.agentIsWorking(typing: chat.agentTyping, task: tasks.activeTask) }
 
     private var stopButton: some View {
+        // Drawn by hand: a system prominent style in the toolbar mutes the white glyph to pink.
         Button { AgentStop.tapped(chat: chat, calls: calls) } label: {
-            Label("Stop", systemImage: "stop.fill").labelStyle(.titleAndIcon)
-                .font(.subheadline.weight(.semibold))
+            Image(systemName: "stop.fill")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: Metrics.iconButton, height: Metrics.iconButton)
+                .background(Circle().fill(hud ? HUD.emergency : Color.red))
+                .contentShape(Circle())
         }
-        .tint(hud ? HUD.alert : .red)
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(.plain)
         .accessibilityLabel("Stop \(chat.agentName)")
         .accessibilityIdentifier("chat.stop")
     }

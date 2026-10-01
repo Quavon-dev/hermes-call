@@ -50,6 +50,8 @@ enum HUD {
     static var alert: Color { Color(HUDTheme.shared.palette.alert) }
     static var ember: Color { Color(HUDTheme.shared.palette.ember) }
     static let deep = Color(red: 0.03, green: 0.024, blue: 0.02)  // #080605
+    /// The emergency stop: red in every palette (an agent's "alert" colour can be blue).
+    static let emergency = Color(red: 0.94, green: 0.23, blue: 0.2)
     /// The owner's chat bubble in the Standard appearance: dark enough for white text (WCAG AA).
     static var ownerBubble: Color { Color(HUDTheme.shared.palette.ownerBubble) }
 
