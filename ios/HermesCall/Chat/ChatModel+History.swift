@@ -9,6 +9,19 @@ import HermesCallCore
 /// `historyPageTimeout` may be asked for again.
 extension ChatModel {
     static let historySyncedKey = "historySynced"
+    /// When this phone first ran an app version with history sync: agents paired before it are never filled in.
+    static let historySinceKey = "historySince"
+
+    /// Called at launch: the first launch of a version with history sync notes the time (`pairedBeforeHistorySync`).
+    func noteHistorySyncStart() {
+        guard unreadDefaults.object(forKey: Self.historySinceKey) == nil else { return }
+        unreadDefaults.set(Date(), forKey: Self.historySinceKey)
+    }
+
+    private func pairedBeforeHistorySync(_ profile: RelayProfile) -> Bool {
+        guard let since = unreadDefaults.object(forKey: Self.historySinceKey) as? Date else { return false }
+        return profile.created < since
+    }
 
     /// The history request of one agent in this launch.
     enum HistoryRequest: Equatable {
@@ -39,7 +52,8 @@ extension ChatModel {
         historyRequests[profileID] = .waiting(token)
         Task {
             let progress = ChatHistorySync.progress(for: profileID, in: unreadDefaults)
-            let plan = ChatHistorySync.plan(progress: progress, localCount: await store.count(profileID))
+            let plan = ChatHistorySync.plan(progress: progress, localCount: await store.count(profileID),
+                                            pairedBeforeSync: pairedBeforeHistorySync(profile))
             guard historyRequests[profileID] == .waiting(token) else { return }
             switch plan {
             case .markSynced:

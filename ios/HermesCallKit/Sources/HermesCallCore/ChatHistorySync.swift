@@ -39,10 +39,12 @@ public enum ChatHistorySync {
     }
 
     /// What to do when a bridge with `history` says hello and the agent is not synced yet: resume an import
-    /// under way (the chat is no longer empty then), start one for an empty chat, else leave the chat alone.
-    public static func plan(progress: Progress?, localCount: Int) -> Plan {
+    /// under way (the chat is no longer empty then), start one for an empty chat of an agent paired since
+    /// the app knows history sync (`pairedBeforeSync`: an older version's chat may be empty because its
+    /// owner deleted the messages), else leave the chat alone.
+    public static func plan(progress: Progress?, localCount: Int, pairedBeforeSync: Bool = false) -> Plan {
         if let progress { return progress.pages < maxPages ? .request(before: progress.next) : .markSynced }
-        return localCount == 0 ? .request(before: nil) : .markSynced
+        return localCount == 0 && !pairedBeforeSync ? .request(before: nil) : .markSynced
     }
 
     public static func progress(for agent: UUID, in defaults: UserDefaults) -> Progress? {

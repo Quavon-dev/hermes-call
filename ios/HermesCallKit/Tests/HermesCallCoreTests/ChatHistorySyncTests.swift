@@ -17,6 +17,14 @@ struct ChatHistorySyncTests {
         #expect(ChatHistorySync.plan(progress: .init(pages: ChatHistorySync.maxPages, next: 5), localCount: 9) == .markSynced)
     }
 
+    /// L3: an agent paired before this app version knew history sync is never filled in (the owner may
+    /// have deleted its messages on purpose); an import under way still finishes.
+    @Test func agentsPairedBeforeTheSyncExistedAreLeftAlone() {
+        #expect(ChatHistorySync.plan(progress: nil, localCount: 0, pairedBeforeSync: true) == .markSynced)
+        #expect(ChatHistorySync.plan(progress: .init(pages: 1, next: 3), localCount: 4, pairedBeforeSync: true) == .request(before: 3))
+        #expect(ChatHistorySync.plan(progress: nil, localCount: 0, pairedBeforeSync: false) == .request(before: nil))
+    }
+
     @Test func progressPersistsPerAgent() throws {
         let suite = "de.quavon.hermescall.tests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))

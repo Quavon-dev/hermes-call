@@ -92,6 +92,18 @@ import Testing
         #expect(requests(fixture).isEmpty)
     }
 
+    /// L3: an owner who emptied a chat before updating to a version with history sync does not get the
+    /// messages back: agents paired before this version first ran count as synced.
+    @Test func agentsPairedBeforeTheUpdateAreNotFilledIn() async throws {
+        let fixture = try ChatFixture()
+        fixture.defaults.removeObject(forKey: ChatModel.historySinceKey)  // the first launch of this version
+        let updated = ChatModel(app: fixture.app, store: fixture.store, links: fixture.links, listens: false,
+                                unreadDefaults: fixture.defaults)
+        updated.bridgeHello(fixture.home.id, try #require(Self.bridge))
+        #expect(await fixture.eventually { updated.historySynced(fixture.home.id) })
+        #expect(requests(fixture).isEmpty)
+    }
+
     @Test func oldBridgesAreNotAsked() async throws {
         let fixture = try ChatFixture()
         fixture.chat.bridgeHello(fixture.home.id, try #require(BridgeInfo(hello: ["type": "hello", "caps": []])))

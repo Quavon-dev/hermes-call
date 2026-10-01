@@ -73,6 +73,8 @@ struct ChatFixture {
         store = ChatStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("chat-\(UUID().uuidString)"),
                           changedSignal: nil)
         self.defaults = defaults
+        // History sync has been around since long before these agents were paired (see L3).
+        defaults.set(Date.distantPast, forKey: ChatModel.historySinceKey)
         chat = ChatModel(app: app, store: store, links: links, listens: false, unreadDefaults: defaults)
         chat.ackTimeout = .milliseconds(300)
         links.chat = chat

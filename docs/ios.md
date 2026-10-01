@@ -80,7 +80,9 @@ account to get incoming calls.
   `history` and this phone's chat with that agent is empty (a fresh pairing), the app asks once for
   the recent chat, page by page, downloads the attachments the bridge sends and stores only messages it
   does not have (`ChatStore.insertNew`); imported messages are not counted as unread. An import cut short
-  (app quit, a page lost: 120 s per page) resumes at its cursor on the next connect. Deleting a
+  (app quit, a page lost: 120 s per page) resumes at its cursor on the next connect. Agents paired before
+  the first launch of a version with history sync are never filled in (their chat may be empty because
+  the owner deleted it). Deleting a
   message stays local to this phone (the history is never asked again for that agent).
 - **Call resume** (`CallReconnect`, `CallCoordinator+Reconnect`): with a bridge listing `call_resume`,
   a broken connection (also one found 2 s after a network change: not connected, or no audio arriving;

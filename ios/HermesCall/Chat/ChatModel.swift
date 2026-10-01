@@ -101,6 +101,7 @@ final class ChatModel {
         unreadCounts = UnreadCounts.load(defaults: unreadDefaults)
         self.links = links ?? RelayLinkProvider(app: app)
         app.onBridgeHello = { [weak self] profile, info in self?.bridgeHello(profile, info) }
+        noteHistorySyncStart()
         if listens { listen() }
     }
 
