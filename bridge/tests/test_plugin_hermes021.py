@@ -2,6 +2,7 @@
 within Hermes' own approval timeout, slash-command confirmations use the phone's approval sheet,
 cancelled turns, fatal auth errors and cron output. Hermes is stubbed (see test_plugin_compat.py)."""
 
+import asyncio
 import sys
 import time
 import types
@@ -148,3 +149,28 @@ async def test_a_cancelled_turn_ends_its_task_as_not_done(adapter_module, monkey
     adapter = adapter_module.HermesCallAdapter(None)
     await adapter.on_processing_complete(MessageEvent(message_id="m1"), types.SimpleNamespace(value=outcome))
     assert ended == [("m1", failed)]
+
+
+# ---- 6: a rejected token is reported to the gateway at once --------------------------------------
+
+
+async def test_a_rejected_token_notifies_the_gateway(adapter_module) -> None:  # noqa: F811
+    adapter = adapter_module.HermesCallAdapter(None)
+    notified = asyncio.Event()
+
+    async def notify() -> None:
+        notified.set()
+
+    adapter._notify_fatal_error = notify
+    rejected = Response({})
+    rejected.status_code = 401
+    http = FakeHttp([])
+
+    async def get(path, params):
+        http.gets.append(dict(params))
+        return rejected
+
+    http.get = get
+    adapter._http, adapter._running = http, True
+    await asyncio.wait_for(adapter._poll_loop(), 2)
+    assert notified.is_set()

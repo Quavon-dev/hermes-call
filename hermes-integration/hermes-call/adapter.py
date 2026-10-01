@@ -190,6 +190,9 @@ class HermesCallAdapter(BasePlatformAdapter):
                 response = await self._http.get("/v1/chat/events", params=params)
                 if response.status_code in (401, 403):
                     self._set_fatal_error("auth", "hermes-call-bridge rejected HERMES_CALL_TOKEN", retryable=False)
+                    notify = getattr(self, "_notify_fatal_error", None)  # tells the gateway at once (v0.21)
+                    if notify is not None:
+                        await notify()
                     return
                 response.raise_for_status()
                 data = response.json()
