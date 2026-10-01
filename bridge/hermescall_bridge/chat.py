@@ -168,6 +168,9 @@ class ChatService:
                 await self._resume(pending)
 
     async def _resume(self, pending: Pending) -> None:
+        # The snapshot may be stale: an earlier message's processing awaited, and meanwhile this one was handed over.
+        if pending.message_id in self._processing or not await self._db.call(self._db.store.is_pending, pending.message_id):
+            return
         device = self._state.devices.get(pending.device_id)
         if device is None:
             await self._db.call(self._db.store.drop_pending, pending.message_id)
@@ -223,10 +226,17 @@ class ChatService:
             # No ack: the phone keeps the message and sends it again.
             log.error("chat message %s not stored, not acked: %s", message_id[:6], exc)
             return
-        # Phones resend unacknowledged messages (new envelope, same id): ack again, deliver once.
-        await self._live(device, {"type": "chat_ack", "id": message_id, "state": "delivered"})
+        # Claimed before the first await, so a reconnect's `on_relay_ready` meanwhile does not process it too.
         if fresh:
-            await self._process(device, message_id, kept)
+            self._processing.add(message_id)
+        try:
+            # Phones resend unacknowledged messages (new envelope, same id): ack again, deliver once.
+            await self._live(device, {"type": "chat_ack", "id": message_id, "state": "delivered"})
+            if fresh:
+                await self._process(device, message_id, kept)
+        finally:
+            if fresh:
+                self._processing.discard(message_id)
 
     async def _process(self, device: Device, message_id: str, body: dict[str, Any]) -> None:
         """Stored and acked → attachments, transcripts, mirror → an event for Hermes. A store failure leaves
@@ -334,8 +344,9 @@ class ChatService:
         store = self._db.store
         if handed_over is None:
             await self._db.call(store.add_event, event)
-        else:
-            await self._db.call(store.hand_over, handed_over, event)
+        elif await self._db.call(store.hand_over, handed_over, event) is None:
+            log.warning("chat message %s was already handed over; no second event", handed_over[:6])
+            return
         dropped = await self._db.call(store.trim_events, MAX_EVENTS)
         if dropped:
             log.warning("chat adapter is not polling: %d old events dropped", dropped)

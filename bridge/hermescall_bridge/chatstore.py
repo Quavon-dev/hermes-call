@@ -160,14 +160,19 @@ class ChatStore:
         rows = self._db.execute("SELECT message_id, device_id, body FROM inbox ORDER BY at").fetchall()
         return [Pending(m, d, json.loads(b)) for m, d, b in rows]
 
-    def hand_over(self, message_id: str, event: dict[str, Any]) -> int:
+    def hand_over(self, message_id: str, event: dict[str, Any]) -> int | None:
         """The processed message becomes an event for Hermes; its inbox row goes in the same transaction
-        (its spooled files are then needed until Hermes has the event)."""
+        (its spooled files are then needed until Hermes has the event). None: the row was already claimed
+        (handed over by another run, or dropped), so no second event."""
         with self._tx():
-            self._db.execute("DELETE FROM inbox WHERE message_id = ?", (message_id,))
+            if self._db.execute("DELETE FROM inbox WHERE message_id = ?", (message_id,)).rowcount == 0:
+                return None
             seq = self._insert_event(event)
             self._db.execute("UPDATE files SET event_seq = ? WHERE message_id = ?", (seq, message_id))
             return seq
+
+    def is_pending(self, message_id: str) -> bool:
+        return self._db.execute("SELECT 1 FROM inbox WHERE message_id = ?", (message_id,)).fetchone() is not None
 
     def drop_pending(self, message_id: str) -> None:
         self._db.execute("DELETE FROM inbox WHERE message_id = ?", (message_id,))

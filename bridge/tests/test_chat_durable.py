@@ -157,3 +157,33 @@ async def test_call_and_chat_context_survive_a_restart(tmp_path, key) -> None:
     chat2, _, _ = service(tmp_path)
     assert "dentist" in (chat2.recent_context() if key == "recent" else chat2._call_context)
     await chat2.close()
+
+
+class SlowLiveRelay(MailRelay):
+    """The `delivered` ack takes a moment, so a reconnect can run while it is in flight."""
+
+    async def send(self, message: dict) -> None:
+        await asyncio.sleep(0.05)
+        self.live.append(message)
+
+
+async def test_a_reconnect_during_the_delivered_ack_hands_the_message_over_once(tmp_path) -> None:
+    chat, relay, device = service(tmp_path, SlowLiveRelay())
+    body = {"type": "chat", "id": wire.b64e(b"m" * 16), "mid": wire.b64e(b"x" * 16), "text": "hello"}
+    on_chat = asyncio.ensure_future(chat.handle(device, body))
+    await asyncio.sleep(0.01)  # stored, ack in flight
+    await chat.on_relay_ready()
+    await on_chat
+    _, events = await chat.poll(0, 0)
+    assert sum(e["type"] == "message" for e in events) == 1
+    await chat.close()
+
+
+def test_hand_over_claims_the_inbox_row_once(tmp_path) -> None:
+    store = ChatStore(tmp_path / "chat.db")
+    message_id = wire.b64e(b"m" * 16)
+    assert store.accept(message_id, "dev", {"id": message_id, "text": "hi"})
+    assert store.hand_over(message_id, {"type": "message", "id": message_id}) is not None
+    assert store.hand_over(message_id, {"type": "message", "id": message_id}) is None
+    assert len(store.events_after(0)) == 1
+    store.close()
