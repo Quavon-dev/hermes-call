@@ -399,16 +399,40 @@ class HermesCallAdapter(BasePlatformAdapter):
         session_key: str,
         description: str = "dangerous command",
         metadata: dict[str, Any] | None = None,
+        allow_permanent: bool = True,
+        allow_session: bool = True,
+        smart_denied: bool = False,
+        **_: Any,
     ) -> SendResult:
-        """Face ID sheet on the phone. Anything that fails is denied here rather than returned as a
-        failure, which would make Hermes fall back to a typed `/approve` prompt."""
+        """Face ID sheet on the phone (Hermes up to v0.20 calls this directly; v0.21 through
+        `_send_exec_approval_prompt`). "Allow for this session" only when Hermes allows that tier;
+        the permanent tier is never offered on the phone."""
+        choices = ["once", "session", "deny"] if allow_session and not smart_denied else ["once", "deny"]
+        return await self._deliver_approval(chat_id, command, session_key, description, choices)
+
+    async def _send_exec_approval_prompt(self, prompt: Any) -> SendResult:
+        """Hermes v0.21 renders approvals through this hook; overriding it is what tells Hermes the
+        platform has its own approval UI (otherwise it falls back to a typed `/approve` message)."""
+        offered = {action[1] for action in getattr(prompt, "actions", ())}
+        choices = [choice for choice in ("once", "session", "deny") if choice in offered] or ["once", "deny"]
+        if "deny" not in choices:
+            choices.append("deny")
+        return await self._deliver_approval(
+            prompt.chat_id, prompt.command, prompt.session_key, getattr(prompt, "description", ""), choices
+        )
+
+    async def _deliver_approval(
+        self, chat_id: str, command: str, session_key: str, description: str, choices: list[str]
+    ) -> SendResult:
+        """Anything that fails is denied here rather than returned as a failure, which would make
+        Hermes fall back to a typed `/approve` prompt."""
         self._expire_approvals()
         request_id = secrets.token_urlsafe(16)
         self._approvals[request_id] = (session_key, time.monotonic() + APPROVAL_TTL)
         status = "error"
         if self._http is not None:
             try:
-                body = {"request_id": request_id, "command": command, "description": description}
+                body = {"request_id": request_id, "command": command, "description": description, "choices": choices}
                 status = (await _post(self._http, "/v1/chat/approvals", body)).get("status", "error")
             except httpx.HTTPError as exc:
                 log.warning("hermes_call: approval not delivered (%s)", exc.__class__.__name__)

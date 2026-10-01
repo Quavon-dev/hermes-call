@@ -162,6 +162,25 @@ async def test_chat_approval_roundtrip(h) -> None:
     assert (await poll(h, 1, wait=0))[1] == []
 
 
+async def test_chat_approval_offers_only_the_choices_hermes_allows(h) -> None:
+    device = await online_device(h)
+    device.approve = None
+    body = {"request_id": "sess-2", "command": "rm -rf /tmp/y", "description": "smart-denied", "choices": ["once", "deny"]}
+    assert (await hermes_api(h, "POST", "/v1/chat/approvals", body)) == (200, {"status": "sent"})
+    request = await next_of(device, "approval_request")
+    assert request["choices"] == ["once", "deny"]
+    await device.send({"type": "approval", "request_id": "sess-2", "choice": "session"}, mail=True)
+    _, events = await poll(h)
+    assert events == [{"type": "approval", "chat_id": "owner", "request_id": "sess-2", "choice": "deny"}]
+
+
+async def test_chat_approval_choices_must_include_once_and_deny(h) -> None:
+    await online_device(h)
+    body = {"request_id": "sess-3", "command": "x", "description": "", "choices": ["session"]}
+    status, _ = await hermes_api(h, "POST", "/v1/chat/approvals", body)
+    assert status == 400
+
+
 async def test_overlong_approval_is_denied_not_shown(h) -> None:
     await online_device(h)
     body = {"request_id": "x", "command": "a" * 4001, "description": ""}

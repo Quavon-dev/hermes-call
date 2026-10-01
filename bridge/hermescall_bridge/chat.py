@@ -153,7 +153,8 @@ class ChatService:
             (tuple(line) for line in recent if isinstance(line, list) and len(line) == 2), maxlen=RECENT_LINES
         )
         self._call_context = str(self._db.store.get_json("call_context", "") or "")
-        self._approvals: dict[str, float] = {}
+        # request id -> (deadline, the choices the phone was offered)
+        self._approvals: dict[str, tuple[float, tuple[str, ...]]] = {}
         self._processing: set[str] = set()
         self.last_poll = 0.0
 
@@ -337,9 +338,10 @@ class ChatService:
 
     async def _on_approval(self, device: Device, body: dict[str, Any]) -> None:
         request_id = body.get("request_id")
-        if not isinstance(request_id, str) or self._approvals.pop(request_id, 0.0) < time.monotonic():
+        until, offered = self._approvals.pop(request_id, (0.0, ())) if isinstance(request_id, str) else (0.0, ())
+        if until < time.monotonic():
             return
-        choice = body.get("choice") if body.get("choice") in APPROVAL_CHOICES else "deny"
+        choice = body.get("choice") if body.get("choice") in offered else "deny"
         await self._emit({"type": "approval", "chat_id": CHAT_ID, "request_id": request_id, "choice": choice})
         for other in self._state.devices.values():
             if other.id != device.id:
@@ -567,20 +569,22 @@ class ChatService:
         for device in list(self._state.devices.values()):
             await self._live(device, {"type": "typing"})
 
-    async def request_approval(self, request_id: str, command: str, description: str) -> bool:
-        """Face ID sheet on the phones; the answer comes back as an `approval` event."""
+    async def request_approval(self, request_id: str, command: str, description: str, choices: list[str] | None = None) -> bool:
+        """Face ID sheet on the phones, offering only `choices` (default: all); the answer comes back
+        as an `approval` event, and an answer that was not offered counts as deny."""
         if len(command) > MAX_APPROVAL_TEXT or len(description) > MAX_APPROVAL_TEXT or not self._state.devices:
             return False
+        offered = tuple(choices or APPROVAL_CHOICES)
         now = time.monotonic()
-        self._approvals = {key: until for key, until in self._approvals.items() if until > now}
-        self._approvals[request_id] = now + APPROVAL_TTL
+        self._approvals = {key: entry for key, entry in self._approvals.items() if entry[0] > now}
+        self._approvals[request_id] = (now + APPROVAL_TTL, offered)
         body = {
             "type": "approval_request",
             "request_id": request_id,
             "command": command,
             "description": description,
             "chat": True,
-            "choices": list(APPROVAL_CHOICES),
+            "choices": list(offered),
         }
         # Queued no longer than the bridge waits for the answer: a late sheet could not be answered anyway.
         for device in list(self._state.devices.values()):

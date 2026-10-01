@@ -20,6 +20,7 @@ from .calls import MAX_FIRST_MESSAGE, MAX_REASON, CallManager
 from .chat import ATTACHMENT_KINDS, MAX_TEXT, ChatService
 from .devices import DeviceRegistry
 from .health import HealthChecker
+from .hermes import APPROVAL_CHOICES
 from .metrics import METRICS
 from .phone import PhoneService
 from .present import PresentService
@@ -196,7 +197,11 @@ def add_chat_routes(app: web.Application, chat: ChatService) -> None:
         description = body.get("description", "")
         if not isinstance(command, str) or not isinstance(description, str):
             raise _error(web.HTTPBadRequest, "command and description must be strings")
-        if not await chat.request_approval(request_id, command, description):
+        choices = body.get("choices", list(APPROVAL_CHOICES))
+        if not isinstance(choices, list) or not set(choices) <= set(APPROVAL_CHOICES) or not {"once", "deny"} <= set(choices):
+            raise _error(web.HTTPBadRequest, "choices must be once, deny and optionally session")
+        ordered = [choice for choice in APPROVAL_CHOICES if choice in choices]
+        if not await chat.request_approval(request_id, command, description, ordered):
             return web.json_response({"status": "denied"})
         return web.json_response({"status": "sent"})
 

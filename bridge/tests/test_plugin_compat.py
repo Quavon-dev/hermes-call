@@ -289,3 +289,43 @@ async def test_connect_accepts_the_arguments_hermes_passes(adapter_module, monke
     assert first.cancelled() or first.done(), "a reconnect must not leave the old poll loop running"
     assert adapter._poller is not first
     await adapter.disconnect()
+
+
+# ---- Hermes v0.21 approvals: _send_exec_approval_prompt and the allowed choices -------------
+
+
+def test_the_adapter_renders_hermes_approval_prompts(adapter_module) -> None:
+    # Hermes v0.21 sends approvals to a platform only if it overrides this (else: typed /approve).
+    assert "_send_exec_approval_prompt" in adapter_module.HermesCallAdapter.__dict__
+
+
+async def test_send_exec_approval_takes_hermes_flags_and_offers_only_allowed_choices(adapter_module) -> None:
+    adapter = adapter_module.HermesCallAdapter(None)
+    adapter._http = http = FakeHttp([])
+    await adapter.send_exec_approval(
+        "owner", "rm -rf /x", "s1", "delete", None, allow_permanent=True, allow_session=True, smart_denied=False
+    )
+    await adapter.send_exec_approval(
+        "owner", "rm -rf /y", "s2", "delete", None, allow_permanent=True, allow_session=True, smart_denied=True
+    )
+    await adapter.send_exec_approval("owner", "rm -rf /z", "s3", "delete", None, allow_session=False)
+    choices = [body["choices"] for path, body in http.posts if path == "/v1/chat/approvals"]
+    assert choices == [["once", "session", "deny"], ["once", "deny"], ["once", "deny"]]
+
+
+async def test_a_hermes_prompt_object_is_delivered_without_the_always_tier(adapter_module) -> None:
+    adapter = adapter_module.HermesCallAdapter(None)
+    adapter._http = http = FakeHttp([])
+    prompt = types.SimpleNamespace(
+        chat_id="owner",
+        session_key="s4",
+        command="rm -rf /w",
+        description="delete",
+        metadata=None,
+        actions=[("Once", "once", ""), ("Session", "session", ""), ("Always", "always", ""), ("Deny", "deny", "")],
+    )
+    result = await adapter._send_exec_approval_prompt(prompt)
+    assert result.success
+    path, body = http.posts[-1]
+    assert path == "/v1/chat/approvals" and body["choices"] == ["once", "session", "deny"]
+    assert body["command"] == "rm -rf /w"
