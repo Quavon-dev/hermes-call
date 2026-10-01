@@ -49,6 +49,8 @@ RETIRED_TURNS = 32
 PUSH_TURN_LIMITS = ((2.0, 1), (3600.0, 30))
 # A turn with no event for this long ends as done (its `done` got lost).
 IDLE_TIMEOUT = 600.0
+# Late tool events of a turn the owner stopped are ignored this long (the default turn id "chat" repeats).
+STOPPED_GRACE = 60.0
 # Presence comes from relay events; a new turn re-checks it at most this often.
 ONLINE_REFRESH = 30.0
 TRANSPORT_ERRORS = (ProtocolError, TimeoutError, ConnectionError, RuntimeError, aiohttp.ClientError)
@@ -184,6 +186,8 @@ class TaskService:
         # turn id → serial of the turn that replaced it: late events of a replaced turn are ignored
         # while that newer turn runs.
         self._retired: dict[str, int] = {}
+        # turn id → monotonic time the owner stopped it
+        self._stopped: dict[str, float] = {}
         self._tasks: set[asyncio.Task] = set()
         self._online: set[str] = set()
         self._online_checked = -math.inf
@@ -221,6 +225,8 @@ class TaskService:
         if event.state != "started":
             return None  # a finished tool changes nothing on screen
         if not current:
+            if time.monotonic() - self._stopped.get(event.turn_id, -math.inf) < STOPPED_GRACE:
+                return None  # the agent is still winding down a turn the owner stopped
             replaced_by = self._retired.get(event.turn_id)
             if replaced_by is not None and turn is not None and turn.serial == replaced_by and turn.state == "running":
                 return None  # a late event of a turn that a newer (still running) one replaced
@@ -252,6 +258,17 @@ class TaskService:
         if not turn.pushes:
             log.warning("task %s: too many new turns, no Live Activity pushes for it", turn_id[:6])
         return turn
+
+    async def stop(self) -> None:
+        """The owner stopped the agent: the running turn ends now (ring, Live Activity), as `done`."""
+        turn = self._turn
+        if turn is None or turn.state != "running":
+            return
+        now = time.monotonic()
+        self._stopped = {k: t for k, t in self._stopped.items() if now - t < STOPPED_GRACE}
+        self._stopped[turn.turn_id] = now
+        self._end(turn, "done")
+        await self._deliver_end(turn)
 
     def _may_push(self) -> bool:
         now = time.monotonic()

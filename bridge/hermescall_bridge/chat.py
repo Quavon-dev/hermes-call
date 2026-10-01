@@ -64,6 +64,14 @@ SPEAK_TIMEOUT = 20.0
 _MIME_OK = frozenset("abcdefghijklmnopqrstuvwxyz0123456789+-./")
 
 
+STOP_COMMAND = "/stop"
+
+
+def is_stop(text: object) -> bool:
+    """The owner's emergency stop: the whole message is `/stop` (any case, surrounding whitespace)."""
+    return isinstance(text, str) and text.strip().lower() == STOP_COMMAND
+
+
 def new_id() -> str:
     return wire.b64e(sodium.random_bytes(16))
 
@@ -157,6 +165,8 @@ class ChatService:
         self._approvals: dict[str, tuple[float, tuple[str, ...]]] = {}
         self._processing: set[str] = set()
         self.last_poll = 0.0
+        # The owner's `/stop` (set by the daemon): interrupt a call's turn, end the task on the phones.
+        self.on_stop: Callable[[], Awaitable[None]] | None = None
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -233,11 +243,23 @@ class ChatService:
         try:
             # Phones resend unacknowledged messages (new envelope, same id): ack again, deliver once.
             await self._live(device, {"type": "chat_ack", "id": message_id, "state": "delivered"})
+            if fresh and not attachments and is_stop(text):
+                await self._stop()
             if fresh:
                 await self._process(device, message_id, kept)
         finally:
             if fresh:
                 self._processing.discard(message_id)
+
+    async def _stop(self) -> None:
+        """Before `/stop` goes to Hermes (whose gateway interrupts the chat turn): what the bridge itself runs."""
+        log.info("stop requested by the owner")
+        if self.on_stop is None:
+            return
+        try:
+            await self.on_stop()
+        except Exception:
+            log.exception("stop failed")
 
     async def _process(self, device: Device, message_id: str, body: dict[str, Any]) -> None:
         """Stored and acked → attachments, transcripts, mirror → an event for Hermes. A store failure leaves
@@ -268,7 +290,11 @@ class ChatService:
         if isinstance(body.get("reply_to"), str):
             owner["reply_to"] = body["reply_to"]
         await self._record(owner, stored)
-        context = self._take_call_context()
+        # Hermes recognises a command only as the whole text: `/stop` leaves the call context for the next message.
+        stop = not attachments and is_stop(text)
+        context = "" if stop else self._take_call_context()
+        if stop:
+            full_text = STOP_COMMAND
         await self._emit(
             {
                 "type": "message",

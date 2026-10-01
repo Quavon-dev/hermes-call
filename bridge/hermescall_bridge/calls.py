@@ -480,7 +480,13 @@ class CallManager:
 
     async def _on_interrupt(self, device: Device, body: dict) -> None:
         call = self.active
-        if call and call.device.id == device.id and call.call_id == body.get("call_id") and call.conversation:
+        if call and call.device.id == device.id and call.call_id == body.get("call_id"):
+            self.interrupt()
+
+    def interrupt(self) -> None:
+        """Cuts the agent off in the active call (a tap on the phone, or the owner's `/stop`); no-op without one."""
+        call = self.active
+        if call and call.conversation:
             call.conversation.interrupt()
 
     # ---- "look at this": photos during a call (never logged, never stored) -------

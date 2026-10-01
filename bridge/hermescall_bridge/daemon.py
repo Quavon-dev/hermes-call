@@ -189,6 +189,12 @@ def build_bridge(
         opts.turn_transport,
     )
     phone.recent_activity = calls.last_activity
+
+    async def stop_agent() -> None:
+        calls.interrupt()
+        await tasks.stop()
+
+    chat.on_stop = stop_agent
     devices = DeviceRegistry(state, store, relay, agent_name)
     _register_gauges(relay, calls, chat, state)
     health = HealthChecker(*opts.health_urls, relay.connected.is_set) if opts.health_urls else None
