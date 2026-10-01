@@ -290,3 +290,118 @@ def test_sign_refuses_sums_that_do_not_name_exactly_the_tarball(repo: Path, tmp_
     (repo / "dist" / "other").write_bytes((repo / "dist" / "hermes-call.tar.gz").read_bytes())
     refused = release(repo, "--sign", "dist", str(key), check=False)
     assert refused.returncode == 2 and "SHA256SUMS must be exactly one line" in refused.stderr
+
+
+# ---- bridge/get.sh: the installed version and the MANIFEST download (outside the shared block) ----
+
+VERSION_BLOCK = re.compile(r"^# BEGIN bridge_version.*?^# END bridge_version\n", re.S | re.M)
+INSTALL_SH = ROOT / "bridge" / "install.sh"
+
+
+def get_sh(tmp_path: Path, call: str, *args: str) -> subprocess.CompletedProcess:
+    block = VERSION_BLOCK.search(GET_SH.read_text())
+    assert block, "bridge/get.sh must contain the bridge_version block"
+    script = tmp_path / "get-block.sh"
+    script.write_text("set -Eeuo pipefail\n" + block.group(0) + call + ' "$@"\n')
+    return run("bash", str(script), *args, check=False)
+
+
+def test_get_sh_reads_the_version_install_sh_wrote_first(tmp_path: Path) -> None:
+    prefix, src = tmp_path / "prefix", tmp_path / "src"
+    (src / "hermes-call" / "bridge").mkdir(parents=True)
+    prefix.mkdir()
+    assert get_sh(tmp_path, "hc_installed_version", str(prefix), str(src)).stdout == ""
+    (src / "hermes-call" / "bridge" / "pyproject.toml").write_text('[project]\nversion = "0.6.1"\n')
+    assert get_sh(tmp_path, "hc_installed_version", str(prefix), str(src)).stdout == "0.6.1"
+    (src / "hermes-call" / "RELEASE").write_text("version=0.6.2\ntag=v0.6.2\n")
+    assert get_sh(tmp_path, "hc_installed_version", str(prefix), str(src)).stdout == "0.6.2"
+    # A git install or a removed /opt/hermes-call-src: install.sh's VERSION decides.
+    (prefix / "VERSION").write_text("0.7.1\n")
+    assert get_sh(tmp_path, "hc_installed_version", str(prefix), str(src)).stdout == "0.7.1"
+    shutil.rmtree(src)
+    assert get_sh(tmp_path, "hc_installed_version", str(prefix), str(src)).stdout == "0.7.1"
+    # Not x.y.z: unknown (get.sh then requires a signed MANIFEST), not a fresh install.
+    (prefix / "VERSION").write_text("0.7.0.dev1\n")
+    result = get_sh(tmp_path, "hc_installed_version", str(prefix), str(src))
+    assert result.returncode == 0 and result.stdout == ""
+
+
+@pytest.fixture
+def release_server(tmp_path: Path):
+    import functools
+    import http.server
+    import threading
+
+    root = tmp_path / "www"
+    root.mkdir()
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path.endswith("/broken/MANIFEST"):
+                self.send_error(500)
+                return
+            super().do_GET()
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Handler, directory=str(root)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield root, f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+
+
+def test_get_sh_takes_the_legacy_path_only_on_a_404(release_server, tmp_path: Path) -> None:
+    root, url = release_server
+    (root / "signed").mkdir()
+    (root / "signed" / "MANIFEST").write_text("version=0.7.0\n")
+    (root / "signed" / "MANIFEST.sig").write_text("sig\n")
+    (root / "legacy").mkdir()
+    (root / "nosig").mkdir()
+    (root / "nosig" / "MANIFEST").write_text("version=0.7.0\n")
+    work = tmp_path / "work"
+    work.mkdir()
+
+    signed = get_sh(tmp_path, "hc_fetch_manifest", f"{url}/signed", str(work))
+    assert signed.returncode == 0 and (work / "MANIFEST").read_text() == "version=0.7.0\n"
+    assert (work / "MANIFEST.sig").exists()
+    (work / "MANIFEST.sig").unlink()
+
+    legacy = get_sh(tmp_path, "hc_fetch_manifest", f"{url}/legacy", str(work))
+    assert legacy.returncode == 1 and not (work / "MANIFEST").exists()
+
+    for broken in ("broken", "nosig"):
+        result = get_sh(tmp_path, "hc_fetch_manifest", f"{url}/{broken}", str(work))
+        assert result.returncode == 2, broken
+        assert not (work / "MANIFEST").exists()
+    # No answer at all (network down, DNS): an error, never "no MANIFEST".
+    down = get_sh(tmp_path, "hc_fetch_manifest", "http://127.0.0.1:9/x", str(work))
+    assert down.returncode == 2 and "MANIFEST" in down.stderr
+
+
+def test_get_sh_requires_a_manifest_when_an_installed_bridge_has_no_known_version() -> None:
+    text = GET_SH.read_text()
+    main = text[text.index("# END bridge_version") :]
+    assert 'hc_installed_version "$BRIDGE_PREFIX" "$SRC"' in main
+    assert re.search(r'-z \$installed && -d \$BRIDGE_PREFIX/bridge[^\n]*\n(?:[^\n]*\n){0,2}\s*HC_REQUIRE_MANIFEST=1\n', main)
+
+
+def test_install_sh_records_the_installed_version(tmp_path: Path) -> None:
+    src = tmp_path / "hermes-call"
+    (src / "bridge").mkdir(parents=True)
+    shutil.copy(INSTALL_SH, src / "bridge" / "install.sh")
+    (src / "bridge" / "pyproject.toml").write_text('[project]\nversion = "0.7.2"\n')
+
+    function = re.search(r"^release_version\(\) \{.*?^\}\n", INSTALL_SH.read_text(), re.S | re.M)
+    assert function, "bridge/install.sh must define release_version"
+    script = tmp_path / "release-version.sh"
+    script.write_text('set -Eeuo pipefail\nSRC_ROOT=$1\n' + function.group(0) + "release_version\n")
+
+    def version() -> subprocess.CompletedProcess:
+        return run("bash", str(script), str(src), check=False)
+
+    assert version().stdout == "0.7.2"
+    (src / "RELEASE").write_text("version=0.7.3\ntag=v0.7.3\n")
+    assert version().stdout == "0.7.3"
+    assert "VERSION" in INSTALL_SH.read_text().split("deploy_code() {", 1)[1].split("\n}\n", 1)[0]

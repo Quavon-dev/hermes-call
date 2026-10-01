@@ -53,7 +53,11 @@ and `bridge/pyproject.toml` do not say the same version.
 The installers (`hc_verify_release`, the same block in all three scripts, checked by a test)
 verify `MANIFEST.sig`, compare the tarball with the manifest's checksum and refuse a release whose
 version is **older than the installed one** (Proxmox helper `update`: `/opt/hermescall-relay/VERSION`;
-bridge: see `bridge/get.sh`). `HC_ALLOW_DOWNGRADE=1` in front of the command forces it.
+bridge: `/opt/hermes-call-bridge/VERSION`, written by `bridge/install.sh`, else the copy of the
+release in `/opt/hermes-call-src`). `HC_ALLOW_DOWNGRADE=1` in front of the command forces it.
+`bridge/get.sh` takes the no-MANIFEST path below only when the MANIFEST download answers HTTP 404
+(any other failure stops it), and requires a MANIFEST when a bridge is installed but its version is
+unknown.
 `relay/install.sh update` does the same for a checkout (`--allow-downgrade`); `install.sh rollback`
 stays the way back to the previous code.
 

@@ -147,6 +147,15 @@ create_user() {
   install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$STATE" "$STATE/models"
 }
 
+# The version being installed: hermes-call/RELEASE of a release tarball, else bridge/pyproject.toml.
+release_version() {
+  local version
+  version=$(sed -n 's/^version=//p' "$SRC_ROOT/RELEASE" 2>/dev/null || true)
+  [[ -n $version ]] ||
+    version=$({ sed -n 's/^version = "\(.*\)"$/\1/p' "$SRC_ROOT/bridge/pyproject.toml" 2>/dev/null || true; } | head -n 1)
+  printf '%s' "$version"
+}
+
 deploy_code() {
   log "Deploying bridge to $PREFIX (hash-pinned Python dependencies)"
   install -d -m 0755 "$PREFIX"
@@ -169,6 +178,15 @@ deploy_code() {
   mv "$PREFIX/common.new" "$PREFIX/common"
   mv "$PREFIX/bridge.new" "$PREFIX/bridge"
   mv "$PREFIX/hermes-integration.new" "$PREFIX/hermes-integration"
+  # get.sh compares the next release with this (downgrade check); unknown makes it require a MANIFEST.
+  local version
+  version=$(release_version)
+  if [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf '%s\n' "$version" >"$PREFIX/VERSION" && chmod 0644 "$PREFIX/VERSION"
+  else
+    rm -f "$PREFIX/VERSION"
+    warn "unknown bridge version '${version}': updates through get.sh will need a signed release MANIFEST"
+  fi
   cat >"$WRAPPER" <<EOF
 #!/bin/sh
 set -eu

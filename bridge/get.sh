@@ -17,6 +17,7 @@ set -euo pipefail
 RELEASE_SIGNER="${RELEASE_SIGNER:-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBZcryC9omwjnjag9wJHwPgVH4MH+sfVxJAMs/NeplTx}"
 RELEASE_URL="${HC_RELEASE_URL:-https://github.com/Quavon-dev/hermes-call/releases/latest/download}"
 SRC=/opt/hermes-call-src
+BRIDGE_PREFIX=/opt/hermes-call-bridge
 
 # BEGIN verify_release (identical in proxmox-helper/ct, proxmox-helper/install and bridge/get.sh;
 # tools/tests/test_release.py checks that and runs it). See docs/releasing.md.
@@ -80,6 +81,37 @@ hc_verify_release() {
 }
 # END verify_release
 
+# BEGIN bridge_version (bridge/get.sh only; tools/tests/test_release.py runs it)
+# hc_installed_version PREFIX SRC: the installed bridge's version (x.y.z), or nothing when unknown.
+# install.sh writes PREFIX/VERSION (also for git installs); installs from before that are read from
+# get.sh's copy of their release in SRC.
+hc_installed_version() {
+  local prefix=$1 src=$2 version
+  version=$(head -n 1 "$prefix/VERSION" 2>/dev/null || true)
+  [[ -n $version ]] || version=$(sed -n 's/^version=//p' "$src/hermes-call/RELEASE" 2>/dev/null || true)
+  [[ -n $version ]] ||
+    version=$({ sed -n 's/^version = "\(.*\)"$/\1/p' "$src/hermes-call/bridge/pyproject.toml" 2>/dev/null || true; } | head -n 1)
+  if [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then printf '%s' "$version"; fi
+}
+
+# hc_fetch_manifest URL DIR: downloads MANIFEST and MANIFEST.sig into DIR. 0: done; 1: the release has
+# no MANIFEST (HTTP 404, releases up to 0.6.2); 2: any other failure (network, server, a MANIFEST
+# without its signature), which must never count as "no MANIFEST".
+hc_fetch_manifest() {
+  local url=$1 dir=$2 status
+  status=$(curl -sSL -o "$dir/MANIFEST" -w '%{http_code}' "$url/MANIFEST" 2>/dev/null) || true
+  case $status in
+    200)
+      curl -fsSL -o "$dir/MANIFEST.sig" "$url/MANIFEST.sig" && return 0
+      echo "release has a MANIFEST without MANIFEST.sig" >&2 ;;
+    404) rm -f "$dir/MANIFEST"; return 1 ;;
+    *) echo "could not download the release MANIFEST from $url (HTTP ${status:-none})" >&2 ;;
+  esac
+  rm -f "$dir/MANIFEST" "$dir/MANIFEST.sig"
+  return 2
+}
+# END bridge_version
+
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
@@ -119,15 +151,16 @@ trap 'rm -rf "$tmp"' EXIT
 for file in hermes-call.tar.gz SHA256SUMS SHA256SUMS.sig; do
   curl -fsSL -o "$tmp/$file" "$RELEASE_URL/$file" || die "could not download $file from $RELEASE_URL"
 done
-# Releases from 0.7 on carry a signed MANIFEST; older ones do not (hc_verify_release decides).
-if curl -fsSL -o "$tmp/MANIFEST" "$RELEASE_URL/MANIFEST" 2>/dev/null; then
-  curl -fsSL -o "$tmp/MANIFEST.sig" "$RELEASE_URL/MANIFEST.sig" || die "release has a MANIFEST without MANIFEST.sig"
-else
-  rm -f "$tmp/MANIFEST"
+# Releases from 0.7 on carry a signed MANIFEST; older ones do not (hc_verify_release decides). Only an
+# HTTP 404 means "no MANIFEST": any other failure stops here instead of taking the legacy path.
+manifest=0
+hc_fetch_manifest "$RELEASE_URL" "$tmp" || manifest=$?
+[[ $manifest -ne 2 ]] || die "release download failed: not installing"
+installed=$(hc_installed_version "$BRIDGE_PREFIX" "$SRC")
+if [[ -z $installed && -d $BRIDGE_PREFIX/bridge ]]; then
+  say "The installed bridge's version is unknown: only a release with a signed MANIFEST is accepted"
+  HC_REQUIRE_MANIFEST=1
 fi
-installed=$(sed -n 's/^version=//p' "$SRC/hermes-call/RELEASE" 2>/dev/null || true)
-[[ -n $installed ]] ||
-  installed=$({ sed -n 's/^version = "\(.*\)"$/\1/p' "$SRC/hermes-call/bridge/pyproject.toml" 2>/dev/null || true; } | head -1)
 hc_verify_release "$tmp" "$installed" || die "release verification failed: not installing"
 
 rm -rf "$SRC.new" && mkdir -p "$SRC.new"
