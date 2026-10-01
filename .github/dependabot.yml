@@ -1,7 +1,8 @@
 # Weekly update proposals. Security updates come as soon as an advisory is published (enable
 # "Dependabot security updates" in Settings > Code security). Not covered here, update by hand:
 # bridge/requirements.lock (uv pip compile, see bridge/requirements.in), the WebRTC package pinned in
-# ios/project.yml, and the Hermes Agent / Kokoro pins in .github/workflows.
+# ios/project.yml, swift-sodium (pinned exact in ios/HermesCallKit/Package.swift; Dependabot's Swift
+# parser cannot read `exact:`), and the Hermes Agent / Kokoro pins in .github/workflows.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -23,13 +24,10 @@ updates:
         dependency-type: development
       python:
         dependency-type: production
-    commit-message:
-      prefix: chore
-
-  - package-ecosystem: swift
-    directory: /ios/HermesCallKit
-    schedule:
-      interval: weekly
+    ignore:
+      # aiortc pins av below 18; take av majors together with an aiortc release.
+      - dependency-name: av
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: chore
 
