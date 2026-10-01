@@ -55,4 +55,4 @@ forwards push requests (a device token and a random call id).
 
 Export compliance: standard encryption only (TLS, libsodium); ITSAppUsesNonExemptEncryption = NO.
 
-Contact: <the support e-mail set in App Store Connect>
+Contact: contact@quavon.de
