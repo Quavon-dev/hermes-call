@@ -69,12 +69,14 @@ extension CallCoordinator {
         call?.reoffering = true
         defer { if call?.uuid == uuid { call?.reoffering = false } }
         log.info("offering a new connection for the call")
+        var candidate: WebRTCCall?
         do {
             // Short limits: a lost offer or answer is retried within the reconnect window (CallReconnect).
             let limit = CallReconnect.answerTimeout
             try await session.waitUntilConnected(timeout: limit)
             let turn = try await session.request(["t": "turn"], timeout: limit)
             let rtc = try WebRTCCall(turn: turn, relayHost: session.profile.relay.host, onDeviceSpeech: current.transcriber != nil)
+            candidate = rtc
             rtc.onStateChange = { [weak self, weak rtc] state in
                 guard let rtc else { return }
                 self?.mediaChanged(state, uuid: uuid, rtc: rtc)
@@ -95,6 +97,8 @@ extension CallCoordinator {
             log.info("new connection negotiated")
         } catch {
             log.error("re-offer failed: \(String(describing: error), privacy: .public)")
+            // A connection that never became the call's (no answer in time) would otherwise stay open.
+            if let candidate, call?.rtc !== candidate { candidate.close() }
             reconnectEvent { $0.reofferFailed(now: Date()) }
         }
     }
