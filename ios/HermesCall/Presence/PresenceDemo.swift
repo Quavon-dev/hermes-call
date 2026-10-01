@@ -9,10 +9,16 @@ final class PresenceDemo {
     #if DEBUG
     static var forced: Bool { UserDefaults.standard.bool(forKey: "PresenceDemo") }
     static var autoStart: Bool { UserDefaults.standard.bool(forKey: "PresenceDemoAuto") }
+    /// `-PresenceDemoReconnect YES`: the simulated call shows "Reconnecting…" (screenshots of C1).
+    static var showsReconnect: Bool { UserDefaults.standard.bool(forKey: "PresenceDemoReconnect") }
     #else
     static let forced = false
     static let autoStart = false
+    static let showsReconnect = false
     #endif
+
+    /// The simulated call pretends its connection is being moved (see `showsReconnect`).
+    let reconnecting = PresenceDemo.showsReconnect
 
     private(set) var since: Date?
     private(set) var captions: [CallCoordinator.Caption] = []

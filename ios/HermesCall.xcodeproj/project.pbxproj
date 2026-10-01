@@ -70,6 +70,7 @@
 		791EF4FA8A95F9735B304413 /* PhoneContextModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E964C62D45744F2B457A856 /* PhoneContextModel.swift */; };
 		7A3CB4174EE91CFEBA44F2A8 /* Approvals.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D8481C271214A70D51D2130 /* Approvals.swift */; };
 		7A4F73503A09B14ED0DBD3F3 /* ConsentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E28AC90CD90F043D390AF8 /* ConsentView.swift */; };
+		7B4BB229475F1445D7B5D0DC /* CallCoordinator+Reconnect.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F943F11F33ED7EA68B33399 /* CallCoordinator+Reconnect.swift */; };
 		7C27A343A825A152F5A8C35E /* PresenceRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 416D48B6DEC5D89FBEC69061 /* PresenceRenderer.swift */; };
 		7E054F4A255F5388E088DCB7 /* HermesCallApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECB174B217FA34FCBD97CA30 /* HermesCallApp.swift */; };
 		84916C277BDC326F002DEA68 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 606A4C5C83183366D9329287 /* PrivacyInfo.xcprivacy */; };
@@ -241,6 +242,7 @@
 		198029FAD108D3DFFFA9E9D5 /* RelayClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayClientTests.swift; sourceTree = "<group>"; };
 		1A8B67C46F10324E8FC57E08 /* CallAudioRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallAudioRoute.swift; sourceTree = "<group>"; };
 		1C5E5C0B5E04DB59062E65B0 /* PresentationViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresentationViews.swift; sourceTree = "<group>"; };
+		1F943F11F33ED7EA68B33399 /* CallCoordinator+Reconnect.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CallCoordinator+Reconnect.swift"; sourceTree = "<group>"; };
 		224D76AD722AC12683172DBF /* OneShotInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneShotInput.swift; sourceTree = "<group>"; };
 		253F8DF158816FD71AA61E83 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		2B444D9D2675C02EE191BB57 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
@@ -648,6 +650,7 @@
 			children = (
 				1A8B67C46F10324E8FC57E08 /* CallAudioRoute.swift */,
 				DA7A3C6D127F97090BBCCFEE /* CallCoordinator.swift */,
+				1F943F11F33ED7EA68B33399 /* CallCoordinator+Reconnect.swift */,
 				3081E4DD873C8C0724EA9BB5 /* CallKitSupport.swift */,
 				E0CE17DE2FD0B7834525AD95 /* EngineAudioDevice.swift */,
 				485AED7B5EDDF23A1A3C8802 /* LookCamera.swift */,
@@ -1110,6 +1113,7 @@
 				7A3CB4174EE91CFEBA44F2A8 /* Approvals.swift in Sources */,
 				5288335CC41F8FFDCF87F293 /* CallAgentIntent.swift in Sources */,
 				2920A2D5D893D78EB6DA51DD /* CallAudioRoute.swift in Sources */,
+				7B4BB229475F1445D7B5D0DC /* CallCoordinator+Reconnect.swift in Sources */,
 				031132302F325F3280094EBE /* CallCoordinator.swift in Sources */,
 				2CB8F2F62EC50F94DD7849F0 /* CallKitSupport.swift in Sources */,
 				E607937CB9135EA4A55C77BB /* CallLinkConfirmView.swift in Sources */,

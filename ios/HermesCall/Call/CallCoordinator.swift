@@ -63,19 +63,23 @@ final class CallCoordinator: NSObject {
     /// Same limit as the bridge: longer commands are denied there, never shown cut off.
     static let maxApprovalText = 4000
 
-    private let app: AppModel
+    let app: AppModel
     private let router: MessageRouter
     private let provider: CXProvider
     private let controller = CXCallController()
     private let ringback = RingbackTone()
-    private let log = Logger(subsystem: "de.quavon.hermescall", category: "call")
-    private var call: ActiveCall?
+    let log = Logger(subsystem: "de.quavon.hermescall", category: "call")
+    /// Internal (not private) for the extension files (CallCoordinator+Reconnect).
+    var call: ActiveCall?
+    /// The call's audio is being moved to a new connection (network change): "Reconnecting…".
+    var reconnecting: Bool { demo?.reconnecting ?? liveReconnecting }
+    var liveReconnecting = false
     /// Rings that already ended, so a late `invite` (e.g. the reply to `invite_query`) cannot ring again.
     private var finishedCallIDs: [String] = []
     /// A connected call ended: (relay profile, duration, incoming), for the chat's call entries.
     var onCallEnded: ((UUID, TimeInterval, Bool) -> Void)?
 
-    private struct ActiveCall {
+    struct ActiveCall {
         let uuid: UUID
         let callID: String
         let incoming: Bool
@@ -89,6 +93,10 @@ final class CallCoordinator: NSObject {
         var rtc: WebRTCCall?
         var transcriber: PhoneTranscriber?
         var answer: CheckedContinuation<String, Error>?
+        /// Set once negotiated: re-offers on a network change when the bridge lists `call_resume`.
+        var reconnect: CallReconnect?
+        var reconnectClock: Task<Void, Never>?
+        var reoffering = false
     }
 
     static let answerTimeout: Duration = .seconds(20)
@@ -202,7 +210,7 @@ final class CallCoordinator: NSObject {
 
     /// The microphone (and on-device transcription) is open only when not muted and, in
     /// push-to-talk, while the button is held.
-    private func updateMic(_ current: ActiveCall) {
+    func updateMic(_ current: ActiveCall) {
         let open = !isMuted && (current.talkMode == .handsFree || isTalking)
         current.rtc?.micEnabled = open
         current.transcriber?.setGated(!open)
@@ -352,7 +360,10 @@ final class CallCoordinator: NSObject {
                 await transcriber?.stop()
                 return rtc.close()
             }
-            rtc.onStateChange = { [weak self] state in self?.mediaChanged(state, uuid: uuid) }
+            rtc.onStateChange = { [weak self, weak rtc] state in
+                guard let rtc else { return }
+                self?.mediaChanged(state, uuid: uuid, rtc: rtc)
+            }
             call?.rtc = rtc
             call?.transcriber = transcriber
             if let updated = call { updateMic(updated) }
@@ -366,6 +377,7 @@ final class CallCoordinator: NSObject {
             let answer = try await waitForAnswer()
             log.info("answer received")
             try await rtc.accept(answer: answer)
+            call?.reconnect = CallReconnect(supported: await session.bridgeInfo?.supports(CallReconnect.cap) == true)
             log.info("call negotiated")
         } catch {
             log.error("call setup failed: \(String(describing: error), privacy: .public)")
@@ -493,7 +505,7 @@ final class CallCoordinator: NSObject {
         return transcriber
     }
 
-    private func waitForAnswer() async throws -> String {
+    func waitForAnswer() async throws -> String {
         let timeout = Task { [weak self] in
             try? await Task.sleep(for: Self.answerTimeout)
             self?.failAnswer(ProtocolError.timeout)
@@ -514,10 +526,12 @@ final class CallCoordinator: NSObject {
         continuation.resume(throwing: error)
     }
 
-    private func mediaChanged(_ state: WebRTCCall.State, uuid: UUID) {
-        guard let current = call, current.uuid == uuid else { return }
+    /// Events of a replaced connection (after a re-offer) are ignored.
+    func mediaChanged(_ state: WebRTCCall.State, uuid: UUID, rtc: WebRTCCall) {
+        guard let current = call, current.uuid == uuid, current.rtc === rtc else { return }
         switch state {
         case .connected:
+            if isConnected { return reconnectEvent { $0.mediaConnected() } }
             guard case .connecting = phase else { return }
             ringback.stop()
             phase = .connected(since: Date())
@@ -536,7 +550,12 @@ final class CallCoordinator: NSObject {
                 Task { try? await current.session?.send(["type": "ptt", "call_id": .string(current.callID), "down": false]) }
             }
         case .failed:
-            end(uuid: uuid, reason: "The audio connection failed.", notify: true)
+            guard isConnected, current.reconnect != nil else {
+                return end(uuid: uuid, reason: CallReconnect.EndReason.mediaFailed.text, notify: true)
+            }
+            reconnectEvent { $0.mediaFailed(now: Date()) }
+        case .disconnected:
+            if isConnected { reconnectEvent { $0.mediaDisconnected(now: Date()) } }
         case .connecting, .closed:
             break
         }
@@ -583,7 +602,8 @@ final class CallCoordinator: NSObject {
             }
             end(uuid: current.uuid, reason: "Call ended.", notify: false, cause: cause)
         case "hangup":
-            end(uuid: current.uuid, reason: "Call ended.", notify: false)
+            let lost = message["why"]?.string == "connection_lost"
+            end(uuid: current.uuid, reason: lost ? CallReconnect.EndReason.connectionLost.text : "Call ended.", notify: false)
         case "call_image_ack":
             if message["ok"]?.bool == false { log.info("the bridge refused a picture") }
         case "caption":
@@ -617,7 +637,7 @@ final class CallCoordinator: NSObject {
     }
 
     /// Ends the call locally; `notify` tells the bridge (we hung up or failed).
-    private func end(uuid: UUID, reason: String, notify: Bool, cause: CXCallEndedReason? = nil) {
+    func end(uuid: UUID, reason: String, notify: Bool, cause: CXCallEndedReason? = nil) {
         guard call?.uuid == uuid, let current = teardown(reason: reason) else { return }
         finish(current, sending: notify ? Self.goodbye(current) : nil)
         provider.reportCall(with: uuid, endedAt: Date(), reason: cause ?? (notify ? .failed : .remoteEnded))
@@ -631,6 +651,8 @@ final class CallCoordinator: NSObject {
         }
         ringback.stop()
         current.confirmTimeout?.cancel()
+        current.reconnectClock?.cancel()
+        liveReconnecting = false
         if current.incoming { finishedCallIDs = (finishedCallIDs + [current.callID]).suffix(20) }
         current.answer?.resume(throwing: ProtocolError.notConnected)
         current.rtc?.close()

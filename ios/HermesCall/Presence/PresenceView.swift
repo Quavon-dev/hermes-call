@@ -136,7 +136,9 @@ struct PresenceView: View {
             Rectangle().fill(HUD.glow.opacity(0.4)).frame(width: 16, height: 0.5)
             if inCall {
                 Group {
-                    if let since = connectedSince {
+                    if calls.reconnecting {
+                        Text("RECONNECTING").foregroundStyle(HUD.alert)
+                    } else if let since = connectedSince {
                         Text(timerInterval: since...Date.distantFuture, countsDown: false)
                     } else {
                         Text("LINKING")
@@ -263,9 +265,14 @@ struct PresenceView: View {
                         .overlay(Circle().stroke(HUD.alert.opacity(0.8), lineWidth: 0.75))
                 }
                 .accessibilityLabel("End call")
-                HUD.label(calls.talkMode == .pushToTalk ? "hold to talk · swipe down to end" : "tap to interrupt · swipe down to end", size: 7)
-                    .opacity(0.5)
-                    .accessibilityHidden(true)
+                if calls.reconnecting {
+                    HUD.label("network changed · reconnecting", size: 8).foregroundStyle(HUD.alert)
+                        .accessibilityLabel("Reconnecting the call")
+                } else {
+                    HUD.label(calls.talkMode == .pushToTalk ? "hold to talk · swipe down to end" : "tap to interrupt · swipe down to end", size: 7)
+                        .opacity(0.5)
+                        .accessibilityHidden(true)
+                }
             }
         } else if case .ended(let reason) = calls.phase, reason != "Call ended." {
             Text(reason).font(.footnote).foregroundStyle(HUD.glow.opacity(0.7)).multilineTextAlignment(.center)

@@ -193,6 +193,7 @@ unknown mailbox message from its mailbox.
 | Cap | Side | Meaning |
 |---|---|---|
 | `unsupported` | both | answers unknown types with `unsupported` |
+| `call_resume` | both | a call survives a network change (see "Call resume") |
 
 The bridge's `state.json` carries `"schema": 1`; files without it are schema 0. On start the bridge
 runs its migration hooks from the file's schema up to its own and writes the file back; a file from a
@@ -224,6 +225,26 @@ without an ack); the bridge downloads and deletes it, re-encodes it (JPEG ≤ 12
 | bridge → device | `caption` | `call_id`, `role`: `agent`\|`owner`, `text` (≤ 500, trimmed) | live caption, best-effort: an agent sentence when its audio starts playing; an owner utterance transcribed by the bridge (never with `stt: "device"`) |
 | bridge → device | `approval_request` | `call_id`, `request_id`, `command`, `description`, `choices` (e.g. `["once","session","deny"]`; absent from older bridges = once/deny) | Hermes wants to run a gated command; show it, never approve by voice |
 | bridge → device | `call_image_ack` | `call_id` (`""` if the message's was invalid), `blob_id`, `ok` (bool) | `ok: true` once the image was downloaded and queued for the agent; `false` when it was rejected (not in this call, rate limit, unsupported or unreadable image). HEIC needs a HEIF-capable Pillow on the bridge; send JPEG |
+
+### Call resume (`call_resume`)
+
+aiortc has no ICE restart, so a call moves to a **new** peer connection when the phone's network
+changes. Only when both sides listed `call_resume`:
+
+- The phone notices a network change (path monitor) or its connection going `disconnected` (re-offer
+  after 2 s unless it healed) or `failed` (at once), shows "Reconnecting…" and keeps the CallKit call up.
+  It sends a new `offer` with the **same** `call_id` (TURN credentials fetched again), every 6 s while
+  no audio arrives, and ends the call 20 s after the audio broke ("Connection lost").
+- The bridge accepts an `offer` for its active call id from the device in that call: it closes the old
+  connection, builds a new one and answers with `answer` (same `call_id`). The conversation (Hermes
+  session, transcript, turn state, queued speech) stays; the phone's new audio track feeds it.
+  An offer for the active call from another device is `busy`.
+- A bridge whose connection fails waits up to 20 s for the re-offer (and for audio after it), then
+  ends with `hangup` `why: "connection_lost"`.
+- Without the cap (either side) nothing changes: a failed connection ends the call, a second offer for
+  the active call is `busy`.
+
+`hangup` from the bridge may carry `why` (`connection_lost`); older apps ignore it.
 
 `call_id` = 16 random bytes, base64url; the app uses the same 16 bytes as the
 CallKit call UUID, so a push and an `invite` for one ring are one call.

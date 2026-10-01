@@ -174,6 +174,10 @@ answers `/healthz`; it exits 1 when a check failed.
   in that file only until Hermes has it (Hermes keeps the conversation in its own session store).
 - **Replay protection** marks are appended to a small log per message and compacted in the
   background (no file rewrite per message).
+- **Calls survive a network change** (phones that list `call_resume`): when the phone moves from
+  Wi-Fi to cellular it offers a new connection for the same call; the bridge swaps the WebRTC
+  connection and keeps the conversation (session, transcript, what the agent was saying). Without a
+  new offer within 20 s the call ends and the phone shows "Connection lost".
 - **Revoking a phone works offline**: it is forgotten locally at once and the relay is told when
   it is reachable again.
 - **Stopping** (`systemctl stop`, SIGTERM) hangs up an active call, gives queued chat messages a

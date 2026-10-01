@@ -76,6 +76,12 @@ account to get incoming calls.
   `choices` list `session` (bridges with Hermes ≥ 0.15), a third button *Allow for this session* sends
   `choice: "session"`, also only after Face ID / passcode; older bridges keep *Approve once* / *Deny*.
   Screenshot: `-UITestReset YES -UITestConsent YES -ChatDemo YES -ChatDemoApproval YES`.
+- **Call resume** (`CallReconnect`, `CallCoordinator+Reconnect`): with a bridge listing `call_resume`,
+  a network change or a broken connection shows *Reconnecting…* (Standard: under the name; HUD:
+  RECONNECTING in the header) while CallKit's call stays up; the app re-offers for the same call id with
+  a new peer connection and gives up after 20 s ("Connection lost. The call could not be resumed.").
+  Older bridges end the call on a failed connection as before. Screenshot: `-PresenceDemo YES
+  -PresenceDemoAuto YES -PresenceDemoReconnect YES` (both appearances).
 - **Calls**: interruptions and route changes are followed (`CallAudioRoute`), *Speaker* shows the real
   route, the call screen has iOS' audio route picker and captions, CallKit shows a template icon, and push
   rings with several agents show "Atlas or Nova" until the bridge confirms which one rang.

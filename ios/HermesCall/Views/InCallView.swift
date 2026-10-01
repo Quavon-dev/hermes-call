@@ -95,6 +95,11 @@ struct InCallView: View {
 
     @ViewBuilder private var status: some View {
         switch calls.phase {
+        case .connected where calls.reconnecting:
+            Label("Reconnecting…", systemImage: "arrow.triangle.2.circlepath")
+                .foregroundStyle(.orange)
+                .symbolEffect(.rotate, options: .repeat(.continuous))
+                .accessibilityLabel("Reconnecting the call")
         case .connected(let since):
             Text(timerInterval: since...Date.distantFuture, countsDown: false)
         case .ended(let reason):

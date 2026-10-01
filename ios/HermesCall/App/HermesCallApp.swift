@@ -70,7 +70,7 @@ struct HermesCallApp: App {
                 .environment(network)
                 .onAppear {
                     delegate.notifications = notifications
-                    network.onPathRestored = { [app] in app.reconnectNow() }
+                    network.onPathRestored = { [app, calls] in app.reconnectNow(); calls.networkChanged() }
                     network.start()
                     if !app.realProfiles.isEmpty { notifications.requestAuthorization() }
                 }

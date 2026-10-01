@@ -48,6 +48,12 @@ struct HomeView: View {
                 Spacer()
             }
             .padding()
+            .task {
+                // `-PresenceDemoAuto YES` (debug): a simulated call starts by itself, as on the presence.
+                guard PresenceDemo.autoStart, !calls.inCall else { return }
+                try? await Task.sleep(for: .seconds(1.5))
+                await calls.startCall()
+            }
             .navigationTitle("Hermes Call")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

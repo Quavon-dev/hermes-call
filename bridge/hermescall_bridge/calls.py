@@ -17,12 +17,14 @@ from hermescall_common.client import RelaySession
 from hermescall_common.e2e import Channel
 from hermescall_common.errors import CryptoError, ProtocolError
 
-from .audio import SpeechTrack, read_16k
+from . import resume
+from .audio import SpeechTrack
 from .conversation import Conversation
 from .hermes import APPROVAL_CHOICES, MAX_APPROVAL_TEXT, ApprovalRequest
 from .metrics import METRICS
 from .peers import Peers, hello_body, unsupported_body
 from .present import to_jpeg
+from .resume import CONNECTION_LOST, RESUME_CAP, ForwardTrack, InboundAudio
 from .state import Device, State
 from .transport import Transport
 from .webrtc import peer_connection
@@ -125,6 +127,13 @@ class ActiveCall:
     timers: list[asyncio.TimerHandle] = field(default_factory=list)
     images: int = 0
     last_image: float = -math.inf
+    ring: Ring | None = None
+    out: SpeechTrack = field(default_factory=SpeechTrack)
+    # The phone listed `call_resume`: a failed connection waits for its re-offer (resume.py).
+    resumable: bool = False
+    inbound: InboundAudio | None = None
+    resuming: bool = False
+    resume_timer: asyncio.TimerHandle | None = None
 
 
 class CallManager:
@@ -286,6 +295,9 @@ class CallManager:
             raise ProtocolError("invalid sdp")
         ring = self._rings.get(call_id)
         stale = self.active
+        if stale is not None and stale.device.id == device.id and stale.call_id == call_id and stale.resumable:
+            await self._resume(stale, sdp)
+            return
         if stale is not None and stale.device.id == device.id and stale.call_id != call_id:
             log.info("replacing a stale call from the same device")
             await self.end(stale.call_id, notify=False)
@@ -311,35 +323,12 @@ class CallManager:
         if self._cancelled(call_id):
             log.info("call hung up while fetching TURN credentials")
             return False
-        pc = peer_connection(turn, self._turn_transport)
-        call = ActiveCall(call_id, device, pc, device_stt=device_stt)
+        resumable = self.peers.supports(device.id, RESUME_CAP)
+        call = ActiveCall(call_id, device, None, device_stt=device_stt, ring=ring, resumable=resumable)
+        call.inbound = InboundAudio(resumable)
         self.active = call
-        out = SpeechTrack()
-        pc.addTrack(out)
-
-        @pc.on("track")
-        def on_track(track: Any) -> None:
-            if track.kind == "audio" and call.task is None:
-                call.conversation = self._make_conversation(
-                    out,
-                    lambda req: self._ask_approval(call, req),
-                    ring,
-                    lambda role, text: self._caption(call, role, text),
-                    call.device.id,
-                )
-                if call.device_stt:
-                    call.conversation.use_device_stt()
-                first = ring.first_message if ring else ""
-                call.task = asyncio.ensure_future(self._run_conversation(call, read_16k(track), first))
-
-        @pc.on("connectionstatechange")
-        async def on_state() -> None:
-            if pc.connectionState in ("failed", "closed"):
-                await self.end(call_id, notify=pc.connectionState == "failed")
-
         try:
-            await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type="offer"))
-            await pc.setLocalDescription(await pc.createAnswer())
+            answer = await self._connect(call, turn, sdp)
         except Exception as exc:
             await self.end(call_id, notify=False)
             raise ProtocolError("offer rejected") from exc
@@ -347,13 +336,90 @@ class CallManager:
             await self.end(call_id, notify=False)
             log.info("call hung up while it was being set up")
             return False
-        answer = prefer_constant_bitrate(pc.localDescription.sdp)
         await self._send(device.id, {"type": "answer", "call_id": call_id, "sdp": answer})
         media = self._timeout("media", MEDIA_TIMEOUT)
         call.timers.append(asyncio.get_running_loop().call_later(media, self._check_media, call, media))
         log.info("call started (%s) with device %s", "outbound" if ring else "inbound", device.id[:6])
         METRICS.calls.inc("outbound" if ring else "inbound")
         return True
+
+    async def _connect(self, call: ActiveCall, turn: dict, sdp: str) -> str:
+        """A peer connection for the call (the first, or a new one after a network change); returns the answer."""
+        pc = peer_connection(turn, self._turn_transport)
+        call.pc = pc
+        pc.addTrack(ForwardTrack(call.out))
+
+        @pc.on("track")
+        def on_track(track: Any) -> None:
+            if track.kind != "audio" or call.pc is not pc or call.inbound is None:
+                return
+            call.inbound.attach(track)
+            self._resumed(call)
+            if call.task is None:
+                self._begin_conversation(call)
+
+        @pc.on("connectionstatechange")
+        async def on_state() -> None:
+            if call.pc is not pc or self.active is not call:
+                return  # a replaced connection closing
+            if pc.connectionState == "failed" and call.resumable:
+                self._await_resume(call)
+            elif pc.connectionState in ("failed", "closed"):
+                await self.end(call.call_id, notify=pc.connectionState == "failed")
+
+        await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type="offer"))
+        await pc.setLocalDescription(await pc.createAnswer())
+        return prefer_constant_bitrate(pc.localDescription.sdp)
+
+    def _begin_conversation(self, call: ActiveCall) -> None:
+        call.conversation = self._make_conversation(
+            call.out,
+            lambda req: self._ask_approval(call, req),
+            call.ring,
+            lambda role, text: self._caption(call, role, text),
+            call.device.id,
+        )
+        if call.device_stt:
+            call.conversation.use_device_stt()
+        first = call.ring.first_message if call.ring else ""
+        call.task = asyncio.ensure_future(self._run_conversation(call, call.inbound.blocks(), first))
+
+    # ---- network handover: the phone re-offers for the same call (resume.py) -------------
+
+    async def _resume(self, call: ActiveCall, sdp: str) -> None:
+        turn = await self._relay.request({"t": "turn"})
+        if self.active is not call:
+            return
+        self._await_resume(call)  # also covers a re-offer whose media never arrives
+        old, call.pc = call.pc, None
+        if old is not None:
+            await old.close()  # first, so two connections never read the speech track at once
+        try:
+            answer = await self._connect(call, turn, sdp)
+        except Exception as exc:
+            raise ProtocolError("re-offer rejected") from exc
+        if self.active is call:
+            await self._send(call.device.id, {"type": "answer", "call_id": call.call_id, "sdp": answer})
+            log.info("call moving to a new connection (network change)")
+
+    def _await_resume(self, call: ActiveCall) -> None:
+        if call.resume_timer is not None:
+            return
+        log.info("call media lost; waiting up to %.0f s for the phone to reconnect", resume.RESUME_WINDOW)
+        call.resuming = True
+        call.resume_timer = asyncio.get_running_loop().call_later(resume.RESUME_WINDOW, self._give_up, call)
+
+    def _resumed(self, call: ActiveCall) -> None:
+        if call.resume_timer is not None:
+            call.resume_timer.cancel()
+            call.resume_timer = None
+            log.info("call media is back")
+        call.resuming = False
+
+    def _give_up(self, call: ActiveCall) -> None:
+        if self.active is call:
+            log.warning("the phone did not reconnect within %.0f s; ending the call", resume.RESUME_WINDOW)
+            asyncio.ensure_future(self.end(call.call_id, why=CONNECTION_LOST))
 
     async def _run_conversation(self, call: ActiveCall, inbound: Any, first_message: str) -> None:
         level = {"seconds": 0.0, "peak": 0.0}
@@ -499,23 +565,29 @@ class CallManager:
                 return
             call.unsent_captions.popleft()
 
-    async def end(self, call_id: str, notify: bool = True) -> None:
+    async def end(self, call_id: str, notify: bool = True, why: str | None = None) -> None:
+        """`why`: sent in the `hangup` (e.g. `connection_lost`), for the phone to show."""
         call = self.active
         if call is None or call.call_id != call_id:
             return
         self.active = None
-        for timer in call.timers:
-            timer.cancel()
+        for timer in (*call.timers, call.resume_timer):
+            if timer is not None:
+                timer.cancel()
+        if call.inbound is not None:
+            call.inbound.close()
         for future in call.approvals.values():
             if not future.done():
                 future.set_result("deny")
         if call.task is not None and call.task is not asyncio.current_task():
             call.task.cancel()
-        await call.pc.close()
+        if call.pc is not None:
+            await call.pc.close()
         if self._on_call_ended is not None and call.conversation is not None:
             self._on_call_ended(list(call.conversation.transcript))
         if notify:
-            await self._send(call.device.id, {"type": "hangup", "call_id": call_id})
+            hangup = {"type": "hangup", "call_id": call_id}
+            await self._send(call.device.id, {**hangup, "why": why} if why else hangup)
         log.info("call ended after %.0f s", time.monotonic() - call.started)
 
     async def _on_unpair(self, device: Device, body: dict) -> None:

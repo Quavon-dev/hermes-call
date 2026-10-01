@@ -7,7 +7,7 @@ import Foundation
 public enum AppHello {
     public static let protocolVersion = 1
     /// What this app understands beyond protocol v1.
-    public static let caps = ["unsupported"]
+    public static let caps = ["unsupported", CallReconnect.cap]
     /// Types the app never answers with `unsupported` (no loops, and `hello` is handled by the session).
     static let neverAnswered: Set<String> = ["unsupported", "hello"]
 

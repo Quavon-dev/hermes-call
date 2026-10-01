@@ -48,6 +48,10 @@ class SpeechTrack(MediaStreamTrack):
         if self._buffer:
             self.drained.clear()
 
+    def resync(self) -> None:
+        """A new connection starts reading (call resumed): pace from now on, keeping the timestamps running."""
+        self._start = None
+
     def clear(self) -> None:
         self._buffer.clear()
         self.drained.set()
@@ -56,7 +60,7 @@ class SpeechTrack(MediaStreamTrack):
         if self.readyState != "live":
             raise MediaStreamError
         if self._start is None:
-            self._start = time.monotonic()
+            self._start = time.monotonic() - self._pts / OUT_RATE
         wait = self._start + self._pts / OUT_RATE - time.monotonic()
         if wait > 0:
             await asyncio.sleep(wait)

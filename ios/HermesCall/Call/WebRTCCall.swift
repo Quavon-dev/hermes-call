@@ -14,7 +14,7 @@ struct CallTelemetry: Sendable, Equatable {
 /// bridge never learns the phone's IP and the phone never learns the home IP.
 @MainActor
 final class WebRTCCall: NSObject {
-    enum State: Equatable { case connecting, connected, failed, closed }
+    enum State: Equatable { case connecting, connected, disconnected, failed, closed }
 
     private static let factory: RTCPeerConnectionFactory = {
         RTCInitializeSSL()
@@ -137,6 +137,7 @@ final class WebRTCCall: NSObject {
     fileprivate func connectionChanged(_ state: RTCPeerConnectionState) {
         switch state {
         case .connected: onStateChange?(.connected)
+        case .disconnected: onStateChange?(.disconnected)
         case .failed: onStateChange?(.failed)
         case .closed: onStateChange?(.closed)
         default: break
