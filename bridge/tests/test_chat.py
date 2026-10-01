@@ -1,6 +1,7 @@
 """M6 chat: phone ⇄ bridge ⇄ Hermes adapter API, through the real relay (TLS, mailbox, blobs)."""
 
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
@@ -218,15 +219,14 @@ async def test_hermes_token_is_limited_to_calls_and_chat(h) -> None:
     assert (await hermes_api(h, "POST", "/v1/chat/files", {"kind": "exe", "data": ""}))[0] == 400
 
 
-HERMES_DIR = Path.home() / ".hermes" / "hermes-agent"
-HERMES_PYTHON = HERMES_DIR / "venv" / "bin" / "python3"
+HERMES_DIR = Path(os.environ.get("HERMES_AGENT_DIR") or Path.home() / ".hermes" / "hermes-agent")
+HERMES_PYTHON = Path(os.environ.get("HERMES_AGENT_PYTHON") or HERMES_DIR / "venv" / "bin" / "python3")
 PLUGIN_DIR = Path(__file__).resolve().parents[2] / "hermes-integration" / "hermes-call"
 
 
 @pytest.mark.skipif(not HERMES_PYTHON.exists(), reason="needs a local Hermes checkout (~/.hermes/hermes-agent)")
 async def test_adapter_against_real_hermes_gateway_classes(h, tmp_path) -> None:
     import json
-    import os
     import struct
     import zlib
 
@@ -297,6 +297,20 @@ async def test_adapter_against_real_hermes_gateway_classes(h, tmp_path) -> None:
     await device.send({"type": "approval", "request_id": request["request_id"], "choice": "once"}, mail=True)
     assert (await step()) == {"step": "approval_resolved", "resolved": [["session-key-1", "once"]]}
     assert (await step()) == {"step": "real_resolver", "pending": 0}
+    # Hermes >= 0.21: two real pending approvals, the newer answered first, each by its own id.
+    sheets = {}
+    real = asyncio.ensure_future(step())
+    while not real.done() and len(sheets) < 2:
+        try:
+            request = await next_of(device, "approval_request", timeout=1)
+        except TimeoutError:
+            continue
+        sheets[request["command"]] = request["request_id"]
+        if len(sheets) == 2:
+            for command, choice in (("touch /tmp/newer", "once"), ("touch /tmp/older", "deny")):
+                await device.send({"type": "approval", "request_id": sheets[command], "choice": choice}, mail=True)
+    answered = {"step": "real_approvals", "older": "deny", "newer": "once"}
+    assert (await real) in ({"step": "real_approvals", "skipped": True}, answered)
     assert (await step())["step"] == "done"
     await process.wait()
 

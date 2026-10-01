@@ -14,6 +14,10 @@ versioned separately and is at **0.8.1** in this release.
 - Relay `doctor` judges certificate expiry against the certificate's lifetime (Let's Encrypt's
   6-day certificates no longer warn).
 - `bridge/get.sh` keeps the installed Hermes user on updates and ignores a bare `~/.hermes`.
+- Hermes plugin: a chat approval resolves the exact Hermes request it showed (by request id,
+  Hermes ≥ 0.21) and lives only as long as Hermes waits for it (`approvals.timeout`, default 300 s;
+  it was 11 minutes), so a late answer or the expiry deny can no longer approve or deny a newer
+  command. The bridge's `/v1/chat/approvals` takes an optional `ttl`.
 
 ## [0.7.1] — 2026-10-01
 

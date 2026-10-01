@@ -16,13 +16,15 @@ adapter eats the tool chrome and reports when a turn ends.
 
 import asyncio
 import base64
+import importlib
+import inspect
 import logging
 import mimetypes
 import os
 import secrets
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 from gateway.config import Platform
@@ -46,8 +48,11 @@ CHAT_NAME = "Hermes Call"
 MAX_MESSAGE_LENGTH = 8000
 MAX_FILE_BYTES = 10 * 1024 * 1024
 POLL_WAIT_SECONDS = 25
-# The bridge forgets a chat approval after 10 minutes; one never answered by then is denied here.
-APPROVAL_TTL = 660.0
+# Hermes waits `approvals.timeout` (default 300 s) for an answer and then drops the request. The phone
+# shows it a little shorter, so neither a late answer nor our expiry deny can reach another request.
+DEFAULT_APPROVAL_TIMEOUT = 300.0
+APPROVAL_MARGIN = 5.0
+MIN_APPROVAL_TTL = 10.0
 APPROVAL_CHOICES = ("once", "session")
 BACKOFF_SECONDS = (1, 2, 5, 10, 30)
 TYPING_INTERVAL = 4.0
@@ -70,6 +75,14 @@ def _b64decode(text: str) -> bytes:
 
 def _b64encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+class _Pending(NamedTuple):
+    """An approval sheet on the phone, by our request id."""
+
+    session_key: str
+    until: float  # monotonic deadline
+    hermes_id: str | None = None  # Hermes' request id (v0.21); None: Hermes resolves its oldest
 
 
 def _client(timeout: float = 30.0) -> httpx.AsyncClient:
@@ -117,8 +130,8 @@ class HermesCallAdapter(BasePlatformAdapter):
         self._cursor = 0
         # The bridge's event store: a different one means our cursor is meaningless (sent along, A1).
         self._epoch: str | None = None
-        # request id → (Hermes session key, monotonic deadline)
-        self._approvals: dict[str, tuple[str, float]] = {}
+        # our request id (the phone's) → what it answers
+        self._approvals: dict[str, _Pending] = {}
         self._last_typing = 0.0
         # Owner messages being answered (insertion order = start order): a turn's final reply carries
         # `answers` = its message id, so a voice note gets a spoken reply.
@@ -192,7 +205,7 @@ class HermesCallAdapter(BasePlatformAdapter):
         if kind == "message":
             await self._on_message(event)
         elif kind == "approval":
-            self._on_approval(event)
+            await self._on_approval(event)
         elif kind == "delivery_failed":
             log.warning(
                 "hermes_call: message %s could not be delivered to a phone (%s)",
@@ -254,20 +267,20 @@ class HermesCallAdapter(BasePlatformAdapter):
         response.raise_for_status()
         return response.content
 
-    def _on_approval(self, event: dict[str, Any]) -> None:
+    async def _on_approval(self, event: dict[str, Any]) -> None:
         entry = self._approvals.pop(str(event.get("request_id")), None)
         if entry is None:
             return
         choice = event.get("choice") if event.get("choice") in APPROVAL_CHOICES else "deny"
-        _resolve(entry[0], choice)
+        _resolve(entry.session_key, choice, entry.hermes_id)
 
     def _expire_approvals(self) -> None:
         """Approvals nobody answered in time are denied, so Hermes never waits on them forever."""
         now = time.monotonic()
-        for request_id in [r for r, (_, until) in self._approvals.items() if until < now]:
-            session_key, _ = self._approvals.pop(request_id)
+        for request_id in [r for r, entry in self._approvals.items() if entry.until < now]:
+            entry = self._approvals.pop(request_id)
             log.info("hermes_call: approval %s expired; denied", request_id[:6])
-            _resolve(session_key, "deny")
+            _resolve(entry.session_key, "deny", entry.hermes_id)
 
     # ---- tool progress (tasks ring / Live Activity on the phone) ---------------
 
@@ -422,32 +435,75 @@ class HermesCallAdapter(BasePlatformAdapter):
         )
 
     async def _deliver_approval(
-        self, chat_id: str, command: str, session_key: str, description: str, choices: list[str]
+        self,
+        chat_id: str,
+        command: str,
+        session_key: str,
+        description: str,
+        choices: list[str],
     ) -> SendResult:
         """Anything that fails is denied here rather than returned as a failure, which would make
         Hermes fall back to a typed `/approve` prompt."""
         self._expire_approvals()
         request_id = secrets.token_urlsafe(16)
-        self._approvals[request_id] = (session_key, time.monotonic() + APPROVAL_TTL)
+        ttl = _approval_ttl()
+        hermes_id = self._shown_hermes_request(session_key)
+        self._approvals[request_id] = _Pending(session_key, time.monotonic() + ttl, hermes_id)
         status = "error"
         if self._http is not None:
             try:
-                body = {"request_id": request_id, "command": command, "description": description, "choices": choices}
+                body = {
+                    "request_id": request_id,
+                    "command": command,
+                    "description": description,
+                    "choices": choices,
+                    "ttl": int(ttl),
+                }
                 status = (await _post(self._http, "/v1/chat/approvals", body)).get("status", "error")
             except httpx.HTTPError as exc:
                 log.warning("hermes_call: approval not delivered (%s)", exc.__class__.__name__)
         if status != "sent":
             self._approvals.pop(request_id, None)
-            _resolve(session_key, "deny")
+            _resolve(session_key, "deny", hermes_id)
             await self.send(chat_id, "I could not show that approval on your phone, so the command was denied.")
         return SendResult(success=True, message_id=request_id)
 
+    def _shown_hermes_request(self, session_key: str) -> str | None:
+        """Hermes queues a request before it notifies us, so the one being shown is the newest pending
+        one we do not track yet. None on Hermes without request ids (before v0.21)."""
+        try:
+            from tools.approval import list_gateway_approvals
 
-def _resolve(session_key: str, choice: str) -> None:
+            pending = list_gateway_approvals(session_key)
+        except Exception:
+            return None
+        tracked = {entry.hermes_id for entry in self._approvals.values()}
+        ids = [str(item.get("request_id")) for item in pending if isinstance(item, dict) and item.get("request_id")]
+        return next((rid for rid in reversed(ids) if rid not in tracked), None)
+
+
+def _approval_ttl() -> float:
+    """How long the phone shows an approval: Hermes' own approval timeout, minus a margin."""
+    timeout = DEFAULT_APPROVAL_TIMEOUT
+    for module in ("tools.approval_context", "tools.approval"):  # v0.21; before
+        try:
+            timeout = float(importlib.import_module(module)._get_approval_timeout())
+        except Exception:
+            log.debug("hermes_call: no approval timeout in %s", module)
+        else:
+            break
+    return max(timeout - APPROVAL_MARGIN, MIN_APPROVAL_TTL)
+
+
+def _resolve(session_key: str, choice: str, request_id: str | None = None) -> None:
+    """Resolves exactly `request_id` where Hermes supports it; without one Hermes takes its oldest."""
     try:
         from tools.approval import resolve_gateway_approval
 
-        resolve_gateway_approval(session_key, choice)
+        if request_id and "request_id" in inspect.signature(resolve_gateway_approval).parameters:
+            resolve_gateway_approval(session_key, choice, request_id=request_id)
+        else:
+            resolve_gateway_approval(session_key, choice)
     except Exception:  # a Hermes internal: log it, never let it kill the poll loop
         log.exception("hermes_call: could not resolve an approval")
 

@@ -162,6 +162,7 @@ end-of-speech → first-audio latency.
 | GET | `/v1/chat/events?cursor=&wait=&epoch=&files=1` | chat adapter long-poll → `{cursor, events, epoch}` (Hermes token); `epoch` names the bridge's event store, a cursor with another epoch acks nothing; with `files=1` attachments carry `file_id` and `size` instead of base64 `data` (older adapters get `data`) |
 | GET | `/v1/chat/files/{file_id}` | the bytes of an owner attachment (Hermes token), until the adapter's cursor passed its event and the message left the history; 404 after |
 | POST | `/v1/chat/messages` | `{text, reply_to?, answers?}` → `{message_id, queued}` (`queued`: the relay has not taken it yet; it is retried) |
+| POST | `/v1/chat/approvals` | `{request_id, command, description, choices?, ttl?}` → `{status: "sent"\|"denied"}`: the approval sheet on the phones; `ttl` (seconds) is how long Hermes waits for the answer, the bridge keeps the request at most that long (and never longer than 10 minutes) |
 | GET | `/healthz` | **no token**: `{ok, relay, hermes, kokoro}`, 503 when something is down |
 | GET | `/metrics` | **no token**: Prometheus text — call latency (end of speech → first audio), STT real-time factor, turn errors by cause, calls, relay connection, chat event/inbox/outbox depth. Counts and timings only |
 
@@ -203,6 +204,9 @@ answers `/healthz`; it exits 1 when a check failed.
   any live utterance.
 - Hermes' tool approvals that cannot be delivered are retried and otherwise denied, so a Hermes
   run never waits on a lost answer.
+- **A chat approval answers exactly the command it showed.** The plugin resolves it by Hermes'
+  request id (Hermes ≥ 0.21) and shows it only as long as Hermes waits (`approvals.timeout`, default
+  300 s, minus 5 s), so a late answer or the expiry deny can never reach a newer approval.
 
 ## Settings (`/etc/hermes-call-bridge/bridge.toml`, all optional)
 

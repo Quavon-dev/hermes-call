@@ -201,7 +201,11 @@ def add_chat_routes(app: web.Application, chat: ChatService) -> None:
         if not isinstance(choices, list) or not set(choices) <= set(APPROVAL_CHOICES) or not {"once", "deny"} <= set(choices):
             raise _error(web.HTTPBadRequest, "choices must be once, deny and optionally session")
         ordered = [choice for choice in APPROVAL_CHOICES if choice in choices]
-        if not await chat.request_approval(request_id, command, description, ordered):
+        # How long Hermes waits for the answer (sent by newer plugins); the sheet lives no longer.
+        ttl = body.get("ttl")
+        if ttl is not None and (isinstance(ttl, bool) or not isinstance(ttl, int | float) or ttl <= 0):
+            raise _error(web.HTTPBadRequest, "ttl must be a positive number of seconds")
+        if not await chat.request_approval(request_id, command, description, ordered, ttl=ttl):
             return web.json_response({"status": "denied"})
         return web.json_response({"status": "sent"})
 
