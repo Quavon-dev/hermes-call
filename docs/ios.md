@@ -90,8 +90,8 @@ account to get incoming calls.
   tab shows its chat directly. UI tests: `-UITestAgents YES` seeds two agents on `relay.invalid`.
 - **Settings**: agents first (each with its own page), then calls, appearance, chat and tasks, privacy;
   **Diagnostics** shows network, push tokens and registrations per agent, relay connection and round trip
-  (WebSocket ping), and exports the last hour of this app's log with tokens, ids, addresses and e-mail
-  addresses replaced.
+  (WebSocket ping), and exports the last hour of this app's log with tokens (also standard base64 with
+  `+`/`/`), pairing codes, ids, addresses and e-mail addresses replaced.
 - **Network**: an offline banner (*No internet connection* / *Can't reach your relay*); a returning or
   changed network reconnects at once (`RelaySession.reconnectNow`) instead of after the backoff.
 - **Relay protocol**: `auth` carries `v: 1` and the app's caps; the relay's `ready` (version, caps) is kept per
@@ -366,7 +366,9 @@ access › Place reminders lists them (swipe to delete).
 - **Share sheet**: the relay keeps one connection per device and drops the older one, so the
   extension must not connect while the app has a connection (for example during a call). It
   stores the message in the outbox and pings the app (Darwin notification); a running app answers
-  within a second and sends it itself. Only without an answer (app suspended or not running) does
+  within a second and sends it itself. Darwin notifications are visible to every app, so the answer
+  counts only if the app also wrote it into the app group for the extension's random nonce: a pong
+  posted by another app is ignored. Only without an answer (app suspended or not running) does
   the extension connect, holding the claim. It defaults to the agent active in the app and names
   items it leaves out (more than 4 files, over 10 MB).
 - **Notifications**: agent messages are communication notifications (`INSendMessageIntent`: the

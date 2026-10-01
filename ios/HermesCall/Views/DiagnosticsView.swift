@@ -121,7 +121,12 @@ enum DiagnosticLog {
         (#"\b(?:\d{1,3}\.){3}\d{1,3}\b"#, "<ip>"),
         (#"\b[0-9a-fA-F:]*:[0-9a-fA-F:]+:[0-9a-fA-F:]+\b"#, "<ip>"),
         (#"\b[0-9a-fA-F]{16,}\b"#, "<hex>"),
+        // Standard base64 (keys, signatures): `+`, `/` and padding split it into runs the next pattern misses.
+        // Mixed case and a digit, so paths like /var/lib/hermescall stay readable.
+        (#"(?=[A-Za-z0-9+/]*[0-9])(?=[A-Za-z0-9+/]*[A-Z])(?=[A-Za-z0-9+/]*[a-z])[A-Za-z0-9+/]{16,}={0,2}"#, "<token>"),
         (#"[A-Za-z0-9_-]{20,}"#, "<token>"),
+        // Pairing codes (K7Q-4TXP9, typed in any case, with or without the dash): need a digit, so words stay.
+        (#"(?i)\b(?=[a-z0-9-]*[0-9])[a-z0-9]{3}-?[a-z0-9]{5}\b"#, "<code>"),
         (#"\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b"#, "<host>"),
     ]
 

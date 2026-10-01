@@ -105,7 +105,7 @@ final class ChatModel {
     private func listen() {
         listeners.append(Task { [weak self] in
             for await _ in SharedSignal.observe(SharedSignal.appPing) {
-                SharedSignal.post(SharedSignal.appPong)
+                SharedSignal.answer()  // the answer in the app group, then the pong (see SharedSignal)
                 await self?.drainOutbox()
             }
         })

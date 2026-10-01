@@ -125,14 +125,35 @@ struct ChatStoreTests {
 }
 
 struct SharedSignalTests {
+    func names() -> (String, String, URL) {
+        let id = UUID().uuidString
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("signals-\(id)")
+        return ("hermescall.tests.ping.\(id)", "hermescall.tests.pong.\(id)", directory)
+    }
+
     @Test func probeSeesARunningResponder() async {
-        let ping = "hermescall.tests.ping.\(UUID().uuidString)", pong = "hermescall.tests.pong.\(UUID().uuidString)"
-        #expect(await SharedSignal.probe(ping: ping, pong: pong, timeout: .milliseconds(200)) == false)
+        let (ping, pong, directory) = names()
+        #expect(await SharedSignal.probe(ping: ping, pong: pong, timeout: .milliseconds(200), handshake: directory) == false)
         let responder = Task {
-            for await _ in SharedSignal.observe(ping) { SharedSignal.post(pong) }
+            for await _ in SharedSignal.observe(ping) { SharedSignal.answer(pong: pong, handshake: directory) }
         }
         defer { responder.cancel() }
         try? await Task.sleep(for: .milliseconds(50))
-        #expect(await SharedSignal.probe(ping: ping, pong: pong, timeout: .seconds(2)))
+        async let first = SharedSignal.probe(ping: ping, pong: pong, timeout: .seconds(2), handshake: directory)
+        async let second = SharedSignal.probe(ping: ping, pong: pong, timeout: .seconds(2), handshake: directory)
+        let answered = await (first, second)
+        #expect(answered == (true, true), "two extensions asking at once both get their answer")
+    }
+
+    /// Darwin notifications are global: any app can post `appPong`. Only an answer written into the app
+    /// group (which other apps cannot reach) for this probe's own nonce counts.
+    @Test func aSpoofedPongIsNotAnAnswer() async {
+        let (ping, pong, directory) = names()
+        let spoofer = Task {
+            for await _ in SharedSignal.observe(ping) { SharedSignal.post(pong) }
+        }
+        defer { spoofer.cancel() }
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(await SharedSignal.probe(ping: ping, pong: pong, timeout: .milliseconds(400), handshake: directory) == false)
     }
 }

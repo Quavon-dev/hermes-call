@@ -150,4 +150,16 @@ import Testing
         }
         #expect(redacted.contains("push registered"))
     }
+
+    @Test func exportedLogRedactsStandardBase64AndPairingCodes() {
+        let line = "sig q3Zk+9/aB1c2+d3E4/f5g6H7i8j9k0lMnO== code K7Q-4TXP9 and r7kq4mop link c=ABC12345 box AbCd+EfGh/IjKl+Mn1p/QrSt+UvWx= "
+            + "done in 120 ms, status CANCELED, path /var/lib/hermescall"
+        let redacted = DiagnosticLog.redact(line)
+        for secret in ["q3Zk", "9/aB1c2", "K7Q-4TXP9", "4TXP9", "r7kq4mop", "ABC12345", "AbCd", "Mn1p", "UvWx"] {
+            #expect(!redacted.contains(secret), "\(secret) leaked: \(redacted)")
+        }
+        for kept in ["done in 120 ms", "CANCELED", "/var/lib/hermescall"] {
+            #expect(redacted.contains(kept), "\(kept) was redacted: \(redacted)")
+        }
+    }
 }
