@@ -167,9 +167,9 @@ def test_verify_block_is_identical_in_all_installers() -> None:
     blocks = [BLOCK.search(path.read_text()) for path in HELPERS]
     assert all(blocks), "every Proxmox helper script must contain the verify_release block"
     assert blocks[0].group(0) == blocks[1].group(0)
-    get_sh = GET_SH.read_text()
-    if "BEGIN verify_release" in get_sh:  # bridge/get.sh adopts it in the bridge lane
-        assert BLOCK.search(get_sh).group(0) == blocks[0].group(0)
+    get_sh = BLOCK.search(GET_SH.read_text())
+    assert get_sh, "bridge/get.sh must contain the verify_release block"
+    assert get_sh.group(0) == blocks[0].group(0)
 
 
 def test_release_key_is_the_same_everywhere() -> None:
