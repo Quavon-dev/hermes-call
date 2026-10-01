@@ -107,15 +107,27 @@ def check_tls(config: Config) -> Result:
     if not der:
         return _fail("tls", "no certificate")
     cert = x509.load_der_x509_certificate(der)
+    issued = cert.not_valid_before_utc if hasattr(cert, "not_valid_before_utc") else cert.not_valid_before
     expires = cert.not_valid_after_utc if hasattr(cert, "not_valid_after_utc") else cert.not_valid_after
-    if expires.tzinfo is None:
-        expires = expires.replace(tzinfo=datetime.UTC)
-    days = (expires - datetime.datetime.now(datetime.UTC)).days
-    if days < 0:
-        return _fail("tls", f"certificate expired {-days} day(s) ago")
-    if days < CERT_WARN_DAYS:
-        return _warn("tls", f"certificate expires in {days} day(s)")
-    return _ok("tls", f"certificate valid for {days} more day(s)")
+    level, text = cert_verdict(_utc(issued), _utc(expires), datetime.datetime.now(datetime.UTC))
+    return {"ok": _ok, "warn": _warn, "fail": _fail}[level]("tls", text)
+
+
+def _utc(moment: datetime.datetime) -> datetime.datetime:
+    return moment if moment.tzinfo else moment.replace(tzinfo=datetime.UTC)
+
+
+def cert_verdict(issued: datetime.datetime, expires: datetime.datetime, now: datetime.datetime) -> tuple[str, str]:
+    """Warn when renewal looks overdue: under 14 days left, or under a third of a short certificate's
+    lifetime (Let's Encrypt's 6-day certificates are renewed every few days, not 14 days ahead)."""
+    left = expires - now
+    if left.total_seconds() < 0:
+        return "fail", f"certificate expired {-left.days} day(s) ago"
+    margin = min(datetime.timedelta(days=CERT_WARN_DAYS), (expires - issued) / 3)
+    days = left.total_seconds() / 86400
+    if left < margin:
+        return "warn", f"certificate expires in {days:.1f} day(s); is renewal working?"
+    return "ok", f"certificate valid for {days:.1f} more day(s)"
 
 
 def check_listener(config: Config) -> Result:
