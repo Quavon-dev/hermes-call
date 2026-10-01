@@ -23,6 +23,8 @@ versioned separately and is at **0.8.1** in this release.
 - Hermes plugin: Hermes' confirmations before `/new`, `/reset`, `/undo`, `/reload-mcp` and `/model`
   appear as the approval sheet on the phone (Approve once / Deny) instead of a typed `/approve`,
   which this platform refuses.
+- Hermes plugin: cron output longer than 4000 characters reaches the chat in full (the adapter
+  declares that it splits long messages itself).
 
 ## [0.7.1] — 2026-10-01
 

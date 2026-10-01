@@ -128,3 +128,10 @@ async def test_an_undeliverable_slash_confirmation_is_cancelled_not_typed(hermes
     result = await adapter.send_slash_confirm("owner", "/new", "Start a new session?", "sess", "9")
     assert result.success  # no typed /approve fallback on this platform
     assert hermes021.confirms == [("sess", "9", "cancel")]
+
+
+# ---- 4: cron output is chunked by send() ------------------------------------------------------
+
+
+def test_the_adapter_splits_long_messages(adapter_module) -> None:  # noqa: F811
+    assert adapter_module.HermesCallAdapter.splits_long_messages is True

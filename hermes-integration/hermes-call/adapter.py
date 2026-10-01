@@ -126,6 +126,8 @@ async def _post(client: httpx.AsyncClient, path: str, body: dict[str, Any], time
 
 class HermesCallAdapter(BasePlatformAdapter):
     MAX_MESSAGE_LENGTH = MAX_MESSAGE_LENGTH
+    # send() chunks long text itself, so Hermes hands cron output over in full.
+    splits_long_messages = True
 
     def __init__(self, config: Any) -> None:
         super().__init__(config=config, platform=Platform(PLATFORM))
