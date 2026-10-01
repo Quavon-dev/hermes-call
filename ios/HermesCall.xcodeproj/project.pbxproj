@@ -25,6 +25,7 @@
 		15E635C1A6AEAA737DDF90E0 /* WebRTCCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65F0DBE26949EE2A0C2DAC3D /* WebRTCCall.swift */; };
 		17AE24022E706B2C427DF6D6 /* HermesCallWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97643C6D5F6591BC1A32F951 /* HermesCallWidget.swift */; };
 		1CE432295D7FD7D102AB89CC /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B444D9D2675C02EE191BB57 /* AppModel.swift */; };
+		1DE6EA4F237881443A511934 /* SpeakerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CDD99D92ED7BC15B65B1940 /* SpeakerTests.swift */; };
 		20A810FDC6F37D33C5AA9E10 /* ChatRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4334886B079E4F597D3F8988 /* ChatRows.swift */; };
 		23CDC12FA01F36C2352806C0 /* Licenses in Resources */ = {isa = PBXBuildFile; fileRef = 31ADD53270A4B876EDE45E25 /* Licenses */; };
 		26BCF39D49714C533100CF74 /* ChatComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9B20A4702046B5574C957FC /* ChatComposer.swift */; };
@@ -249,6 +250,7 @@
 		224D76AD722AC12683172DBF /* OneShotInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneShotInput.swift; sourceTree = "<group>"; };
 		253F8DF158816FD71AA61E83 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		2B444D9D2675C02EE191BB57 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		2CDD99D92ED7BC15B65B1940 /* SpeakerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerTests.swift; sourceTree = "<group>"; };
 		2D8481C271214A70D51D2130 /* Approvals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Approvals.swift; sourceTree = "<group>"; };
 		306985FC5AB57EFDF36F1E89 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		3081E4DD873C8C0724EA9BB5 /* CallKitSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitSupport.swift; sourceTree = "<group>"; };
@@ -729,6 +731,7 @@
 				A8527312597E0F062D0FE282 /* InboxTests.swift */,
 				B65AFE29F0E2D63B68B204EB /* PhoneAndTaskTests.swift */,
 				198029FAD108D3DFFFA9E9D5 /* RelayClientTests.swift */,
+				2CDD99D92ED7BC15B65B1940 /* SpeakerTests.swift */,
 				A81CFE4F75F7A79DA9ADD811 /* WatchLogicTests.swift */,
 			);
 			path = HermesCallTests;
@@ -1062,6 +1065,7 @@
 				F57DB747BACC9621BF39BCCC /* InboxTests.swift in Sources */,
 				5EEBB2C91E1F39519D4E30E0 /* PhoneAndTaskTests.swift in Sources */,
 				60F553B91DC3FAF9009985A0 /* RelayClientTests.swift in Sources */,
+				1DE6EA4F237881443A511934 /* SpeakerTests.swift in Sources */,
 				DDA520F6BBCB5C5E9F910C70 /* WatchLogicTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

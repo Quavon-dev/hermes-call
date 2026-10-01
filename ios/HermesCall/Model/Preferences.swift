@@ -58,6 +58,8 @@ final class Preferences {
     var voiceHaptics: Bool { didSet { defaults.set(voiceHaptics, forKey: "voiceHaptics") } }
     /// HUD calls: the spoken lines appear under the presence.
     var showCaptions: Bool { didSet { defaults.set(showCaptions, forKey: "showCaptions") } }
+    /// HUD calls: the agent speaks through the loudspeaker (unless AirPods, headphones or a car carry the call).
+    var presenceSpeaker: Bool { didSet { defaults.set(presenceSpeaker, forKey: "presenceSpeaker") } }
     var appIcon: AppIconChoice { didSet { defaults.set(appIcon.rawValue, forKey: "appIcon") } }
     /// Voice notes ask the agent to answer by voice too (sent with each voice note).
     var voiceReplies: Bool { didSet { defaults.set(voiceReplies, forKey: "voiceReplies") } }
@@ -95,6 +97,7 @@ final class Preferences {
         onboardingDone = defaults.bool(forKey: "onboardingDone")
         voiceHaptics = defaults.object(forKey: "voiceHaptics") as? Bool ?? true
         showCaptions = defaults.object(forKey: "showCaptions") as? Bool ?? true
+        presenceSpeaker = defaults.object(forKey: "presenceSpeaker") as? Bool ?? true
         speechRecognition = SpeechRecognition(rawValue: defaults.string(forKey: "speechRecognition") ?? "") ?? .bridge
         appIcon = AppIconChoice(rawValue: defaults.string(forKey: "appIcon") ?? "") ?? .automatic
         voiceReplies = defaults.object(forKey: "voiceReplies") as? Bool ?? true
@@ -120,7 +123,7 @@ final class Preferences {
             defaults.removeObject(forKey: key)
         }
         for key in ["talkMode", "includeInRecents", "activeProfile", "onboardingDone", "pushRegistrations", "appearance",
-                    "speechRecognition", "alertRegistrations", "voiceHaptics", "showCaptions", "presenceHints",
+                    "speechRecognition", "alertRegistrations", "voiceHaptics", "showCaptions", "presenceSpeaker", "presenceHints",
                     "appIcon", "voiceReplies", "autoPlayVoiceReplies", "taskDetailsOnLockScreen", "demoActive"] {
             defaults.removeObject(forKey: key)
         }

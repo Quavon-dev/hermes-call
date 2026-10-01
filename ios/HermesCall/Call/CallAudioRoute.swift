@@ -61,6 +61,26 @@ final class CallAudioRoute {
         routeChanged()
     }
 
+    /// After CallKit activated the call's audio: the presence speaks out loud when only the earpiece would play.
+    func preferSpeaker(appearance: Appearance, enabled: Bool) {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portType)
+        guard Self.prefersSpeaker(appearance: appearance, enabled: enabled, outputs: outputs) else { return }
+        let audio = RTCAudioSession.sharedInstance()
+        audio.lockForConfiguration()
+        defer { audio.unlockForConfiguration() }
+        do {
+            try audio.overrideOutputAudioPort(.speaker)
+        } catch {
+            log.error("speaker switch failed")
+        }
+        routeChanged()
+    }
+
+    /// Loudspeaker for HUD calls, but never over AirPods, headphones, a car or a speaker already chosen.
+    nonisolated static func prefersSpeaker(appearance: Appearance, enabled: Bool, outputs: [AVAudioSession.Port]) -> Bool {
+        appearance == .hud && enabled && !outputs.isEmpty && outputs.allSatisfy { $0 == .builtInReceiver }
+    }
+
     /// A call ended: the next one starts on the earpiece again.
     func reset() {
         isInterrupted = false

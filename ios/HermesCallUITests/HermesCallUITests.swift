@@ -58,6 +58,9 @@ final class HermesCallUITests: XCTestCase {
         presence.tap()
         let end = app.buttons["End call"].firstMatch
         XCTAssertTrue(end.waitForExistence(timeout: 5))
+        // Speaker and mute sit next to End, not only in the long-press menu.
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Speaker'")).firstMatch.exists)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Microphone'")).firstMatch.exists)
         sleep(8)
         snap("presence-call")
         end.tap()

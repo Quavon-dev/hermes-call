@@ -258,13 +258,19 @@ struct PresenceView: View {
     @ViewBuilder private var bottom: some View {
         if inCall {
             VStack(spacing: 6) {
-                Button { perform(.endCall) } label: {
-                    Image(systemName: "phone.down.fill").font(.callout.weight(.semibold)).foregroundStyle(HUD.light)
-                        .frame(width: Metrics.iconButton, height: Metrics.iconButton)
-                        .background(Circle().fill(HUD.alert.opacity(0.3)))
-                        .overlay(Circle().stroke(HUD.alert.opacity(0.8), lineWidth: 0.75))
+                HStack(spacing: 36) {
+                    callToggle(symbol: calls.isSpeaker ? "speaker.wave.3.fill" : "speaker.wave.1", on: calls.isSpeaker,
+                               label: calls.isSpeaker ? "Speaker on" : "Speaker off") { calls.toggleSpeaker() }
+                    Button { perform(.endCall) } label: {
+                        Image(systemName: "phone.down.fill").font(.callout.weight(.semibold)).foregroundStyle(HUD.light)
+                            .frame(width: Metrics.iconButton, height: Metrics.iconButton)
+                            .background(Circle().fill(HUD.alert.opacity(0.3)))
+                            .overlay(Circle().stroke(HUD.alert.opacity(0.8), lineWidth: 0.75))
+                    }
+                    .accessibilityLabel("End call")
+                    callToggle(symbol: calls.isMuted ? "mic.slash.fill" : "mic", on: calls.isMuted,
+                               label: calls.isMuted ? "Microphone muted" : "Microphone on") { calls.setMuted(!calls.isMuted) }
                 }
-                .accessibilityLabel("End call")
                 if calls.reconnecting {
                     HUD.label("network changed · reconnecting", size: 8).foregroundStyle(HUD.alert)
                         .accessibilityLabel("Reconnecting the call")
@@ -282,6 +288,18 @@ struct PresenceView: View {
                 .opacity(0.55)
                 .accessibilityHidden(true)
         }
+    }
+
+    /// A small round call switch next to End (speaker, mute): lit while on.
+    private func callToggle(symbol: String, on: Bool, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.callout.weight(.semibold))
+                .foregroundStyle(on ? HUD.deep : HUD.light)
+                .frame(width: Metrics.iconButton, height: Metrics.iconButton)
+                .background(Circle().fill(on ? HUD.glow.opacity(0.85) : HUD.glow.opacity(0.08)))
+                .overlay(Circle().stroke(HUD.glow.opacity(on ? 0 : 0.5), lineWidth: 0.75))
+        }
+        .accessibilityLabel(label)
     }
 
     // MARK: sheets and menu

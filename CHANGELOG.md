@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 and iOS app share one version; the Hermes plugin (`hermes-integration/hermes-call`) is
 versioned separately and is at **0.8.1** in this release.
 
+## [Unreleased]
+
+- Presence (HUD) calls speak through the loudspeaker unless AirPods, headphones or a car carry the
+  call (Settings › Appearance › "Speak through the loudspeaker"); Speaker and Mute buttons next to
+  End instead of only in the long-press menu.
+- Relay `doctor` judges certificate expiry against the certificate's lifetime (Let's Encrypt's
+  6-day certificates no longer warn).
+- `bridge/get.sh` keeps the installed Hermes user on updates and ignores a bare `~/.hermes`.
+
 ## [0.7.1] — 2026-10-01
 
 - Hermes plugin 0.8.1: chat connects again with Hermes Agent v0.21, which calls the platform

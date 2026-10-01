@@ -761,6 +761,7 @@ extension CallCoordinator: CXProviderDelegate {
         audio.isAudioEnabled = true
         EngineAudioDevice.shared.sessionActivated()
         MainActor.assumeIsolated {
+            self.audio.preferSpeaker(appearance: app.preferences.appearance, enabled: app.preferences.presenceSpeaker)
             if let current = call, !current.incoming, phase == .connecting { ringback.start() }
         }
     }

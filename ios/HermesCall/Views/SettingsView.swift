@@ -158,6 +158,7 @@ private struct AppearanceSettingsSection: View {
             }
             AppIconPicker()
             if preferences.appearance == .hud {
+                Toggle("Speak through the loudspeaker", isOn: $preferences.presenceSpeaker)
                 Toggle("Captions during calls", isOn: $preferences.showCaptions)
                 Toggle("Feel the voice (haptics)", isOn: $preferences.voiceHaptics)
             }
