@@ -516,7 +516,7 @@ class ChatService:
     async def _record(self, body: dict[str, Any], files: list[StoredFile]) -> None:
         """Into the history for phones paired later; a failure costs history, never the message."""
         try:
-            await self.history.record(body, [f.file_id for f in files], self.history_limit)
+            await self.history.record(body, files, self.history_limit)
         except (sqlite3.Error, OSError) as exc:
             log.warning("chat history not updated: %s", exc.__class__.__name__)
 

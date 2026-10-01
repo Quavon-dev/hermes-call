@@ -63,13 +63,13 @@ class FileSpool:
         return file
 
     async def put(self, message_id: str, data: bytes, kind: str, name: str, mime: str) -> StoredFile:
-        """An attachment from the agent: sealed once, for every phone."""
+        """An attachment from the agent: sealed once, for every phone. Only written to disk: its row is
+        added together with the message's history entry (`ChatHistory.record`, one transaction), so a
+        `collect()` in between cannot take it for unused (a file without a row is kept for STRAY_AFTER)."""
         key, sealed = await asyncio.get_running_loop().run_in_executor(None, blobs.seal, data)
         file_id = wire.b64e(sodium.random_bytes(16))
         await asyncio.get_running_loop().run_in_executor(None, _write, self._path(file_id), sealed)
-        file = StoredFile(file_id, message_id, wire.b64e(key), kind, name, mime, len(data))
-        await self._db.call(self._db.store.add_file, file)
-        return file
+        return StoredFile(file_id, message_id, wire.b64e(key), kind, name, mime, len(data))
 
     async def get(self, file_id: str) -> StoredFile | None:
         try:

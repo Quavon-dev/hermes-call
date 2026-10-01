@@ -91,10 +91,10 @@ class FakeSpool:
         self.uploads: list[str] = []
         self.failing = False
 
-    def add(self, message_id: str, name: str = "a.jpg") -> str:
+    def add(self, message_id: str, name: str = "a.jpg") -> StoredFile:
         file_id = wire.b64e(sodium.random_bytes(16))
         self.files[file_id] = StoredFile(file_id, message_id, wire.b64e(bytes(32)), "photo", name, "image/jpeg", 10)
-        return file_id
+        return self.files[file_id]
 
     async def get(self, file_id: str) -> StoredFile | None:
         return self.files.get(file_id)
@@ -167,15 +167,15 @@ async def test_a_page_that_cannot_be_sealed_is_skipped_but_history_moves_on(tmp_
 
 async def test_attachments_are_uploaded_only_for_messages_that_fit_the_page(tmp_path, monkeypatch) -> None:
     chat_history, spool, db = history(tmp_path)
-    file_id = spool.add("old")
-    await chat_history.record({"id": "old", "role": "agent", "kind": "text", "text": "x" * 12_000}, [file_id], 200)
+    file = spool.add("old")
+    await chat_history.record({"id": "old", "role": "agent", "kind": "text", "text": "x" * 12_000}, [file], 200)
     for n in range(3):
         await chat_history.record({"id": f"new{n}", "role": "agent", "kind": "text", "text": "y" * 9_000}, [], 200)
     page = await chat_history.page("dev", None, None)
     assert "old" not in [m["id"] for m in page["messages"]] and page["more"]
     assert spool.uploads == [], "no upload (and no budget) for a message left for the next page"
     rest = await chat_history.page("dev", page["next"], None)
-    assert [m["id"] for m in rest["messages"]] == ["old"] and spool.uploads == [file_id]
+    assert [m["id"] for m in rest["messages"]] == ["old"] and spool.uploads == [file.file_id]
     assert len(rest["messages"][0]["attachments"]) == 1
     db.close()
 
@@ -183,12 +183,12 @@ async def test_attachments_are_uploaded_only_for_messages_that_fit_the_page(tmp_
 async def test_a_failed_history_upload_gives_its_budget_back(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(history_mod, "SYNC_FILES", 1)
     chat_history, spool, db = history(tmp_path)
-    file_id = spool.add("m")
-    await chat_history.record({"id": "m", "role": "agent", "kind": "text", "text": "pic"}, [file_id], 200)
+    file = spool.add("m")
+    await chat_history.record({"id": "m", "role": "agent", "kind": "text", "text": "pic"}, [file], 200)
     spool.failing = True
     (message,) = (await chat_history.page("dev", None, None))["messages"]
     assert message["text"] == "pic\n[photo: a.jpg]"
     spool.failing = False
     (message,) = (await chat_history.page("dev", None, None))["messages"]
-    assert len(message["attachments"]) == 1 and spool.uploads == [file_id]
+    assert len(message["attachments"]) == 1 and spool.uploads == [file.file_id]
     db.close()

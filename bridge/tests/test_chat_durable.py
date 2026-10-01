@@ -187,3 +187,20 @@ def test_hand_over_claims_the_inbox_row_once(tmp_path) -> None:
     assert store.hand_over(message_id, {"type": "message", "id": message_id}) is None
     assert len(store.events_after(0)) == 1
     store.close()
+
+
+async def test_a_poll_while_an_agent_file_is_recorded_keeps_the_file(tmp_path, monkeypatch) -> None:
+    chat, relay, device = service(tmp_path)
+    record = chat.history.record
+
+    async def poll_first(*args, **kwargs) -> None:
+        await chat.files.collect()  # the adapter's long-poll comes in between
+        await record(*args, **kwargs)
+
+    monkeypatch.setattr(chat.history, "record", poll_first)
+    monkeypatch.setattr(chat, "_upload", lambda device, file: asyncio.sleep(0, {"blob_id": "b"}))
+    await chat.send_file(b"report", "q3.pdf", "application/pdf", "file")
+    (name,) = [p.name for p in chat.files.directory.iterdir()]
+    assert (await chat.files.get(name)) is not None
+    assert await chat.files.read(await chat.files.get(name)) == b"report"
+    await chat.close()

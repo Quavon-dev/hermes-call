@@ -59,9 +59,10 @@ class ChatHistory:
         self._sent_files: dict[str, deque[tuple[float, int]]] = {}
         self._requests: dict[str, deque[float]] = {}
 
-    async def record(self, body: dict[str, Any], file_ids: list[str], keep: int) -> None:
-        item = entry(body, file_ids)
-        await self._db.call(self._db.store.add_history, str(body["id"]), item, item["ts"], keep)
+    async def record(self, body: dict[str, Any], files: list[StoredFile], keep: int) -> None:
+        """The message and its files' rows in one transaction (a new agent file has no row before this)."""
+        item = entry(body, [f.file_id for f in files])
+        await self._db.call(self._db.store.add_history, str(body["id"]), item, item["ts"], keep, files)
         await self._spool.collect()
 
     def allowed(self, device_id: str) -> bool:

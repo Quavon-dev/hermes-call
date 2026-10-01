@@ -257,9 +257,10 @@ class ChatStore:
 
     # ---- spooled files and history ------------------------------------------------
 
-    def add_file(self, file: StoredFile) -> None:
+    def add_file(self, file: StoredFile, replace: bool = True) -> None:
+        verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
         self._db.execute(
-            "INSERT OR REPLACE INTO files (file_id, message_id, key, kind, name, mime, size, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            verb + " INTO files (file_id, message_id, key, kind, name, mime, size, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (file.file_id, file.message_id, file.key, file.kind, file.name, file.mime, file.size, time.time()),
         )
 
@@ -285,8 +286,13 @@ class ChatStore:
     def file_ids(self) -> set[str]:
         return {row[0] for row in self._db.execute("SELECT file_id FROM files")}
 
-    def add_history(self, message_id: str, body: dict[str, Any], ts: int, keep: int) -> None:
+    def add_history(
+        self, message_id: str, body: dict[str, Any], ts: int, keep: int, files: tuple[StoredFile, ...] | list[StoredFile] = ()
+    ) -> None:
+        """`files`: their rows are added in the same transaction when missing (an agent file is recorded here)."""
         with self._tx():
+            for file in files:
+                self.add_file(file, replace=False)
             self._db.execute(
                 "INSERT OR IGNORE INTO history (message_id, body, ts) VALUES (?, ?, ?)", (message_id, json.dumps(body), ts)
             )
