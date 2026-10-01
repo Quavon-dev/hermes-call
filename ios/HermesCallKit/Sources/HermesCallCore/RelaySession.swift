@@ -265,15 +265,16 @@ public actor RelaySession {
     }
 
     private func run() async {
-        var backoff: Double = 1
+        var backoff = RelayBackoff()
         while !Task.isCancelled {
             onStatus(.connecting)
             var closeCode: Int?
+            var connectedAt: Date?
             do {
                 let socket = try await authenticate()
                 guard !stopped else { return socket.close() }
                 self.socket = socket
-                backoff = 1
+                connectedAt = Date()
                 onStatus(.connected)
                 let ready = waiters
                 waiters.removeAll()
@@ -288,22 +289,16 @@ public actor RelaySession {
             socket = nil
             onStatus(.disconnected)
             guard !Task.isCancelled else { return }
-            if skipBackoff {
-                skipBackoff = false
-                backoff = 1
-                continue
+            let pause = backoff.pause(closeCode: closeCode, connectedFor: connectedAt.map { Date().timeIntervalSince($0) })
+            if !skipBackoff {
+                let sleep = Task { _ = try? await Task.sleep(for: .seconds(pause)) }
+                backoffSleep = sleep
+                await sleep.value
+                backoffSleep = nil
             }
-            let step = RelayBackoff.after(closeCode: closeCode, backoff: backoff)
-            let pause = step.pause
-            let sleep = Task { _ = try? await Task.sleep(for: .seconds(pause)) }
-            backoffSleep = sleep
-            await sleep.value
-            backoffSleep = nil
             if skipBackoff {
                 skipBackoff = false
-                backoff = 1
-            } else {
-                backoff = step.next
+                backoff.reset()
             }
         }
     }

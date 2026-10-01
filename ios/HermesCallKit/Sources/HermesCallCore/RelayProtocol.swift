@@ -67,16 +67,39 @@ extension ProtocolError {
 }
 
 /// How long to wait before reconnecting to the relay.
-public enum RelayBackoff {
+public struct RelayBackoff: Sendable {
     /// WebSocket "going away": the relay shuts down (restart, update).
     public static let goingAway = 1001
     public static let maximum: Double = 30
+    /// A connection that stayed up this long was healthy: a 1001 after it is a new relay restart.
+    public static let stableConnection: TimeInterval = 30
 
-    /// `backoff`: the current base pause (starts at 1 s). A relay that went away on purpose is back in seconds,
-    /// so the next try comes after a short random pause (spread, so not every phone arrives at once).
-    public static func after(closeCode: Int?, backoff: Double) -> (pause: Double, next: Double) {
-        if closeCode == goingAway { return (Double.random(in: 0.5...2.5), 1) }
-        return (backoff + Double.random(in: 0...(backoff / 2)), min(backoff * 2, maximum))
+    /// The current base pause (starts at 1 s, doubles up to `maximum`).
+    public private(set) var base: Double = 1
+    /// 1001 closes in a row without a stable connection between them.
+    private var goingAwayStreak = 0
+
+    public init() {}
+
+    /// The connection ended (`connectedFor`: how long it was authenticated; nil: it never got there); returns
+    /// the pause before the next try. A relay that went away on purpose is back in seconds, so the first 1001
+    /// gets a short random pause (spread, so not every phone arrives at once); a relay that keeps closing
+    /// with 1001 (a shutdown loop) gets the growing backoff like any other failure.
+    public mutating func pause(closeCode: Int?, connectedFor: TimeInterval?) -> Double {
+        if let connectedFor, connectedFor >= Self.stableConnection || closeCode != Self.goingAway { goingAwayStreak = 0 }
+        if connectedFor != nil, goingAwayStreak == 0 { base = 1 }
+        if closeCode == Self.goingAway {
+            goingAwayStreak += 1
+            if goingAwayStreak == 1 { return Double.random(in: 0.5...2.5) }
+        }
+        let pause = base + Double.random(in: 0...(base / 2))
+        base = min(base * 2, Self.maximum)
+        return pause
+    }
+
+    /// `reconnectNow`: the next pause starts at 1 s again.
+    public mutating func reset() {
+        base = 1
     }
 }
 

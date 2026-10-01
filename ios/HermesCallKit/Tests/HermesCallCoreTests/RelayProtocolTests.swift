@@ -72,17 +72,42 @@ struct RelayVersionAndCapsTests {
 struct RelayReconnectTests {
     /// The relay closes with 1001 when it shuts down (restart, update): come back quickly, not after the max backoff.
     @Test func goingAwayReconnectsPromptly() {
-        let step = RelayBackoff.after(closeCode: 1001, backoff: 30)
-        #expect(step.pause <= 3)
-        #expect(step.next == 1)
+        var backoff = RelayBackoff()
+        for _ in 0..<5 { _ = backoff.pause(closeCode: nil, connectedFor: nil) }
+        #expect(backoff.base == 30)
+        let pause = backoff.pause(closeCode: 1001, connectedFor: 600)
+        #expect(pause >= 0.5 && pause <= 2.5)
+        #expect(backoff.base == 1)
+    }
+
+    /// L6: a relay that keeps closing with 1001 right after the connect (a shutdown loop) gets the normal,
+    /// growing backoff after the first one, not a reconnect every 0.5–2.5 s forever.
+    @Test func repeatedGoingAwayBacksOff() {
+        var backoff = RelayBackoff()
+        var pauses: [Double] = []
+        for _ in 0..<8 { pauses.append(backoff.pause(closeCode: 1001, connectedFor: 0.2)) }
+        #expect(pauses[0] <= 2.5, "the first one is short")
+        #expect(pauses[7] >= 16, "then it grows (got \(pauses))")
+        #expect(backoff.base == 30)
+        // A connection that stays up resets it: the next relay restart is short again.
+        #expect(backoff.pause(closeCode: 1001, connectedFor: RelayBackoff.stableConnection) <= 2.5)
+        // Failed connects in between keep growing from 1 s.
+        let refused = backoff.pause(closeCode: nil, connectedFor: nil)
+        #expect(refused >= 1 && refused <= 1.5)
     }
 
     @Test func otherFailuresBackOffUpToThirtySeconds() {
-        let first = RelayBackoff.after(closeCode: nil, backoff: 1)
-        #expect(first.pause >= 1 && first.pause <= 1.5)
-        #expect(first.next == 2)
-        #expect(RelayBackoff.after(closeCode: 1006, backoff: 30).next == 30)
-        #expect(RelayBackoff.after(closeCode: 1006, backoff: 16).next == 30)
+        var backoff = RelayBackoff()
+        let first = backoff.pause(closeCode: nil, connectedFor: nil)
+        #expect(first >= 1 && first <= 1.5)
+        #expect(backoff.base == 2)
+        for _ in 0..<6 { _ = backoff.pause(closeCode: 1006, connectedFor: nil) }
+        #expect(backoff.base == 30)
+        // A connection that came up starts again at 1 s.
+        let after = backoff.pause(closeCode: 1006, connectedFor: 2)
+        #expect(after >= 1 && after <= 1.5)
+        backoff.reset()
+        #expect(backoff.base == 1)
     }
 }
 

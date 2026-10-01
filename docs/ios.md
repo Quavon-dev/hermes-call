@@ -114,7 +114,8 @@ account to get incoming calls.
 - **Relay protocol**: `auth` carries `v: 1` and the app's caps; the relay's `ready` (version, caps) is kept per
   agent and its version shown in Diagnostics (a bare `ready` = relay 0.6.2 or older, no caps). Requests that
   need a cap are not sent without it (`request(_:requires:)`); an `unsupported` answer fails only that request.
-  A relay shutting down (WebSocket 1001) is reconnected after 0.5–2.5 s instead of the current backoff. Blob
+  A relay shutting down (WebSocket 1001) is reconnected after 0.5–2.5 s instead of the current backoff; 1001s
+  in a row (without 30 s of connection between them) back off as usual. Blob
   transfers retry HTTP 503 (busy) on the same ticket with 1, 2, 4… s pauses (a download ticket works three
   times, then one more ticket), within the 300 s deadline. Calls pass every TURN URL on the relay's host to
   ICE, including `turns:<host>:5349?transport=tcp`. `too_many_devices` while pairing has its own message.
