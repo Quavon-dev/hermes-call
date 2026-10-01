@@ -39,6 +39,8 @@ HERMES_ROUTES = {
     ("POST", "/v1/phone/queries"),
     ("POST", "/v1/present"),
 }
+# Plus the attachments of owner messages: GET /v1/chat/files/<file id>.
+HERMES_FILES = "/v1/chat/files/"
 PUBLIC_ROUTES = {("GET", "/healthz"), ("GET", "/metrics")}
 
 log = logging.getLogger(__name__)
@@ -78,7 +80,9 @@ def _auth_middleware(token: str, call_token: str):
         if _matches(supplied, token):
             return await handler(request)
         if _matches(supplied, call_token):
-            if (request.method, request.path) in HERMES_ROUTES:
+            if (request.method, request.path) in HERMES_ROUTES or (
+                request.method == "GET" and request.path.startswith(HERMES_FILES)
+            ):
                 return await handler(request)
             return web.json_response({"error": "forbidden"}, status=403)
         return web.json_response({"error": "unauthorized"}, status=401)
@@ -147,7 +151,8 @@ def add_chat_routes(app: web.Application, chat: ChatService) -> None:
         except ValueError as exc:
             raise _error(web.HTTPBadRequest, "cursor and wait must be numbers") from exc
         epoch = request.query.get("epoch")
-        cursor, events = await chat.poll(max(cursor, 0), max(0.0, wait), epoch[:64] if epoch else None)
+        files = request.query.get("files") == "1"
+        cursor, events = await chat.poll(max(cursor, 0), max(0.0, wait), epoch[:64] if epoch else None, files)
         return web.json_response({"cursor": cursor, "events": events, "epoch": chat.epoch})
 
     async def chat_message(request: web.Request) -> web.Response:
@@ -174,6 +179,12 @@ def add_chat_routes(app: web.Application, chat: ChatService) -> None:
         caption = text_field(body, "caption", MAX_TEXT)
         return web.json_response({"message_id": await chat.send_file(data, name, mime, kind, caption.strip())})
 
+    async def chat_file_data(request: web.Request) -> web.Response:
+        data = await chat.file_data(request.match_info["file_id"])
+        if data is None:
+            raise _error(web.HTTPNotFound, "unknown or expired file")
+        return web.Response(body=data, content_type="application/octet-stream")
+
     async def chat_typing(request: web.Request) -> web.Response:
         await chat.typing()
         return web.json_response({"ok": True})
@@ -192,6 +203,7 @@ def add_chat_routes(app: web.Application, chat: ChatService) -> None:
     app.router.add_get("/v1/chat/events", chat_events)
     app.router.add_post("/v1/chat/messages", chat_message)
     app.router.add_post("/v1/chat/files", chat_file)
+    app.router.add_get("/v1/chat/files/{file_id}", chat_file_data)
     app.router.add_post("/v1/chat/typing", chat_typing)
     app.router.add_post("/v1/chat/approvals", chat_approval)
 

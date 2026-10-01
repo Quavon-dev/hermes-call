@@ -250,3 +250,23 @@ async def test_final_reply_answers_its_own_turn(adapter_module) -> None:
     assert bodies[0]["answers"] == "voice-note"
     assert "answers" not in bodies[1]
     assert bodies[2]["answers"] == "later-text"  # no reply anchor: the newest open turn
+
+
+async def test_adapter_fetches_spooled_attachments_and_still_reads_inline_ones(adapter_module) -> None:
+    adapter = adapter_module.HermesCallAdapter(None)
+    fetched: list[str] = []
+
+    class FileHttp:
+        async def get(self, path: str, params: dict | None = None):
+            fetched.append(path)
+            return type("R", (), {"raise_for_status": lambda self: None, "content": b"spooled bytes"})()
+
+    adapter._http = FileHttp()
+    assert await adapter._attachment_data({"file_id": "A" * 22}) == b"spooled bytes"
+    assert fetched == ["/v1/chat/files/" + "A" * 22]
+    assert await adapter._attachment_data({"data": "aW5saW5l"}) == b"inline"
+    with pytest.raises(ValueError):
+        await adapter._attachment_data({"file_id": "../../etc/passwd"})
+    http = FakeHttp([{"cursor": 1, "events": []}])
+    await run_polls(adapter, http, 1)
+    assert http.gets[0]["files"] == 1

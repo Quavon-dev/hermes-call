@@ -155,7 +155,8 @@ end-of-speech → first-audio latency.
 | POST | `/v1/devices/pairing` | `{"name"}` → one-time code + link |
 | DELETE | `/v1/devices/{id}` | revoke (bridge + relay) |
 | GET | `/v1/status` | relay connection, device count, call state |
-| GET | `/v1/chat/events?cursor=&wait=&epoch=` | chat adapter long-poll → `{cursor, events, epoch}` (Hermes token); `epoch` names the bridge's event store, a cursor with another epoch acks nothing |
+| GET | `/v1/chat/events?cursor=&wait=&epoch=&files=1` | chat adapter long-poll → `{cursor, events, epoch}` (Hermes token); `epoch` names the bridge's event store, a cursor with another epoch acks nothing; with `files=1` attachments carry `file_id` and `size` instead of base64 `data` (older adapters get `data`) |
+| GET | `/v1/chat/files/{file_id}` | the bytes of an owner attachment (Hermes token), until the adapter's cursor passed its event and the message left the history; 404 after |
 | POST | `/v1/chat/messages` | `{text, reply_to?, answers?}` → `{message_id, queued}` (`queued`: the relay has not taken it yet; it is retried) |
 | GET | `/healthz` | **no token**: `{ok, relay, hermes, kokoro}`, 503 when something is down |
 | GET | `/metrics` | **no token**: Prometheus text — call latency (end of speech → first audio), STT real-time factor, turn errors by cause, calls, relay connection, chat event/inbox/outbox depth. Counts and timings only |
@@ -172,6 +173,13 @@ answers `/healthz`; it exits 1 when a check failed.
   outbox until the relay's mailbox took them: retried with backoff and after every relay
   reconnect for up to 7 days; if one is given up, the adapter logs it. Owner message text sits
   in that file only until Hermes has it (Hermes keeps the conversation in its own session store).
+- **Attachments are spooled on disk, not held in memory**: an owner attachment is streamed from the
+  relay into `/var/lib/hermes-call-bridge/files/` (0700, files 0600) still sealed with its blob key,
+  and the key is kept in chat.db; the Hermes adapter fetches it with `GET /v1/chat/files/<id>`. An
+  agent file is sealed once. Both go to the other phones as the same sealed bytes (one relay upload
+  per phone, as the relay keeps blobs per recipient), so other phones see the photo itself instead of
+  a `[photo: name]` line. A file is deleted once Hermes has its event and the message left the
+  history (below); at most one attachment (≤ 10 MiB) is in memory at a time.
 - **Replay protection** marks are appended to a small log per message and compacted in the
   background (no file rewrite per message).
 - **Calls survive a network change** (phones that list `call_resume`): when the phone moves from

@@ -17,10 +17,12 @@ import contextlib
 import io
 import logging
 import sqlite3
+import tempfile
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import av
@@ -31,8 +33,10 @@ from hermescall_common.client import RelaySession
 from hermescall_common.e2e import Channel
 from hermescall_common.errors import CryptoError, ProtocolError
 
-from .chatstore import AsyncStore, ChatStore, Pending
+from .chatstore import AsyncStore, ChatStore, Pending, StoredFile
+from .files import FileSpool, Incoming
 from .hermes import APPROVAL_CHOICES, MAX_APPROVAL_TEXT
+from .history import HISTORY_LIMIT, ChatHistory
 from .outbox import Outbox
 from .state import Device, State
 from .transport import Transport
@@ -124,8 +128,10 @@ class ChatService:
         tts: Any = None,
         store: ChatStore | None = None,
         transcribe_long: Callable[[np.ndarray], Awaitable[str]] | None = None,
+        files_dir: Path | None = None,
     ) -> None:
-        """`transcribe_long` (voice notes) runs behind live-call speech recognition (stt.py)."""
+        """`transcribe_long` (voice notes) runs behind live-call speech recognition (stt.py); `files_dir`:
+        where attachments are spooled (files.py; default a temporary directory, for tests)."""
         self._state = state
         self._tts = tts
         # (owner voice-note id, monotonic deadline): the agent's reply to it is also spoken
@@ -138,6 +144,9 @@ class ChatService:
         self._db = AsyncStore(store or ChatStore(":memory:"))
         self.epoch = self._db.store.epoch
         self.outbox = Outbox(self._transport, self._db, self._delivery_failed)
+        self.files = FileSpool(files_dir or Path(tempfile.mkdtemp(prefix="hermescall-files-")), self._db)
+        self.history = ChatHistory(self._db, self.files, relay)
+        self.history_limit = HISTORY_LIMIT
         self._changed = asyncio.Condition()
         recent = self._db.store.get_json("recent", [])
         self._recent: deque[tuple[str, str]] = deque(
@@ -233,14 +242,19 @@ class ChatService:
         attachments = [Attachment.parse(item) for item in body.get("attachments", [])]
         wants_voice = body.get("voice_replies") is True and any(a.kind == "voice" for a in attachments)
         self._voice_note = (message_id, time.monotonic() + VOICE_REPLY_TTL) if wants_voice else None
-        files, voice, problems = await self._fetch_attachments(device, attachments)
+        stored, voice, problems = await self._fetch_attachments(device, message_id, attachments)
+        files = [{**f.meta(), "file_id": f.file_id} for f in stored if f.kind != "voice"]
         transcript = " ".join(voice)
         if transcript:
             await self._live(device, {"type": "chat_ack", "id": message_id, "state": "transcribed", "transcript": transcript})
         parts = (text.strip(), *(f"[Voice note] {note}" for note in voice), *problems)
         full_text = "\n".join(part for part in parts if part)
         self._remember("owner", full_text or f"[{len(files)} attachment(s)]")
-        await self._mirror(device, message_id, text.strip(), attachments, transcript)
+        await self._mirror(device, message_id, text.strip(), stored, transcript)
+        owner = {"id": message_id, "role": "owner", "kind": "text", "text": text.strip(), "transcript": transcript or None}
+        if isinstance(body.get("reply_to"), str):
+            owner["reply_to"] = body["reply_to"]
+        await self._record(owner, stored)
         context = self._take_call_context()
         await self._emit(
             {
@@ -261,24 +275,28 @@ class ChatService:
                 await blobs.delete(self._relay, item.blob_id)
         log.info("chat message from %s: %d chars, %d attachments", device.id[:6], len(text), len(attachments))
 
-    async def _fetch_attachments(self, device: Device, attachments: list[Attachment]) -> tuple[list[dict], list[str], list[str]]:
-        """(files for Hermes, voice-note transcripts, notes about attachments that failed)"""
-        files: list[dict] = []
+    async def _fetch_attachments(
+        self, device: Device, message_id: str, attachments: list[Attachment]
+    ) -> tuple[list[StoredFile], list[str], list[str]]:
+        """(spooled files, voice-note transcripts, notes about attachments that failed). Each blob is streamed
+        to disk as it is (files.py); only a voice note is opened here, for its transcript."""
+        stored: list[StoredFile] = []
         voice: list[str] = []
         problems: list[str] = []
         # Blobs are deleted only once the message is stored for Hermes (after a crash they are fetched again).
         for item in attachments:
+            incoming = Incoming(item.kind, item.blob_id, item.key, item.name, item.mime)
             try:
-                data = blobs.open_sealed(item.key, await blobs.download(self._relay, item.blob_id))
+                file = await self.files.fetch(self._relay, message_id, incoming)
+                data = await self.files.read(file) if item.kind == "voice" else b""
             except (ProtocolError, CryptoError, OSError, TimeoutError) as exc:
                 log.warning("attachment from %s unavailable: %s", device.id[:6], exc.__class__.__name__)
                 problems.append(f"(attachment '{item.name}' could not be downloaded)")
                 continue
+            stored.append(file)
             if item.kind == "voice":
                 voice.append(await self._voice_to_text(data))
-            else:
-                files.append({"kind": item.kind, "name": item.name, "mime": item.mime, "data": wire.b64e(data)})
-        return files, voice, problems
+        return stored, voice, problems
 
     async def _voice_to_text(self, data: bytes) -> str:
         try:
@@ -313,7 +331,9 @@ class ChatService:
         async with self._changed:
             self._changed.notify_all()
 
-    async def poll(self, cursor: int, wait: float, epoch: str | None = None) -> tuple[int, list[dict[str, Any]]]:
+    async def poll(
+        self, cursor: int, wait: float, epoch: str | None = None, files: bool = False
+    ) -> tuple[int, list[dict[str, Any]]]:
         """Events after `cursor`; everything up to `cursor` counts as received by Hermes.
 
         `epoch` names the event store the adapter's cursor belongs to. A different one (the store
@@ -329,6 +349,7 @@ class ChatService:
             log.info("chat adapter cursor %d is beyond the last event %d; delivering from the start", cursor, last_seq)
             cursor = 0
         await self._db.call(store.ack, cursor)
+        await self.files.collect()
         async with self._changed:
             events = await self._db.call(store.events_after, cursor)
             if not events and wait > 0:
@@ -336,7 +357,30 @@ class ChatService:
                     await asyncio.wait_for(self._changed.wait(), min(wait, MAX_POLL_SECONDS))
                 events = await self._db.call(store.events_after, cursor)
         last = events[-1][0] if events else max(cursor, await self._db.call(store.last_seq))
-        return last, [event for _, event in events]
+        found = [event for _, event in events]
+        return last, found if files else [await self._inline(event) for event in found]
+
+    async def _inline(self, event: dict[str, Any]) -> dict[str, Any]:
+        """For adapters before 0.7 (no `files=1`): the attachment bytes as base64 inside the event."""
+        if "attachments" not in event:
+            return event
+        attachments = []
+        for item in event.get("attachments") or []:
+            data = await self.file_data(item.get("file_id", "")) if isinstance(item, dict) else None
+            if data is not None:
+                attachments.append({**{k: v for k, v in item.items() if k != "file_id"}, "data": wire.b64e(data)})
+        return {**event, "attachments": attachments}
+
+    async def file_data(self, file_id: str) -> bytes | None:
+        """An attachment for the adapter (`GET /v1/chat/files/<id>`); None when unknown or gone."""
+        file = await self.files.get(file_id)
+        if file is None:
+            return None
+        try:
+            return await self.files.read(file)
+        except (OSError, CryptoError) as exc:
+            log.warning("spooled attachment unreadable: %s", exc.__class__.__name__)
+            return None
 
     async def _delivery_failed(self, message_id: str, device_id: str, why: str) -> None:
         """The outbox gave up on a message; the adapter hears of it (Hermes cannot resend it)."""
@@ -354,6 +398,7 @@ class ChatService:
         self._remember(self._agent_name, text)
         audio = await self._speak(text) if self._answers_voice_note(kind, answers or reply_to) else None
         if audio is None:
+            await self._record(body, [])
             await self._mail_all(body, alert=True)
         else:
             await self._send_voice_reply(body, audio)
@@ -405,26 +450,14 @@ class ChatService:
 
     async def _send_voice_reply(self, body: dict[str, Any], audio: bytes) -> None:
         """One chat message: the reply text plus the voice note (text only for a phone whose upload failed)."""
+        file = await self.files.put(body["id"], audio, "voice", "reply.m4a", "audio/mp4")
+        await self._record(body, [file])
         for device in list(self._state.devices.values()):
-            key, sealed = blobs.seal(audio)
-            try:
-                blob_id = await blobs.upload(self._relay, sealed, to=device.id)
-            except (ProtocolError, OSError, TimeoutError) as exc:
-                log.warning("voice reply for %s not uploaded: %s", device.id[:6], exc.__class__.__name__)
-                await self._mail(device, body, alert=True)
-                continue
-            ref = {
-                "kind": "voice",
-                "blob_id": blob_id,
-                "key": wire.b64e(key),
-                "name": "reply.m4a",
-                "mime": "audio/mp4",
-                "size": len(audio),
-            }
-            voiced = {**body, "attachments": [ref]}
-            if not self._fits(device, voiced):
+            ref = await self._upload(device, file)
+            voiced = {**body, "attachments": [ref]} if ref is not None else body
+            if ref is not None and not self._fits(device, voiced):
                 with contextlib.suppress(ProtocolError, TimeoutError):
-                    await blobs.delete(self._relay, blob_id)
+                    await blobs.delete(self._relay, ref["blob_id"])
                 voiced = body
             await self._mail(device, voiced, alert=True)
 
@@ -434,25 +467,31 @@ class ChatService:
         message_id = new_id()
         name, mime = _clean_name(name, kind), _clean_mime(mime)
         self._remember(self._agent_name, f"{caption} [{kind}: {name}]".strip())
+        body = {"type": "chat", "id": message_id, "role": "agent", "kind": "text", "text": caption[:MAX_TEXT]}
+        file = await self.files.put(message_id, data, kind, name, mime)
+        await self._record(body, [file])
         for device in list(self._state.devices.values()):
-            key, sealed = blobs.seal(data)
-            try:
-                blob_id = await blobs.upload(self._relay, sealed, to=device.id)
-            except (ProtocolError, OSError, TimeoutError) as exc:
-                log.warning("attachment for %s not uploaded: %s", device.id[:6], exc)
+            ref = await self._upload(device, file)
+            if ref is None:
                 await self._delivery_failed(message_id, device.id, "attachment upload failed")
                 continue
-            ref = {"kind": kind, "blob_id": blob_id, "key": wire.b64e(key), "name": name, "mime": mime, "size": len(data)}
-            body = {
-                "type": "chat",
-                "id": message_id,
-                "role": "agent",
-                "kind": "text",
-                "text": caption[:MAX_TEXT],
-                "attachments": [ref],
-            }
-            await self._mail(device, body, alert=True)
+            await self._mail(device, {**body, "attachments": [ref]}, alert=True)
         return message_id
+
+    async def _upload(self, device: Device, file: StoredFile) -> dict[str, Any] | None:
+        """The spooled file for one phone (same sealed bytes and key for all), or None when the upload failed."""
+        try:
+            return await self.files.upload(self._relay, file, device.id)
+        except (ProtocolError, OSError, TimeoutError) as exc:
+            log.warning("attachment for %s not uploaded: %s", device.id[:6], exc.__class__.__name__)
+            return None
+
+    async def _record(self, body: dict[str, Any], files: list[StoredFile]) -> None:
+        """Into the history for phones paired later; a failure costs history, never the message."""
+        try:
+            await self.history.record(body, [f.file_id for f in files], self.history_limit)
+        except (sqlite3.Error, OSError) as exc:
+            log.warning("chat history not updated: %s", exc.__class__.__name__)
 
     def fits_presentation(self, text: str, presentation: dict[str, Any]) -> bool:
         """Whether the sealed chat message stays within the relay's mail limit (48 KiB)."""
@@ -470,6 +509,7 @@ class ChatService:
         """Cards in the app; `images` (item index → JPEG) go to each phone as encrypted blobs."""
         message_id = new_id()
         self._remember(self._agent_name, summary)
+        await self._record(self._presentation_body(message_id, text, presentation), [])
         for device in list(self._state.devices.values()):
             items = list(presentation["items"])
             for index, jpeg in images.items():
@@ -563,17 +603,23 @@ class ChatService:
 
     # ---- transport -------------------------------------------------------
 
-    async def _mirror(self, sender: Device, message_id: str, text: str, attachments: list[Attachment], transcript: str) -> None:
-        """Other phones of the owner see what was sent from this one (text only)."""
+    async def _mirror(self, sender: Device, message_id: str, text: str, files: list[StoredFile], transcript: str) -> None:
+        """Other phones of the owner see what was sent from this one, attachments included (the same sealed
+        blob, uploaded once per phone); an attachment whose upload failed becomes a `[kind: name]` line."""
         others = [d for d in self._state.devices.values() if d.id != sender.id]
-        if not others:
-            return
-        labels = [f"[{a.kind}: {a.name}]" for a in attachments]
-        mirrored = "\n".join(part for part in (text, transcript, *labels) if part)
         for device in others:
-            await self._mail(
-                device, {"type": "chat", "id": message_id, "role": "owner", "kind": "text", "text": mirrored}, alert=False
-            )
+            refs, labels = [], []
+            for file in files:
+                ref = await self._upload(device, file)
+                if ref is None:
+                    labels.append(f"[{file.kind}: {file.name}]")
+                else:
+                    refs.append(ref)
+            mirrored = "\n".join(part for part in (text, transcript, *labels) if part)
+            body: dict[str, Any] = {"type": "chat", "id": message_id, "role": "owner", "kind": "text", "text": mirrored}
+            if refs:
+                body["attachments"] = refs
+            await self._mail(device, body, alert=False)
 
     async def _mail_all(self, body: dict[str, Any], alert: bool) -> None:
         for device in list(self._state.devices.values()):

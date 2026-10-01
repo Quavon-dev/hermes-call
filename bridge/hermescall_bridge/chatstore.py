@@ -6,7 +6,9 @@
   `epoch` names this database, so a cursor from a lost database is recognized;
 - `seen`: owner message ids already accepted (phones resend unacked messages);
 - `outbox`: sealed mailbox messages for phones that the relay has not taken yet;
-- `meta`: small values (epoch, call context, recent chat lines, per-phone Hermes sessions).
+- `meta`: small values (epoch, call context, recent chat lines, per-phone Hermes sessions);
+- `files`: attachments spooled on disk (files.py): their blob key and what still needs them;
+- `history`: the last messages of the shared chat, for phones paired later (history.py).
 
 All methods are synchronous; `ChatService` calls them through one worker thread (`AsyncStore`).
 Owner message text is stored in plain text here until Hermes has it (the same machine and user
@@ -49,6 +51,14 @@ CREATE TABLE IF NOT EXISTS outbox (
     expires REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS outbox_next ON outbox (next_try);
+CREATE TABLE IF NOT EXISTS files (
+    file_id TEXT PRIMARY KEY, message_id TEXT NOT NULL, key TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL,
+    mime TEXT NOT NULL, size INTEGER NOT NULL, event_seq INTEGER, at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS files_message ON files (message_id);
+CREATE TABLE IF NOT EXISTS history (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT NOT NULL UNIQUE, body TEXT NOT NULL, ts INTEGER NOT NULL
+);
 """
 
 T = TypeVar("T")
@@ -61,6 +71,22 @@ class Pending:
     message_id: str
     device_id: str
     body: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class StoredFile:
+    """An attachment spooled on disk (sealed with `key`), see files.py."""
+
+    file_id: str
+    message_id: str
+    key: str
+    kind: str
+    name: str
+    mime: str
+    size: int
+
+    def meta(self) -> dict[str, Any]:
+        return {"kind": self.kind, "name": self.name, "mime": self.mime, "size": self.size}
 
 
 @dataclass(frozen=True)
@@ -135,10 +161,13 @@ class ChatStore:
         return [Pending(m, d, json.loads(b)) for m, d, b in rows]
 
     def hand_over(self, message_id: str, event: dict[str, Any]) -> int:
-        """The processed message becomes an event for Hermes; its inbox row goes in the same transaction."""
+        """The processed message becomes an event for Hermes; its inbox row goes in the same transaction
+        (its spooled files are then needed until Hermes has the event)."""
         with self._tx():
             self._db.execute("DELETE FROM inbox WHERE message_id = ?", (message_id,))
-            return self._insert_event(event)
+            seq = self._insert_event(event)
+            self._db.execute("UPDATE files SET event_seq = ? WHERE message_id = ?", (seq, message_id))
+            return seq
 
     def drop_pending(self, message_id: str) -> None:
         self._db.execute("DELETE FROM inbox WHERE message_id = ?", (message_id,))
@@ -220,6 +249,55 @@ class ChatStore:
 
     def queued(self, message_id: str) -> bool:
         return self._db.execute("SELECT 1 FROM outbox WHERE message_id = ? LIMIT 1", (message_id,)).fetchone() is not None
+
+    # ---- spooled files and history ------------------------------------------------
+
+    def add_file(self, file: StoredFile) -> None:
+        self._db.execute(
+            "INSERT OR REPLACE INTO files (file_id, message_id, key, kind, name, mime, size, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (file.file_id, file.message_id, file.key, file.kind, file.name, file.mime, file.size, time.time()),
+        )
+
+    def file(self, file_id: str) -> StoredFile | None:
+        row = self._db.execute(
+            "SELECT file_id, message_id, key, kind, name, mime, size FROM files WHERE file_id = ?", (file_id,)
+        ).fetchone()
+        return StoredFile(*row) if row else None
+
+    def unused_files(self) -> list[str]:
+        """Files nothing needs any more (not in history, not waiting in the inbox, event taken by Hermes);
+        their rows go here, the caller deletes the files on disk."""
+        with self._tx():
+            rows = self._db.execute(
+                "SELECT file_id FROM files WHERE message_id NOT IN (SELECT message_id FROM history) "
+                "AND message_id NOT IN (SELECT message_id FROM inbox) "
+                "AND (event_seq IS NULL OR event_seq NOT IN (SELECT seq FROM events))"
+            ).fetchall()
+            ids = [row[0] for row in rows]
+            self._db.executemany("DELETE FROM files WHERE file_id = ?", [(i,) for i in ids])
+        return ids
+
+    def file_ids(self) -> set[str]:
+        return {row[0] for row in self._db.execute("SELECT file_id FROM files")}
+
+    def add_history(self, message_id: str, body: dict[str, Any], ts: int, keep: int) -> None:
+        with self._tx():
+            self._db.execute(
+                "INSERT OR IGNORE INTO history (message_id, body, ts) VALUES (?, ?, ?)", (message_id, json.dumps(body), ts)
+            )
+            self._db.execute(
+                "DELETE FROM history WHERE seq IN (SELECT seq FROM history ORDER BY seq DESC LIMIT -1 OFFSET ?)", (keep,)
+            )
+
+    def history_before(self, before: int | None, limit: int) -> list[tuple[int, dict[str, Any]]]:
+        """Newest first: the `limit` entries older than `before` (None: the newest)."""
+        rows = self._db.execute(
+            "SELECT seq, body FROM history WHERE seq < ? ORDER BY seq DESC LIMIT ?", (before or 1 << 62, limit)
+        ).fetchall()
+        return [(seq, json.loads(body)) for seq, body in rows]
+
+    def history_depth(self) -> int:
+        return self._db.execute("SELECT COUNT(*) FROM history").fetchone()[0]
 
     # ---- helpers ------------------------------------------------------------------
 

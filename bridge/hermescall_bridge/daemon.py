@@ -170,7 +170,9 @@ def build_bridge(
             await chat.handle(device, body)
 
     chat_store = ChatStore(store.directory / "chat.db")
-    chat = ChatService(state, relay, channel, transcribe, agent_name, tts, chat_store, opts.transcribe_long)
+    chat = ChatService(
+        state, relay, channel, transcribe, agent_name, tts, chat_store, opts.transcribe_long, store.directory / "files"
+    )
     phone = PhoneService(state, relay, channel)
     presenter = PresentService(chat, image_fetcher)
     tasks = TaskService(state, relay, channel, store.load_task_prefs(), store.save_task_prefs)

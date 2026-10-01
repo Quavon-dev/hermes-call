@@ -161,7 +161,8 @@ class HermesCallAdapter(BasePlatformAdapter):
         while self._running and self._http is not None:
             self._expire_approvals()
             try:
-                params: dict[str, Any] = {"cursor": self._cursor, "wait": POLL_WAIT_SECONDS}
+                # files=1: attachments are fetched one by one (GET /v1/chat/files/<id>), not inline.
+                params: dict[str, Any] = {"cursor": self._cursor, "wait": POLL_WAIT_SECONDS, "files": 1}
                 if self._epoch:
                     params["epoch"] = self._epoch
                 response = await self._http.get("/v1/chat/events", params=params)
@@ -204,14 +205,14 @@ class HermesCallAdapter(BasePlatformAdapter):
         media_urls, media_types = [], []
         for item in event.get("attachments") or []:
             try:
-                data = _b64decode(item["data"])
+                data = await self._attachment_data(item)
                 name = Path(str(item.get("name") or "file")).name
                 if item.get("kind") == "photo":
                     media_urls.append(cache_image_from_bytes(data, Path(name).suffix.lower() or ".jpg"))
                 else:
                     media_urls.append(cache_document_from_bytes(data, name))
                 media_types.append(str(item.get("mime") or "application/octet-stream"))
-            except (KeyError, ValueError, OSError) as exc:
+            except (KeyError, ValueError, OSError, httpx.HTTPError) as exc:
                 log.warning("hermes_call: attachment dropped (%s)", exc.__class__.__name__)
         message_type = MessageType.TEXT
         if any(mime.startswith("image/") for mime in media_types):
@@ -238,6 +239,17 @@ class HermesCallAdapter(BasePlatformAdapter):
                 reply_to_message_id=event.get("reply_to"),
             )
         )
+
+    async def _attachment_data(self, item: dict[str, Any]) -> bytes:
+        """Bridges from 0.7 send a `file_id` to fetch; older ones the bytes inline (`data`)."""
+        if "data" in item:
+            return _b64decode(item["data"])
+        file_id = str(item["file_id"])
+        if self._http is None or not file_id.replace("-", "").replace("_", "").isalnum() or len(file_id) > 64:
+            raise ValueError("invalid file id")
+        response = await self._http.get(f"/v1/chat/files/{file_id}")
+        response.raise_for_status()
+        return response.content
 
     def _on_approval(self, event: dict[str, Any]) -> None:
         entry = self._approvals.pop(str(event.get("request_id")), None)

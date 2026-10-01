@@ -299,7 +299,7 @@ after it has stored the message (`mail_ack`), so a crash cannot lose it.
 |---|---|---|
 | device → bridge | `chat` (mailbox envelope) | `id`, `text` (≤ 12 000), `reply_to?`, `attachments: [{kind: photo/voice/file, blob_id, key, name, mime}]` (≤ 4), `voice_replies?` (bool, M9: only meaningful with a `voice` attachment) |
 | bridge → device | `chat_ack` | `id`, `state: delivered/transcribed`, `transcript?` (voice notes) |
-| bridge → device | `chat` (mail) | `id`, `role: agent/owner` (owner = mirrored from another phone), `kind: text/missed_call/declined_call`, `text`, `attachments?` (with `size`) |
+| bridge → device | `chat` (mail) | `id`, `role: agent/owner` (owner = mirrored from another phone, with its attachments since 0.7: the sender's sealed blob uploaded again for this phone, same `key`; a failed upload becomes a `[kind: name]` line), `kind: text/missed_call/declined_call`, `text`, `attachments?` (with `size`) |
 | bridge → device | `typing` | – |
 | bridge → device | `approval_request` (mail) | `request_id`, `command`, `description`, `chat: true`, `choices` (e.g. `["once","session","deny"]`; absent from older bridges = once/deny) |
 | device → bridge | `approval` (mailbox envelope, no `call_id`) | `request_id`, `choice: once/session/deny` |
