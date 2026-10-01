@@ -68,3 +68,21 @@ async def test_expired_invitations_are_garbage_collected(tmp_path) -> None:
     assert devices.invitation("OLD") is None and stale.result.cancelled()
     invitation, _ = await devices.invite("new")
     assert devices.invitation("ABC") is invitation
+
+
+async def test_a_crash_while_revoking_never_loses_the_relay_revocation(tmp_path, monkeypatch) -> None:
+    devices, relay, store, device_id = registry(tmp_path)
+
+    def crash(state) -> None:
+        raise OSError("disk gone mid-revoke")
+
+    monkeypatch.setattr(store, "save", crash)
+    try:
+        await devices.revoke(device_id)
+    except OSError:
+        pass
+    assert store.load_revocations() == [device_id], "the relay must still be told after a restart"
+    monkeypatch.undo()
+    # After the restart the phone is not back: a pending revocation wins over state.json.
+    restarted = DeviceRegistry(store.load(), store, relay)
+    assert restarted.list() == [] and store.load().devices == {}

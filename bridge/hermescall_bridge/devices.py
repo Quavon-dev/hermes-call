@@ -43,6 +43,12 @@ class DeviceRegistry:
         self._handshakes: dict[str, Handshake] = {}
         # revoke() and flush_revocations() read-modify-write revocations.json: one at a time
         self._revocations = asyncio.Lock()
+        revoked = [d for d in store.load_revocations() if d in state.devices]
+        if revoked:  # a revoke that crashed before state.json was written
+            for device_id in revoked:
+                del state.devices[device_id]
+            store.save(state)
+            log.info("%d revoked device(s) dropped from state.json", len(revoked))
 
     def _ctx(self) -> pairing.Context:
         e = self._state.endpoint
@@ -155,9 +161,11 @@ class DeviceRegistry:
         if device_id not in self._state.devices:
             return False
         del self._state.devices[device_id]
-        self._store.save(self._state)
         async with self._revocations:
+            # The pending revocation is on disk before state.json forgets the phone: a crash in between
+            # still tells the relay (and the restart drops the phone, see __init__).
             self._store.save_revocations(sorted({*self._store.load_revocations(), device_id}))
+        self._store.save(self._state)
         log.info("device revoked: %s", device_id[:6])
         await self.flush_revocations()
         return True
