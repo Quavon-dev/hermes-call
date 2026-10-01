@@ -189,6 +189,32 @@ import Testing
         #expect(await session.isConnected == false)
     }
 
+    /// M1: after a network change during a call the socket may still look open on the dead path; a forced
+    /// reconnect drops it and connects again at once (no backoff), and requests work on the new connection.
+    @Test func forcedReconnectReplacesAnOpenSocketAtOnce() async throws {
+        guard let server = try Self.startServer() else { return }
+        defer {
+            try? server.stdin.fileHandleForWriting.close()
+            server.process.terminate()
+        }
+        let invite = PairingInvite(kind: .device, relay: RelayAddress(host: "127.0.0.1", port: server.info["port"] as! Int),
+                                   pin: server.info["pin"] as! String, code: try PairingCode(parsing: server.info["code"] as! String))
+        let connects = Counter()
+        let session = try RelaySession(profile: try await DevicePairing.pair(invite: invite, deviceName: "Swift test"),
+                                       onStatus: { if $0 == .connected { connects.add() } })
+        defer { Task { await session.stop() } }
+        try await session.waitUntilConnected()
+        #expect(connects.value == 1)
+        await session.reconnectNow()
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(connects.value == 1, "an open socket is kept without force")
+        await session.reconnectNow(force: true)
+        for _ in 0..<40 where connects.value < 2 { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(connects.value == 2, "reconnected within 2 s, without the backoff")
+        let turn = try await session.request(["t": "turn"], timeout: 5)
+        #expect(turn["urls"] != nil)
+    }
+
     @Test func wrongCodeFailsAndPinnedLinkRejectsOtherKeys() async throws {
         guard let server = try Self.startServer() else { return }
         defer {
@@ -219,4 +245,12 @@ private extension FileHandle {
         }
         return String(decoding: data, as: UTF8.self)
     }
+}
+
+/// Thread-safe count for status callbacks.
+final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    var value: Int { lock.withLock { count } }
+    func add() { lock.withLock { count += 1 } }
 }

@@ -73,9 +73,16 @@ public actor RelaySession {
     public var isConnected: Bool { socket != nil }
 
     /// The network came back (or the app returned): try again at once instead of after the backoff.
-    public func reconnectNow() {
-        guard !stopped, socket == nil else { return }
+    /// `force`: also replace an open connection (a call after a network change: the socket may still look
+    /// open on the old, dead path, and the re-offer must not go out on it).
+    public func reconnectNow(force: Bool = false) {
+        guard !stopped else { return }
         skipBackoff = true
+        if let socket {
+            guard force else { return skipBackoff = false }
+            socket.close()  // the read loop ends and connects again at once
+            return
+        }
         backoffSleep?.cancel()
         start()
     }

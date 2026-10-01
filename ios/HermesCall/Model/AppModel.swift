@@ -319,7 +319,15 @@ final class AppModel {
     /// The network came back: try every relay now instead of waiting for the backoff.
     func reconnectNow() {
         guard session != nil else { return connect() }
-        for open in [session].compactMap({ $0 }) + Array(standby.values) { Task { await open.reconnectNow() } }
+        for open in openSessions { Task { await open.reconnectNow() } }
+    }
+
+    /// Every relay connection the app holds: the active one, standby agents and borrowed ones (a call or a
+    /// ring of another agent, a push registration), each once.
+    var openSessions: [RelaySession] {
+        var seen = Set<ObjectIdentifier>()
+        let all = [session].compactMap { $0 } + Array(standby.values) + borrowed.values.map(\.session)
+        return all.filter { seen.insert(ObjectIdentifier($0)).inserted }
     }
 
     var isBorrowed: Bool { borrowed.values.contains { $0.session === session } }

@@ -35,6 +35,11 @@ public struct CallReconnect: Sendable, Equatable {
     public static let disconnectGrace: TimeInterval = 2
     /// A re-offer that brought no audio is repeated after this.
     public static let retryInterval: TimeInterval = 6
+    /// How long a re-offer waits for the bridge's answer: shorter than the retry interval, so a lost offer
+    /// or answer costs one attempt, not the whole window.
+    public static let answerTimeout: TimeInterval = 5
+    /// A re-offer that failed (no relay, no answer) is repeated after this short pause.
+    public static let retryAfterFailure: TimeInterval = 1
 
     public let supported: Bool
     /// Since when the audio is gone (nil: the call is fine).
@@ -47,6 +52,7 @@ public struct CallReconnect: Sendable, Equatable {
     }
 
     public var isReconnecting: Bool { brokenSince != nil && !ended }
+    public var needsClock: Bool { isReconnecting }
 
     /// ICE `disconnected`: may heal by itself; "Reconnecting…" shows, the re-offer waits for the grace.
     public mutating func mediaDisconnected(now: Date) -> Action {
@@ -78,13 +84,14 @@ public struct CallReconnect: Sendable, Equatable {
         return .recovered
     }
 
-    /// Building or sending the re-offer failed (no relay yet): the next tick after the interval tries again.
+    /// Building or sending the re-offer failed (no relay yet, no answer in time): the next tick after
+    /// `retryAfterFailure` tries again.
     public mutating func reofferFailed(now: Date) -> Action {
-        lastOffer = now
+        lastOffer = now.addingTimeInterval(Self.retryAfterFailure - Self.retryInterval)
         return .none
     }
 
-    public mutating func tick(now: Date) -> Action {
+    public mutating func tick(now: Date, healthy: Bool = false) -> Action {
         guard let since = brokenSince, !ended else { return .none }
         if now.timeIntervalSince(since) >= Self.window { return finish(.connectionLost) }
         if let lastOffer {

@@ -505,9 +505,9 @@ final class CallCoordinator: NSObject {
         return transcriber
     }
 
-    func waitForAnswer() async throws -> String {
+    func waitForAnswer(timeout limit: Duration = answerTimeout) async throws -> String {
         let timeout = Task { [weak self] in
-            try? await Task.sleep(for: Self.answerTimeout)
+            try? await Task.sleep(for: limit)
             self?.failAnswer(ProtocolError.timeout)
         }
         defer { timeout.cancel() }

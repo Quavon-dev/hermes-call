@@ -8,10 +8,17 @@ import HermesCallCore
 /// `call_resume` end the call as before.
 extension CallCoordinator {
     /// The phone moved to another network (Wi-Fi ↔ cellular): the current path is gone.
+    /// The call's relay socket may still look open on the old path, so it is replaced first: signaling
+    /// (a re-offer, its answer, a hangup) must not go out on a dead connection.
     func networkChanged() {
-        guard isConnected, call?.reconnect != nil else { return }
-        log.info("network changed during the call")
-        reconnectEvent { $0.networkChanged(now: Date()) }
+        guard let session = call?.session else { return }
+        let uuid = call?.uuid
+        Task {
+            await session.reconnectNow(force: true)
+            guard call?.uuid == uuid, isConnected, call?.reconnect != nil else { return }
+            log.info("network changed during the call")
+            reconnectEvent { $0.networkChanged(now: Date()) }
+        }
     }
 
     /// Feeds one event to the call's reconnect state and carries out what it decides.
@@ -63,8 +70,10 @@ extension CallCoordinator {
         defer { if call?.uuid == uuid { call?.reoffering = false } }
         log.info("offering a new connection for the call")
         do {
-            try await session.waitUntilConnected(timeout: 10)
-            let turn = try await session.request(["t": "turn"])
+            // Short limits: a lost offer or answer is retried within the reconnect window (CallReconnect).
+            let limit = CallReconnect.answerTimeout
+            try await session.waitUntilConnected(timeout: limit)
+            let turn = try await session.request(["t": "turn"], timeout: limit)
             let rtc = try WebRTCCall(turn: turn, relayHost: session.profile.relay.host, onDeviceSpeech: current.transcriber != nil)
             rtc.onStateChange = { [weak self, weak rtc] state in
                 guard let rtc else { return }
@@ -75,7 +84,7 @@ extension CallCoordinator {
             var body: [String: JSON] = ["type": "offer", "call_id": .string(current.callID), "sdp": .string(offer)]
             if current.transcriber != nil { body["stt"] = "device" }
             try await session.send(body)
-            let answer = try await waitForAnswer()
+            let answer = try await waitForAnswer(timeout: .seconds(limit))
             guard var latest = call, latest.uuid == uuid else { return rtc.close() }
             let old = latest.rtc
             latest.rtc = rtc

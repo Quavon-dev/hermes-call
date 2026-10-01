@@ -83,8 +83,9 @@ account to get incoming calls.
   message stays local to this phone (the history is never asked again for that agent).
 - **Call resume** (`CallReconnect`, `CallCoordinator+Reconnect`): with a bridge listing `call_resume`,
   a network change or a broken connection shows *Reconnecting…* (Standard: under the name; HUD:
-  RECONNECTING in the header) while CallKit's call stays up; the app re-offers for the same call id with
-  a new peer connection and gives up after 20 s ("Connection lost. The call could not be resumed.").
+  RECONNECTING in the header) while CallKit's call stays up; the app replaces the call's relay connection,
+  re-offers for the same call id with a new peer connection (an offer unanswered after 5 s is repeated
+  after 1 s) and gives up after 20 s ("Connection lost. The call could not be resumed.").
   Older bridges end the call on a failed connection as before. Screenshot: `-PresenceDemo YES
   -PresenceDemoAuto YES -PresenceDemoReconnect YES` (both appearances).
 - **Calls**: interruptions and route changes are followed (`CallAudioRoute`), *Speaker* shows the real
@@ -107,7 +108,8 @@ account to get incoming calls.
   (WebSocket ping), and exports the last hour of this app's log with tokens (also standard base64 with
   `+`/`/`), pairing codes, ids, addresses and e-mail addresses replaced.
 - **Network**: an offline banner (*No internet connection* / *Can't reach your relay*); a returning or
-  changed network reconnects at once (`RelaySession.reconnectNow`) instead of after the backoff.
+  changed network reconnects at once (`RelaySession.reconnectNow`, also borrowed connections such as a
+  ring of another agent) instead of after the backoff.
 - **Relay protocol**: `auth` carries `v: 1` and the app's caps; the relay's `ready` (version, caps) is kept per
   agent and its version shown in Diagnostics (a bare `ready` = relay 0.6.2 or older, no caps). Requests that
   need a cap are not sent without it (`request(_:requires:)`); an `unsupported` answer fails only that request.

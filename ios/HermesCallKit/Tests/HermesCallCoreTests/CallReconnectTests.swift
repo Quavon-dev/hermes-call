@@ -47,6 +47,27 @@ struct CallReconnectTests {
         #expect(machine.networkChanged(now: t0.addingTimeInterval(CallReconnect.retryInterval + 0.1)) == .reoffer)
     }
 
+    @Test func aReofferWaitsForItsAnswerLessThanTheRetryInterval() {
+        #expect(CallReconnect.answerTimeout < CallReconnect.retryInterval)
+        #expect(CallReconnect.answerTimeout + CallReconnect.retryAfterFailure <= CallReconnect.retryInterval)
+    }
+
+    @Test func aFailedReofferIsRetriedSoonSoTheWindowHoldsSeveralAttempts() {
+        var machine = CallReconnect(supported: true)
+        #expect(machine.mediaFailed(now: t0) == .reoffer)
+        // No answer within the answer timeout.
+        let failed = t0.addingTimeInterval(CallReconnect.answerTimeout + 0.5)
+        #expect(machine.reofferFailed(now: failed) == .none)
+        #expect(machine.tick(now: failed.addingTimeInterval(CallReconnect.retryAfterFailure + 0.1)) == .reoffer)
+        var offers = 1
+        var now = failed.addingTimeInterval(CallReconnect.retryAfterFailure + 0.1)
+        while now.timeIntervalSince(t0) < CallReconnect.window - 1 {
+            now = now.addingTimeInterval(1)
+            if machine.tick(now: now) == .reoffer { offers += 1 }
+        }
+        #expect(offers >= 3, "at least three attempts before giving up (got \(offers))")
+    }
+
     @Test func aReofferThatGetsNoMediaIsRepeatedThenGivenUp() {
         var machine = CallReconnect(supported: true)
         _ = machine.mediaFailed(now: t0)

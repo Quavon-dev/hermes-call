@@ -235,7 +235,9 @@ changes. Only when both sides listed `call_resume`:
 - The phone notices a network change (path monitor) or its connection going `disconnected` (re-offer
   after 2 s unless it healed) or `failed` (at once), shows "Reconnecting…" and keeps the CallKit call up.
   It sends a new `offer` with the **same** `call_id` (TURN credentials fetched again), every 6 s while
-  no audio arrives, and ends the call 20 s after the audio broke ("Connection lost").
+  no audio arrives (an offer without an answer within 5 s is repeated after 1 s), and ends the call 20 s
+  after the audio broke ("Connection lost"). Its relay connection is replaced first, since the old
+  socket may still look open on the dead path.
 - The bridge accepts an `offer` for its active call id from the device in that call: it closes the old
   connection, builds a new one and answers with `answer` (same `call_id`). The conversation (Hermes
   session, transcript, turn state, queued speech) stays; the phone's new audio track feeds it.

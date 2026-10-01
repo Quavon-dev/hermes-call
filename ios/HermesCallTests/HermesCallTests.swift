@@ -140,6 +140,30 @@ import Testing
         #expect(model.session == nil)
     }
 
+    /// M1: a changed network reconnects borrowed connections too (a ring of another agent via VoIP push).
+    @Test func reconnectNowReachesBorrowedSessions() async throws {
+        let store = ProfileStore(service: "de.quavon.hermescall.tests.\(UUID().uuidString)")
+        let suite = "de.quavon.hermescall.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? store.deleteAll()
+        }
+        let profiles = [try sampleProfile(label: "home"), try sampleProfile(label: "vps")]
+        try store.save(profiles)
+        let model = AppModel(store: store, preferences: Preferences(defaults: defaults))
+        model.isForeground = true
+        model.connect()
+        let active = try #require(model.session)
+        let other = try model.borrowSession(for: profiles[1])
+        model.enterBackground()
+        #expect(model.openSessions.count == 1 && model.openSessions.first === other, "only the borrowed one is left")
+        _ = try model.borrowSession(for: profiles[0])
+        #expect(model.openSessions.contains { $0 === other } && model.openSessions.count == 2, "each session once")
+        _ = active
+        for session in model.openSessions { await session.stop() }
+    }
+
     @Test func pushRegistrationsPersistAndReset() {
         let suite = "de.quavon.hermescall.tests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
