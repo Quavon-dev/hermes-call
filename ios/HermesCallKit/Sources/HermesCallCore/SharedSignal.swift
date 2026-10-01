@@ -61,9 +61,9 @@ public enum SharedSignal {
                 try? await Task.sleep(for: timeout)
                 return false
             }
-            let answered = await group.next() ?? false
+            let result = await group.next() ?? false
             group.cancelAll()
-            return answered
+            return result
         }
     }
 
