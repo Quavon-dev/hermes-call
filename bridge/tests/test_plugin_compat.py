@@ -173,6 +173,9 @@ class FakeHttp:
         self.posts.append((path, json))
         return Response({"message_id": "m", "status": "sent"})
 
+    async def aclose(self) -> None:
+        pass
+
 
 class Response:
     status_code = 200
@@ -270,3 +273,19 @@ async def test_adapter_fetches_spooled_attachments_and_still_reads_inline_ones(a
     http = FakeHttp([{"cursor": 1, "events": []}])
     await run_polls(adapter, http, 1)
     assert http.gets[0]["files"] == 1
+
+
+# ---- Hermes passes connect(is_reconnect=...) (v0.21) ----------------------------------
+
+
+async def test_connect_accepts_the_arguments_hermes_passes(adapter_module, monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_CALL_TOKEN", "t")
+    monkeypatch.setattr(adapter_module, "_client", lambda timeout: FakeHttp([]))
+    adapter = adapter_module.HermesCallAdapter(None)
+    assert await adapter.connect(is_reconnect=False)
+    first = adapter._poller
+    assert await adapter.connect(is_reconnect=True)
+    await asyncio.sleep(0)
+    assert first.cancelled() or first.done(), "a reconnect must not leave the old poll loop running"
+    assert adapter._poller is not first
+    await adapter.disconnect()

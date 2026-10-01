@@ -128,7 +128,10 @@ class HermesCallAdapter(BasePlatformAdapter):
     def enforces_own_access_policy(self) -> bool:
         return True
 
-    async def connect(self) -> bool:
+    async def connect(self, *, is_reconnect: bool = False, **_: object) -> bool:
+        """Hermes v0.21 passes is_reconnect; later keywords are accepted so a new one cannot break chat."""
+        if self._poller is not None:  # a reconnect replaces the old poll loop and HTTP client
+            await self.disconnect()
         if not _token():
             self._set_fatal_error("config", "HERMES_CALL_TOKEN is not set", retryable=False)
             return False

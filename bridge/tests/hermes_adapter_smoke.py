@@ -51,6 +51,17 @@ class Ctx:
         )
 
 
+def connect_kwargs() -> dict:
+    """Every optional argument the real BasePlatformAdapter.connect declares (v0.21: is_reconnect), with its
+    default, so the adapter is called the way the gateway calls it."""
+    import inspect
+
+    from gateway.platforms.base import BasePlatformAdapter
+
+    params = inspect.signature(BasePlatformAdapter.connect).parameters.values()
+    return {p.name: p.default for p in params if p.name != "self" and p.default is not inspect.Parameter.empty}
+
+
 def emit(**fields) -> None:
     print(json.dumps(fields), flush=True)
 
@@ -83,7 +94,7 @@ async def main() -> None:
         received.append(event)
 
     adapter.handle_message = capture
-    assert await adapter.connect()
+    assert await adapter.connect(**connect_kwargs())
     emit(step="connected")
     for _ in range(300):
         if received:
