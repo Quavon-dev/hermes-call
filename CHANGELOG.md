@@ -4,7 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/). The relay, bridge, common library, test client
 and iOS app share one version; the Hermes plugin (`hermes-integration/hermes-call`) is
-versioned separately and is at **0.8.0** in this release.
+versioned separately and is at **0.8.1** in this release.
+
+## [0.7.1] — 2026-10-01
+
+- Hermes plugin 0.8.1: chat connects again with Hermes Agent v0.21, which calls the platform
+  adapter's `connect(is_reconnect=…)`; a reconnect replaces the old poll loop. The Hermes
+  compatibility check now calls `connect` with the arguments Hermes' own base class declares.
+- Relay and bridge CLIs accept device and bridge ids that start with "-".
+- Fresh installs require a release with a signed MANIFEST.
 
 ## [0.7.0] — 2026-10-01
 

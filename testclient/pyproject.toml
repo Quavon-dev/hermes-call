@@ -1,6 +1,6 @@
 [project]
 name = "hermescall-testclient"
-version = "0.7.0"
+version = "0.7.1"
 description = "Command-line stand-in for the Hermes Call iPhone app (development only)"
 requires-python = ">=3.11"
 license = "MIT"

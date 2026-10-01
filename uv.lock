@@ -787,7 +787,7 @@ wheels = [
 
 [[package]]
 name = "hermes-call-dev"
-version = "0.7.0"
+version = "0.7.1"
 source = { virtual = "." }
 dependencies = [
     { name = "hermescall-bridge" },
@@ -824,7 +824,7 @@ dev = [
 
 [[package]]
 name = "hermescall-bridge"
-version = "0.7.0"
+version = "0.7.1"
 source = { editable = "bridge" }
 dependencies = [
     { name = "aiohttp" },
@@ -856,12 +856,12 @@ requires-dist = [
 
 [[package]]
 name = "hermescall-common"
-version = "0.7.0"
+version = "0.7.1"
 source = { editable = "common" }
 
 [[package]]
 name = "hermescall-relay"
-version = "0.7.0"
+version = "0.7.1"
 source = { editable = "relay" }
 dependencies = [
     { name = "aiohttp" },
@@ -880,7 +880,7 @@ requires-dist = [
 
 [[package]]
 name = "hermescall-testclient"
-version = "0.7.0"
+version = "0.7.1"
 source = { editable = "testclient" }
 dependencies = [
     { name = "hermescall-bridge" },
