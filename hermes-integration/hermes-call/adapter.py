@@ -6,8 +6,9 @@ messages and posts replies, files and typing notices. The bridge encrypts
 everything end to end for the owner's paired phones. Only paired phones can
 reach the bridge, so the platform needs no user allow-list of its own.
 
-Approvals for commands in chat sessions are shown on the phone and need Face
-ID; typed `/approve` is refused on this platform.
+Approvals for commands in chat sessions, and Hermes' slash-command confirmations
+(`/new`, `/reload-mcp`, ...), are shown on the phone and need Face ID; typed
+`/approve` is refused on this platform.
 
 Tool progress is not rendered as chat bubbles: the plugin's tool hooks (progress.py)
 post it to the bridge, which shows it as the tasks ring and a Live Activity; this
@@ -85,6 +86,7 @@ class _Pending(NamedTuple):
     session_key: str
     until: float  # monotonic deadline
     hermes_id: str | None = None  # Hermes' request id (v0.21); None: Hermes resolves its oldest
+    confirm_id: str | None = None  # set for a slash-command confirmation (tools.slash_confirm)
 
 
 def _client(timeout: float = 30.0) -> httpx.AsyncClient:
@@ -274,15 +276,22 @@ class HermesCallAdapter(BasePlatformAdapter):
         if entry is None:
             return
         choice = event.get("choice") if event.get("choice") in APPROVAL_CHOICES else "deny"
-        _resolve(entry.session_key, choice, entry.hermes_id)
+        if entry.confirm_id is None:
+            _resolve(entry.session_key, choice, entry.hermes_id)
+            return
+        reply = await _resolve_confirm(entry.session_key, entry.confirm_id, "once" if choice == "once" else "cancel")
+        if reply:
+            await self.send(CHAT_ID, reply)
 
     def _expire_approvals(self) -> None:
-        """Approvals nobody answered in time are denied, so Hermes never waits on them forever."""
+        """Approvals nobody answered in time are denied, so Hermes never waits on them forever.
+        Slash-command confirmations just lapse (Hermes drops stale ones itself)."""
         now = time.monotonic()
         for request_id in [r for r, entry in self._approvals.items() if entry.until < now]:
             entry = self._approvals.pop(request_id)
             log.info("hermes_call: approval %s expired; denied", request_id[:6])
-            _resolve(entry.session_key, "deny", entry.hermes_id)
+            if entry.confirm_id is None:
+                _resolve(entry.session_key, "deny", entry.hermes_id)
 
     # ---- tool progress (tasks ring / Live Activity on the phone) ---------------
 
@@ -436,6 +445,23 @@ class HermesCallAdapter(BasePlatformAdapter):
             prompt.chat_id, prompt.command, prompt.session_key, getattr(prompt, "description", ""), choices
         )
 
+    async def send_slash_confirm(
+        self,
+        chat_id: str,
+        title: str,
+        message: str,
+        session_key: str,
+        confirm_id: str,
+        metadata: dict[str, Any] | None = None,
+        **_: Any,
+    ) -> SendResult:
+        """`/new`, `/reset`, `/undo`, `/reload-mcp`, `/model` ... ask before they run: the phone's approval
+        sheet (Approve once / Deny), answered through tools.slash_confirm like other button platforms."""
+        description = "\n".join(line for line in str(message).splitlines() if "/approve" not in line).strip()
+        return await self._deliver_approval(
+            chat_id, str(title), session_key, description, ["once", "deny"], confirm_id=str(confirm_id)
+        )
+
     async def _deliver_approval(
         self,
         chat_id: str,
@@ -443,14 +469,15 @@ class HermesCallAdapter(BasePlatformAdapter):
         session_key: str,
         description: str,
         choices: list[str],
+        confirm_id: str | None = None,
     ) -> SendResult:
-        """Anything that fails is denied here rather than returned as a failure, which would make
-        Hermes fall back to a typed `/approve` prompt."""
+        """Anything that fails is denied (or cancelled) here rather than returned as a failure, which
+        would make Hermes fall back to a typed `/approve` prompt."""
         self._expire_approvals()
         request_id = secrets.token_urlsafe(16)
         ttl = _approval_ttl()
-        hermes_id = self._shown_hermes_request(session_key)
-        self._approvals[request_id] = _Pending(session_key, time.monotonic() + ttl, hermes_id)
+        hermes_id = None if confirm_id else self._shown_hermes_request(session_key)
+        self._approvals[request_id] = _Pending(session_key, time.monotonic() + ttl, hermes_id, confirm_id)
         status = "error"
         if self._http is not None:
             try:
@@ -467,8 +494,12 @@ class HermesCallAdapter(BasePlatformAdapter):
                 log.warning("hermes_call: approval not delivered (%s)", exc.__class__.__name__)
         if status != "sent":
             self._approvals.pop(request_id, None)
-            _resolve(session_key, "deny", hermes_id)
-            await self.send(chat_id, "I could not show that approval on your phone, so the command was denied.")
+            if confirm_id is None:
+                _resolve(session_key, "deny", hermes_id)
+                await self.send(chat_id, "I could not show that approval on your phone, so the command was denied.")
+            else:
+                await _resolve_confirm(session_key, confirm_id, "cancel")
+                await self.send(chat_id, f"I could not show that confirmation on your phone, so {command} was cancelled.")
         return SendResult(success=True, message_id=request_id)
 
     def _shown_hermes_request(self, session_key: str) -> str | None:
@@ -509,6 +540,17 @@ def _resolve(session_key: str, choice: str, request_id: str | None = None) -> No
             resolve_gateway_approval(session_key, choice)
     except Exception:  # a Hermes internal: log it, never let it kill the poll loop
         log.exception("hermes_call: could not resolve an approval")
+
+
+async def _resolve_confirm(session_key: str, confirm_id: str, choice: str) -> str | None:
+    """Runs (or cancels) a pending slash command; returns Hermes' reply for the chat."""
+    try:
+        from tools.slash_confirm import resolve
+
+        return await resolve(session_key, confirm_id, choice)
+    except Exception:
+        log.exception("hermes_call: could not resolve a slash-command confirmation")
+        return None
 
 
 # ---- registration helpers ----------------------------------------------------

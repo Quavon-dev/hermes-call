@@ -305,12 +305,19 @@ async def test_adapter_against_real_hermes_gateway_classes(h, tmp_path) -> None:
             request = await next_of(device, "approval_request", timeout=1)
         except TimeoutError:
             continue
-        sheets[request["command"]] = request["request_id"]
+        sheets[request["command"]] = request
         if len(sheets) == 2:
             for command, choice in (("touch /tmp/newer", "once"), ("touch /tmp/older", "deny")):
-                await device.send({"type": "approval", "request_id": sheets[command], "choice": choice}, mail=True)
+                answer = {"type": "approval", "request_id": sheets[command]["request_id"], "choice": choice}
+                await device.send(answer, mail=True)
     answered = {"step": "real_approvals", "older": "deny", "newer": "once"}
     assert (await real) in ({"step": "real_approvals", "skipped": True}, answered)
+    # Hermes before 0.21 skips the step above at once, so that loop may already hold the next sheet.
+    request = sheets.get("/reload-mcp") or await next_of(device, "approval_request")
+    assert request["command"] == "/reload-mcp" and request["choices"] == ["once", "deny"]
+    await device.send({"type": "approval", "request_id": request["request_id"], "choice": "once"}, mail=True)
+    assert (await step()) == {"step": "slash_confirm", "success": True, "ran": ["once"]}
+    assert (await next_of(device, "chat"))["text"] == "MCP servers reloaded."
     assert (await step())["step"] == "done"
     await process.wait()
 

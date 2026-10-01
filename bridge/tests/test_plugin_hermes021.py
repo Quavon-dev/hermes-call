@@ -93,3 +93,38 @@ async def test_approval_is_posted_with_a_short_timeout(hermes021) -> None:
     adapter._http = http = FakeHttp([])
     await adapter.send_exec_approval("owner", "ls", "s")
     assert http.timeouts["/v1/chat/approvals"] is not None and http.timeouts["/v1/chat/approvals"] <= 10
+
+
+# ---- 3: /reload-mcp, /new … confirmations on the phone sheet -------------------------------
+
+
+async def test_slash_confirmations_use_the_phone_sheet(hermes021) -> None:
+    adapter = hermes021.module.HermesCallAdapter(None)
+    adapter._http = http = FakeHttp([])
+    prompt = "Reloading rebuilds the tool set.\n\n_Text fallback: reply `/approve`, `/always`, or `/cancel`._"
+    result = await adapter.send_slash_confirm("owner", "/reload-mcp", prompt, "sess", "7")
+    assert result.success
+    body = approvals_posted(http)[-1]
+    assert body["command"] == "/reload-mcp" and body["choices"] == ["once", "deny"]
+    assert "/approve" not in body["description"] and "rebuilds the tool set" in body["description"]
+    await adapter._on_approval({"request_id": body["request_id"], "choice": "once"})
+    await adapter.send_slash_confirm("owner", "/new", "Start a new session?", "sess", "8")
+    await adapter._on_approval({"request_id": approvals_posted(http)[-1]["request_id"], "choice": "deny"})
+    assert hermes021.confirms == [("sess", "7", "once"), ("sess", "8", "cancel")]
+    assert hermes021.resolved == []  # never a command approval
+    sent = [body["text"] for path, body in http.posts if path == "/v1/chat/messages"]
+    assert sent == ["MCP servers reloaded.", "Reload cancelled."]
+
+
+async def test_an_undeliverable_slash_confirmation_is_cancelled_not_typed(hermes021) -> None:
+    adapter = hermes021.module.HermesCallAdapter(None)
+    adapter._http = http = FakeHttp([])
+
+    async def refused(path, json, timeout=None):
+        http.posts.append((path, json))
+        return Response({"status": "denied"})
+
+    http.post = refused
+    result = await adapter.send_slash_confirm("owner", "/new", "Start a new session?", "sess", "9")
+    assert result.success  # no typed /approve fallback on this platform
+    assert hermes021.confirms == [("sess", "9", "cancel")]

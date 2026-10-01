@@ -207,6 +207,9 @@ answers `/healthz`; it exits 1 when a check failed.
 - **A chat approval answers exactly the command it showed.** The plugin resolves it by Hermes'
   request id (Hermes ≥ 0.21) and shows it only as long as Hermes waits (`approvals.timeout`, default
   300 s, minus 5 s), so a late answer or the expiry deny can never reach a newer approval.
+- **Slash-command confirmations use the same sheet.** When Hermes asks before `/new`, `/reset`,
+  `/undo`, `/reload-mcp` or `/model`, the phone shows it as an approval (Approve once / Deny =
+  run / cancel the command) instead of asking for a typed `/approve`.
 
 ## Settings (`/etc/hermes-call-bridge/bridge.toml`, all optional)
 

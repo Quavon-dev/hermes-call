@@ -20,6 +20,9 @@ versioned separately and is at **0.8.1** in this release.
   command. The bridge's `/v1/chat/approvals` takes an optional `ttl`.
 - Hermes plugin: an approval is handed to the bridge within 10 s, inside the 15 s Hermes waits for
   the prompt to be sent (it used the 35 s long-poll timeout).
+- Hermes plugin: Hermes' confirmations before `/new`, `/reset`, `/undo`, `/reload-mcp` and `/model`
+  appear as the approval sheet on the phone (Approve once / Deny) instead of a typed `/approve`,
+  which this platform refuses.
 
 ## [0.7.1] — 2026-10-01
 

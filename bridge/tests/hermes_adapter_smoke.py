@@ -106,6 +106,25 @@ async def real_approvals(adapter) -> dict:
     return {"older": await older, "newer": await newer}
 
 
+async def slash_confirm(adapter) -> dict:
+    """/reload-mcp asks first: Hermes' real slash_confirm registry, answered on the phone's sheet."""
+    from tools import slash_confirm as confirms
+
+    ran = []
+
+    async def handler(choice: str) -> str:
+        ran.append(choice)
+        return "MCP servers reloaded."
+
+    confirms.register("confirm-session", "c1", "reload-mcp", handler)
+    result = await adapter.send_slash_confirm("owner", "/reload-mcp", "Reload MCP servers?", "confirm-session", "c1")
+    for _ in range(300):
+        if ran:
+            break
+        await asyncio.sleep(0.05)
+    return {"success": result.success, "ran": ran}
+
+
 async def main() -> None:
     plugin.register(Ctx())
     entry = platform_registry.get("hermes_call")
@@ -167,6 +186,7 @@ async def main() -> None:
     emit(step="real_resolver", pending=resolve_gateway_approval("unknown-session", "deny"))
     adapter_module._resolve = real_resolve
     emit(step="real_approvals", **await real_approvals(adapter))
+    emit(step="slash_confirm", **await slash_confirm(adapter))
     await adapter.disconnect()
     emit(step="done")
 
