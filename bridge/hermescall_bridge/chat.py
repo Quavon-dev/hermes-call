@@ -328,7 +328,12 @@ class ChatService:
             return
         page = await self.history.page(device.id, body.get("before"), body.get("limit"))
         log.info("history page for %s: %d message(s)", device.id[:6], len(page["messages"]))
-        await self._live(device, page)
+        try:
+            await self._live(device, page)
+        except ProtocolError as exc:
+            # Not sealable (should not happen: pages are sized): skip its messages, the phone still moves on.
+            log.warning("history page for %s not sent (%s); %d message(s) skipped", device.id[:6], exc, len(page["messages"]))
+            await self._live(device, {**page, "messages": []})
 
     async def _on_approval(self, device: Device, body: dict[str, Any]) -> None:
         request_id = body.get("request_id")

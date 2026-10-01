@@ -2,9 +2,13 @@
 """D4: a phone paired later gets the recent chat (history_request → history_page)."""
 
 import asyncio
+import json
 
 from hermescall_bridge import history as history_mod
-from hermescall_common import wire
+from hermescall_bridge.chatstore import AsyncStore, ChatStore, StoredFile
+from hermescall_common import sodium, wire
+from hermescall_common.e2e import MAX_PLAINTEXT
+from hermescall_common.errors import ProtocolError
 
 from .test_bridge_flows import h  # noqa: F401 - h is a fixture
 from .test_chat import hermes_api, next_of, online_device, poll, stop_devices  # noqa: F401
@@ -77,3 +81,114 @@ async def test_bridge_lists_history_and_limits_requests(h, monkeypatch) -> None:
     await device.send({"type": "history_request"})
     await asyncio.sleep(0.3)
     assert all(body["type"] != "history_page" for body in list(device.inbox._queue))
+
+
+class FakeSpool:
+    """Spooled files by id; `upload` records each relay upload (or fails while `failing`)."""
+
+    def __init__(self) -> None:
+        self.files: dict[str, StoredFile] = {}
+        self.uploads: list[str] = []
+        self.failing = False
+
+    def add(self, message_id: str, name: str = "a.jpg") -> str:
+        file_id = wire.b64e(sodium.random_bytes(16))
+        self.files[file_id] = StoredFile(file_id, message_id, wire.b64e(bytes(32)), "photo", name, "image/jpeg", 10)
+        return file_id
+
+    async def get(self, file_id: str) -> StoredFile | None:
+        return self.files.get(file_id)
+
+    async def upload(self, relay, file: StoredFile, to: str) -> dict:
+        if self.failing:
+            raise OSError("relay quota")
+        self.uploads.append(file.file_id)
+        return {**file.meta(), "blob_id": wire.b64e(sodium.random_bytes(16)), "key": file.key}
+
+    async def collect(self) -> int:
+        return 0
+
+
+def history(tmp_path) -> tuple[history_mod.ChatHistory, FakeSpool, AsyncStore]:
+    db = AsyncStore(ChatStore(tmp_path / "chat.db"))
+    spool = FakeSpool()
+    return history_mod.ChatHistory(db, spool, relay=None), spool, db
+
+
+def plaintext_size(page: dict) -> int:
+    """What Channel.seal measures against MAX_PLAINTEXT (envelope fields included)."""
+    envelope = {**page, "from": "b" * 22, "to": "d" * 22, "ts": 1 << 42}
+    return len(json.dumps(envelope, separators=(",", ":")))
+
+
+async def test_a_page_with_long_non_ascii_messages_stays_within_the_e2e_limit(tmp_path) -> None:
+    chat_history, _, db = history(tmp_path)
+    for n in range(3):
+        body = {"id": f"m{n}", "role": "owner", "kind": "text", "text": "😀" * 8000, "transcript": "語" * 12_000}
+        await chat_history.record(body, [], 200)
+    pages, before = [], None
+    while True:
+        page = await chat_history.page("dev", before, None)
+        pages.append(page)
+        assert plaintext_size(page) <= MAX_PLAINTEXT, plaintext_size(page)
+        assert len(json.dumps(page["messages"], separators=(",", ":"))) <= history_mod.PAGE_BYTES + 8
+        if not page["more"]:
+            break
+        before = page["next"]
+    assert [m["id"] for p in pages for m in p["messages"]] == ["m2", "m1", "m0"]
+    assert all(m["text"].startswith("😀") for p in pages for m in p["messages"])
+    db.close()
+
+
+async def test_a_page_that_cannot_be_sealed_is_skipped_but_history_moves_on(tmp_path, monkeypatch) -> None:
+    from .test_chat_durable import service
+
+    chat, relay, device = service(tmp_path)
+
+    def refuse(*args, **kwargs):
+        raise ProtocolError("message too large")
+
+    sent: list[dict] = []
+
+    async def live(target, body) -> bool:
+        if body.get("messages"):
+            refuse()
+        sent.append(body)
+        return True
+
+    monkeypatch.setattr(chat._transport, "live", live)
+    for n in range(3):
+        await chat.send_text(f"message {n}")
+    await chat.handle(device, {"type": "history_request", "limit": 2})
+    (page,) = sent
+    assert page["type"] == "history_page" and page["messages"] == [] and page["more"] is True and page["next"]
+    await chat.close()
+
+
+async def test_attachments_are_uploaded_only_for_messages_that_fit_the_page(tmp_path, monkeypatch) -> None:
+    chat_history, spool, db = history(tmp_path)
+    file_id = spool.add("old")
+    await chat_history.record({"id": "old", "role": "agent", "kind": "text", "text": "x" * 12_000}, [file_id], 200)
+    for n in range(3):
+        await chat_history.record({"id": f"new{n}", "role": "agent", "kind": "text", "text": "y" * 9_000}, [], 200)
+    page = await chat_history.page("dev", None, None)
+    assert "old" not in [m["id"] for m in page["messages"]] and page["more"]
+    assert spool.uploads == [], "no upload (and no budget) for a message left for the next page"
+    rest = await chat_history.page("dev", page["next"], None)
+    assert [m["id"] for m in rest["messages"]] == ["old"] and spool.uploads == [file_id]
+    assert len(rest["messages"][0]["attachments"]) == 1
+    db.close()
+
+
+async def test_a_failed_history_upload_gives_its_budget_back(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(history_mod, "SYNC_FILES", 1)
+    chat_history, spool, db = history(tmp_path)
+    file_id = spool.add("m")
+    await chat_history.record({"id": "m", "role": "agent", "kind": "text", "text": "pic"}, [file_id], 200)
+    spool.failing = True
+    (message,) = (await chat_history.page("dev", None, None))["messages"]
+    assert message["text"] == "pic\n[photo: a.jpg]"
+    spool.failing = False
+    (message,) = (await chat_history.page("dev", None, None))["messages"]
+    assert len(message["attachments"]) == 1 and spool.uploads == [file_id]
+    db.close()
