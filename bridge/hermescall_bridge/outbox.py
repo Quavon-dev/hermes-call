@@ -42,6 +42,8 @@ class Outbox:
         self._on_failed = on_failed
         self._wake = asyncio.Event()
         self._task: asyncio.Task | None = None
+        # Set by `flush` (shutdown): the loop finishes the mail in flight and ends, so nothing goes twice.
+        self._closing = False
         self.sent = 0
 
     async def queue(self, device_id: str, message_id: str, body: dict, alert: bool, max_age: float | None = None) -> None:
@@ -64,14 +66,23 @@ class Outbox:
     def kick(self) -> None:
         """Try now (new mail, or the relay just reconnected)."""
         self._wake.set()
-        if self._task is None or self._task.done():
+        if not self._closing and (self._task is None or self._task.done()):
             self._task = asyncio.ensure_future(self._run())
             self._task.add_done_callback(_log_end)
 
     async def flush(self, timeout: float) -> int:
-        """Shutdown: one last attempt for everything due; returns what is still queued."""
+        """Shutdown: the loop ends first (after the mail it is sending), then one last attempt for
+        everything due; returns what is still queued."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        self._closing = True
+        self._wake.set()
+        if self._task is not None and not self._task.done():
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(self._task), timeout)
+            self.stop()
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(self._deliver_due(), timeout)
+            await asyncio.wait_for(self._deliver_due(final=True), max(0.0, deadline - loop.time()))
         return await self._store.call(self._store.store.outbox_depth)
 
     def stop(self) -> None:
@@ -79,7 +90,7 @@ class Outbox:
             self._task.cancel()
 
     async def _run(self) -> None:
-        while True:
+        while not self._closing:
             self._wake.clear()
             if not self._transport.relay.connected.is_set():
                 await self._wake.wait()  # kicked by the relay's reconnect (ChatService.on_relay_ready)
@@ -97,10 +108,11 @@ class Outbox:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._wake.wait(), max(0.05, next_try - time.time()))
 
-    async def _deliver_due(self) -> None:
+    async def _deliver_due(self, final: bool = False) -> None:
+        """`final`: the shutdown flush (the loop has ended; it stops at `_closing` otherwise)."""
         while due := await self._store.call(self._store.store.due_mail, time.time()):
             for mail in due:
-                if not self._transport.relay.connected.is_set():
+                if not self._transport.relay.connected.is_set() or (self._closing and not final):
                     return  # no point waiting for the relay per message; the reconnect kicks us
                 await self._deliver(mail)
 
