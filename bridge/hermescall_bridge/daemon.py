@@ -221,7 +221,11 @@ def options_from(config: Config, transcribe_long: Callable | None) -> BridgeOpti
     return BridgeOptions(
         transcribe_long=transcribe_long,
         sessions=PhoneSessions(config.hermes_session, config.state_dir / "sessions.json"),
-        turn_settings=TurnSettings(end_silence_ms=config.end_silence_ms),
+        turn_settings=TurnSettings(
+            end_silence_ms=config.end_silence_ms,
+            acknowledgement_after_ms=config.acknowledgement_after_ms,
+            acknowledgement_text=config.acknowledgement_text,
+        ),
         timeouts=CallTimeouts(
             ring=config.ring_timeout,
             approval=config.approval_timeout,
@@ -255,8 +259,15 @@ async def serve(config: Config) -> None:
     state = store.load()
     if not state.paired:
         raise ConfigError("bridge is not paired with a relay; run: hermes-call-bridge relay add '<pairing link>'")
-    hermes = HermesClient(config.hermes_url, config.secret("hermes_api_key"), config.hermes_session, config.hermes_model)
-    tts = KokoroTts(config.tts_url, config.tts_voice)
+    hermes = HermesClient(
+        config.hermes_url,
+        config.secret("hermes_api_key"),
+        config.hermes_session,
+        config.hermes_model,
+        config.hermes_provider,
+        config.hermes_reasoning_effort,
+    )
+    tts = KokoroTts(config.tts_url, config.tts_voice, speed=config.tts_speed)
     log.info("loading speech recognition model %s", config.stt_model)
     transcriber = Transcriber(str(Path(config.stt_model_dir) / config.stt_model), config.stt_threads)
     options = options_from(config, transcriber.transcribe_background)
