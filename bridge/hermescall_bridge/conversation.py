@@ -71,6 +71,8 @@ class TurnSettings:
     barge_in_ms: int = 250
     preroll_ms: int = 320
     max_utterance_ms: int = 30_000
+    acknowledgement_after_ms: int = 0
+    acknowledgement_text: str = ""
 
 
 ApprovalHandler = Callable[[ApprovalRequest], Awaitable[str]]
@@ -335,6 +337,9 @@ class Conversation:
         chunks: asyncio.Queue[str | None] = asyncio.Queue()
         speaker = self._speaker = asyncio.ensure_future(self._speak_queue(chunks, ended))
         marks = {"stt": stt_done}
+        acknowledgement = None
+        if self._s.acknowledgement_after_ms and self._s.acknowledgement_text:
+            acknowledgement = asyncio.ensure_future(self._acknowledge(chunks, marks))
         self.transcript.append(("owner", text))
         try:
             try:
@@ -342,10 +347,13 @@ class Conversation:
             except HERMES_ERRORS as exc:
                 log.warning("turn failed: Hermes %s after %.0f ms", describe(exc), (time.monotonic() - stt_done) * 1000)
                 METRICS.turn_errors.inc("hermes")
+                marks.setdefault("chunk", time.monotonic())
                 await chunks.put(FALLBACK_LINE.format(agent=self._agent_name))
             await chunks.put(None)
             await speaker
         finally:
+            if acknowledgement is not None:
+                acknowledgement.cancel()
             speaker.cancel()
         log.info(
             "turn timings: stt %.0f ms (%s), llm first text %.0f ms, first chunk %.0f ms",
@@ -354,6 +362,12 @@ class Conversation:
             (marks.get("delta", stt_done) - stt_done) * 1000,
             (marks.get("chunk", stt_done) - stt_done) * 1000,
         )
+
+    async def _acknowledge(self, chunks: asyncio.Queue, marks: dict[str, float]) -> None:
+        await asyncio.sleep(self._s.acknowledgement_after_ms / 1000)
+        if "chunk" not in marks:
+            marks["acknowledgement"] = time.monotonic()
+            await chunks.put(self._s.acknowledgement_text)
 
     async def _stream_reply(self, text: str, chunks: asyncio.Queue, marks: dict[str, float]) -> None:
         chunker = Chunker()
@@ -402,6 +416,7 @@ class Conversation:
                         marks.setdefault("chunk", time.monotonic())
                         await chunks.put(chunk)
                     continue
+                marks.setdefault("chunk", time.monotonic())
                 await chunks.put(APPROVAL_PROMPT)
                 choice = await self._on_approval(event)
                 accepted = await self._hermes.answer_approval(event, choice)
