@@ -268,6 +268,8 @@ async def serve(config: Config) -> None:
         config.hermes_reasoning_effort,
     )
     tts = KokoroTts(config.tts_url, config.tts_voice, speed=config.tts_speed)
+    if config.acknowledgement_text:
+        await tts.preload(config.acknowledgement_text)
     log.info("loading speech recognition model %s", config.stt_model)
     transcriber = Transcriber(str(Path(config.stt_model_dir) / config.stt_model), config.stt_threads)
     options = options_from(config, transcriber.transcribe_background)
