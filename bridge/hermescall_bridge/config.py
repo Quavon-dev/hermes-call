@@ -88,7 +88,11 @@ def _extras(raw: dict) -> dict:
     if isinstance(end_silence, bool) or not isinstance(end_silence, int) or not 200 <= end_silence <= 3000:
         raise ConfigError("end_silence_ms: an integer between 200 and 3000")
     acknowledgement_after = voice.get("acknowledgement_after_ms", 0)
-    if isinstance(acknowledgement_after, bool) or not isinstance(acknowledgement_after, int) or not 0 <= acknowledgement_after <= 5000:
+    if (
+        isinstance(acknowledgement_after, bool)
+        or not isinstance(acknowledgement_after, int)
+        or not 0 <= acknowledgement_after <= 5000
+    ):
         raise ConfigError("acknowledgement_after_ms: an integer between 0 and 5000")
     acknowledgement_text = voice.get("acknowledgement_text", "")
     if not isinstance(acknowledgement_text, str) or len(acknowledgement_text) > 120:
