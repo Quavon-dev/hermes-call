@@ -365,9 +365,13 @@ class Conversation:
 
     async def _acknowledge(self, chunks: asyncio.Queue, marks: dict[str, float]) -> None:
         await asyncio.sleep(self._s.acknowledgement_after_ms / 1000)
-        if "chunk" not in marks:
-            marks["acknowledgement"] = time.monotonic()
-            await chunks.put(self._s.acknowledgement_text)
+        await self._queue_acknowledgement(chunks, marks)
+
+    async def _queue_acknowledgement(self, chunks: asyncio.Queue, marks: dict[str, float]) -> None:
+        if "chunk" in marks or "acknowledgement" in marks or not self._s.acknowledgement_text:
+            return
+        marks["acknowledgement"] = time.monotonic()
+        await chunks.put(self._s.acknowledgement_text)
 
     async def _stream_reply(self, text: str, chunks: asyncio.Queue, marks: dict[str, float]) -> None:
         chunker = Chunker()
@@ -408,6 +412,8 @@ class Conversation:
                     images = []
                 if isinstance(event, ToolProgress):
                     progress.tool(event)
+                    if event.status == "running":
+                        await self._queue_acknowledgement(chunks, marks)
                     continue
                 if isinstance(event, TextDelta):
                     spoken.append(event.text)
