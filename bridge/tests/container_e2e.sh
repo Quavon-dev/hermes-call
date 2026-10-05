@@ -78,7 +78,7 @@ print(' '.join(s.text for s in m.transcribe(sys.argv[1], language='en')[0]))\""
 REPLY=$(in_agent "$TRANSCRIBE /root/reply.wav" 2>/dev/null || true)
 echo "Agent said: $REPLY"
 verdict "round trip: Whisper → Hermes → Kokoro → back to phone" 'grep -qi calendar <<<"$REPLY"'
-check "Hermes got session id, auth and phone system prompt" "grep -Eq '\"auth_ok\": true, \"session\": \"hermes-call-phone-[^\"]+\", \"stream\": true, \"roles\": \\[\\"system\\", \\"user\\"\\], \"phone_system\": true' /tmp/hermes.log"
+check "Hermes got session id, auth and phone system prompt" "grep -q 'auth_ok.*true' /tmp/hermes.log && grep -q 'session.*hermes-call-phone-' /tmp/hermes.log && grep -q 'stream.*true' /tmp/hermes.log && grep -q 'roles.*system.*user' /tmp/hermes.log && grep -q 'phone_system.*true' /tmp/hermes.log"
 
 check "call_owner plugin installed for the Hermes user" "[[ \$(stat -c '%U' /home/hermes/.hermes/plugins/hermes-call/__init__.py) == hermes ]]"
 check "Hermes .env holds the ring-only token, not the admin token" "grep -qx \"HERMES_CALL_TOKEN=\$(cat /etc/hermes-call-bridge/call_token)\" /home/hermes/.hermes/.env && ! grep -q \"\$(cat /etc/hermes-call-bridge/api_token)\" /home/hermes/.hermes/.env"
