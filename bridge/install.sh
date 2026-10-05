@@ -70,7 +70,7 @@ Usage: install.sh [install|update|uninstall] [options]
   --voice NAME           Kokoro voice (default: bm_george)
   --tts-speed NUMBER     Kokoro speech speed between 0.5 and 2.0
   --end-silence-ms N     silence ending an utterance, 200 to 3000 ms
-  --ack-after-ms N       speak the acknowledgement after 0 to 5000 ms
+  --ack-after-ms N       0 disables; otherwise speak the acknowledgement after 1 to 5000 ms
   --ack-text TEXT        short acknowledgement spoken while Hermes is still working
   --agent-name NAME      name shown on the phone for calls (default: Hermes)
   --instance NAME        install/update/uninstall a named extra bridge (another agent on this host)
