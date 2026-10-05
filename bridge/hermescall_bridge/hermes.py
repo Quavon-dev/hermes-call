@@ -199,8 +199,10 @@ class HermesClient:
     def _apply_model_options(self, body: dict[str, Any]) -> None:
         if self._provider:
             body["provider"] = self._provider
-        if self._reasoning_effort:
-            body["model_options"] = {"reasoning_effort": self._reasoning_effort}
+        if self._reasoning_effort == "none":
+            body["model_options"] = {"reasoning": {"enabled": False}}
+        elif self._reasoning_effort:
+            body["model_options"] = {"reasoning": {"enabled": True, "effort": self._reasoning_effort}}
 
     async def answer_approval(self, request: ApprovalRequest, choice: str) -> str | None:
         """Answers with retries; if `choice` cannot be delivered, a deny is tried last.
