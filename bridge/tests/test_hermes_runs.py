@@ -98,6 +98,26 @@ async def test_a_call_turn_runs_through_v1_runs_and_streams_approvals() -> None:
     assert json.loads(api.seen[-1].content) == {"choice": "once", "request_id": "r1"}
 
 
+async def test_call_specific_model_provider_and_reasoning_are_forwarded() -> None:
+    api = FakeApi(events=runs_events(ev("message.delta", delta="Fast."), ev("run.completed", output="Fast.")))
+    client = HermesClient(
+        "http://127.0.0.1:8642",
+        "key",
+        "phone-session",
+        model="voice-fast",
+        provider="openrouter",
+        reasoning_effort="none",
+    )
+    client._client = httpx.AsyncClient(
+        base_url="http://127.0.0.1:8642", transport=httpx.MockTransport(api), headers=client._client.headers
+    )
+    assert [e async for e in client.turn("sys", "hi")] == [TextDelta("Fast.")]
+    body = json.loads(api.seen[1].content)
+    assert body["model"] == "voice-fast"
+    assert body["provider"] == "openrouter"
+    assert body["model_options"] == {"reasoning": {"enabled": False}}
+
+
 async def test_images_go_as_content_parts_of_the_run_input() -> None:
     api = FakeApi(events=runs_events(ev("message.delta", delta="A cat."), ev("run.completed", output="A cat.")))
     events = [e async for e in client_for(api).turn("sys", "what is this?", images=[b"\xff\xd8"])]

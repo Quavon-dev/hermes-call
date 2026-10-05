@@ -33,8 +33,15 @@ readonly SRC_ROOT
 
 # Empty = keep the installed value (bridge.toml / install.env), else the default (see load_settings).
 HERMES_USER=${HERMES_USER:-}
+HERMES_MODEL=${HERMES_MODEL:-}
+HERMES_PROVIDER=${HERMES_PROVIDER:-}
+HERMES_REASONING_EFFORT=${HERMES_REASONING_EFFORT:-}
 STT_MODEL=${STT_MODEL:-}
 TTS_VOICE=${TTS_VOICE:-}
+TTS_SPEED=${TTS_SPEED:-}
+END_SILENCE_MS=${END_SILENCE_MS:-}
+ACKNOWLEDGEMENT_AFTER_MS=${ACKNOWLEDGEMENT_AFTER_MS:-}
+ACKNOWLEDGEMENT_TEXT=${ACKNOWLEDGEMENT_TEXT:-}
 AGENT_NAME=${AGENT_NAME:-}
 INSTANCE=${INSTANCE:-}
 API_PORT=${API_PORT:-}
@@ -55,9 +62,16 @@ Usage: install.sh [install|update|uninstall] [options]
                          (adds API_SERVER_ENABLED/API_SERVER_KEY), install the hermes-call plugin
                          (call_owner, phone_context, present_to_owner + hermes_call chat) and set HERMES_CALL_TOKEN
                          (restart Hermes and its gateway afterwards)
+  --hermes-model NAME    model or API-server route used only for calls
+  --hermes-provider NAME provider used only for calls
+  --reasoning-effort NAME none, minimal, low, medium or high
   --stt-model NAME       base.en (default: ~0.5 s per utterance on 2 cores) or small.en
                          (more accurate, ~1.7 s per utterance on 2 cores, ~300 MB more RAM)
   --voice NAME           Kokoro voice (default: bm_george)
+  --tts-speed NUMBER     Kokoro speech speed between 0.5 and 2.0
+  --end-silence-ms N     silence ending an utterance, 200 to 3000 ms
+  --ack-after-ms N       0 disables; otherwise speak the acknowledgement after 1 to 5000 ms
+  --ack-text TEXT        short acknowledgement spoken while Hermes is still working
   --agent-name NAME      name shown on the phone for calls (default: Hermes)
   --instance NAME        install/update/uninstall a named extra bridge (another agent on this host)
   --api-port PORT        the bridge's local API port (default 8765; each instance needs its own)
@@ -71,8 +85,15 @@ parse_flags() {
     case "$1" in
       --hermes-user) HERMES_USER=${2:?}; shift ;;
       --configure-hermes) CONFIGURE_HERMES=1 ;;
+      --hermes-model) HERMES_MODEL=${2:?}; shift ;;
+      --hermes-provider) HERMES_PROVIDER=${2:?}; shift ;;
+      --reasoning-effort) HERMES_REASONING_EFFORT=${2:?}; shift ;;
       --stt-model) STT_MODEL=${2:?}; shift ;;
       --voice) TTS_VOICE=${2:?}; shift ;;
+      --tts-speed) TTS_SPEED=${2:?}; shift ;;
+      --end-silence-ms) END_SILENCE_MS=${2:?}; shift ;;
+      --ack-after-ms) ACKNOWLEDGEMENT_AFTER_MS=${2:?}; shift ;;
+      --ack-text) ACKNOWLEDGEMENT_TEXT=${2:?}; shift ;;
       --agent-name) AGENT_NAME=${2:?}; shift ;;
       --instance) INSTANCE=${2:?}; shift ;;
       --api-port) API_PORT=${2:?}; shift ;;
@@ -88,7 +109,13 @@ parse_flags() {
 # Both read files a fresh install does not have yet: never fail (set -e + pipefail).
 toml_value() { { sed -n "s/^$1 = \"\\(.*\\)\"\$/\\1/p" "$ETC/bridge.toml" 2>/dev/null || true; } | head -1; }
 
+toml_section_value() { python3 -c 'import sys,tomllib; data=tomllib.load(open(sys.argv[1], "rb")); value=data.get(sys.argv[2], {}).get(sys.argv[3], ""); print(value if isinstance(value, str) else "")' "$ETC/bridge.toml" "$1" "$2" 2>/dev/null || true; }
+
+toml_section_number() { python3 -c 'import sys,tomllib; data=tomllib.load(open(sys.argv[1], "rb")); value=data.get(sys.argv[2], {}).get(sys.argv[3], ""); print(value if isinstance(value, (int, float)) and not isinstance(value, bool) else "")' "$ETC/bridge.toml" "$1" "$2" 2>/dev/null || true; }
+
 toml_port() { { sed -n "s/^$1 = \\([0-9][0-9]*\\)\$/\\1/p" "$ETC/bridge.toml" 2>/dev/null || true; } | head -1; }
+
+toml_quote() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1], ensure_ascii=False))' "$1"; }
 
 set_paths() {
   [[ -z $INSTANCE ]] && return 0
@@ -110,13 +137,41 @@ load_settings() {
   [[ $HERMES_PORT =~ ^[0-9]{2,5}$ && $HERMES_PORT -le 65535 ]] || die "invalid --hermes-port"
   [[ -n $HERMES_USER ]] || HERMES_USER=$({ sed -n 's/^HERMES_USER=//p' "$ETC/install.env" 2>/dev/null || true; } | head -1)
   [[ -n $AGENT_NAME ]] || AGENT_NAME=$(toml_value agent_name)
-  [[ -n $TTS_VOICE ]] || TTS_VOICE=$(toml_value voice)
-  [[ -n $STT_MODEL ]] || STT_MODEL=$(toml_value model)
+  [[ -n $HERMES_MODEL ]] || HERMES_MODEL=$(toml_section_value hermes model)
+  [[ -n $HERMES_PROVIDER ]] || HERMES_PROVIDER=$(toml_section_value hermes provider)
+  [[ -n $HERMES_REASONING_EFFORT ]] || HERMES_REASONING_EFFORT=$(toml_section_value hermes reasoning_effort)
+  [[ -n $TTS_VOICE ]] || TTS_VOICE=$(toml_section_value tts voice)
+  [[ -n $TTS_SPEED ]] || TTS_SPEED=$(toml_section_number tts speed)
+  [[ -n $STT_MODEL ]] || STT_MODEL=$(toml_section_value stt model)
+  [[ -n $END_SILENCE_MS ]] || END_SILENCE_MS=$(toml_section_number voice end_silence_ms)
+  [[ -n $ACKNOWLEDGEMENT_AFTER_MS ]] || ACKNOWLEDGEMENT_AFTER_MS=$(toml_section_number voice acknowledgement_after_ms)
+  [[ -n $ACKNOWLEDGEMENT_TEXT ]] || ACKNOWLEDGEMENT_TEXT=$(toml_section_value voice acknowledgement_text)
   HERMES_USER=${HERMES_USER:-hermes}
+  HERMES_MODEL=${HERMES_MODEL:-hermes-agent}
+  HERMES_PROVIDER=${HERMES_PROVIDER:-}
+  HERMES_REASONING_EFFORT=${HERMES_REASONING_EFFORT:-}
   STT_MODEL=${STT_MODEL:-base.en}
   TTS_VOICE=${TTS_VOICE:-bm_george}
+  TTS_SPEED=${TTS_SPEED:-1.0}
+  END_SILENCE_MS=${END_SILENCE_MS:-550}
+  ACKNOWLEDGEMENT_AFTER_MS=${ACKNOWLEDGEMENT_AFTER_MS:-0}
+  ACKNOWLEDGEMENT_TEXT=${ACKNOWLEDGEMENT_TEXT:-}
   AGENT_NAME=${AGENT_NAME:-Hermes}
   [[ -n ${MODEL_REVISIONS[$STT_MODEL]:-} ]] || die "unsupported --stt-model $STT_MODEL"
+  [[ $HERMES_REASONING_EFFORT =~ ^(none|minimal|low|medium|high)?$ ]] || die "invalid --reasoning-effort"
+  if [[ ! $TTS_SPEED =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+    ! python3 -c 'import sys; raise SystemExit(not 0.5 <= float(sys.argv[1]) <= 2.0)' "$TTS_SPEED"; then
+    die "invalid --tts-speed"
+  fi
+  if [[ ! $END_SILENCE_MS =~ ^[0-9]+$ ]] ||
+    ! python3 -c 'import sys; raise SystemExit(not 200 <= int(sys.argv[1]) <= 3000)' "$END_SILENCE_MS"; then
+    die "invalid --end-silence-ms"
+  fi
+  if [[ ! $ACKNOWLEDGEMENT_AFTER_MS =~ ^[0-9]+$ ]] ||
+    ! python3 -c 'import sys; raise SystemExit(not 0 <= int(sys.argv[1]) <= 5000)' "$ACKNOWLEDGEMENT_AFTER_MS"; then
+    die "invalid --ack-after-ms"
+  fi
+  python3 -c 'import sys; raise SystemExit(len(sys.argv[1]) > 120)' "$ACKNOWLEDGEMENT_TEXT" || die "invalid --ack-text (at most 120 characters)"
   [[ $HERMES_USER =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "invalid --hermes-user"
   [[ $TTS_VOICE =~ ^[a-z]{2}_[a-z0-9_]{1,40}$ ]] || die "invalid --voice"
   [[ $AGENT_NAME =~ ^[A-Za-z0-9][A-Za-z0-9\ ._\'-]{0,31}$ ]] || die "invalid --agent-name (1-32 letters, digits, spaces, . _ ' -)"
@@ -314,17 +369,25 @@ port = $API_PORT
 
 [hermes]
 url = "http://127.0.0.1:$HERMES_PORT"
-# Base of the per-phone call sessions (<base>-<phone>-<date>); the chat uses Hermes' own sessions.
 session_id = "hermes-call-phone"
+model = $(toml_quote "$HERMES_MODEL")
+provider = $(toml_quote "$HERMES_PROVIDER")
+reasoning_effort = $(toml_quote "$HERMES_REASONING_EFFORT")
 
 [tts]
 url = "http://127.0.0.1:8880"
-voice = "$TTS_VOICE"
+voice = $(toml_quote "$TTS_VOICE")
+speed = $TTS_SPEED
 
 [stt]
-model = "$STT_MODEL"
+model = $(toml_quote "$STT_MODEL")
 model_dir = "$STATE/models"
 threads = $(nproc)
+
+[voice]
+end_silence_ms = $END_SILENCE_MS
+acknowledgement_after_ms = $ACKNOWLEDGEMENT_AFTER_MS
+acknowledgement_text = $(toml_quote "$ACKNOWLEDGEMENT_TEXT")
 
 # Optional (defaults shown):
 # [calls]
@@ -333,8 +396,6 @@ threads = $(nproc)
 # max_call_seconds = 3600  # a call ends after this; a warning is spoken warning_seconds before
 # warning_seconds = 60
 # media_timeout = 20       # a call whose audio never arrives ends after this
-# [voice]
-# end_silence_ms = 550     # silence that ends the owner's utterance
 # [turn]
 # transport = "auto"       # TURN transport the bridge tries first: auto/udp, tcp or tls
 # [log]

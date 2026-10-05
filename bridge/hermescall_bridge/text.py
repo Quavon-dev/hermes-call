@@ -7,7 +7,7 @@ _URL = re.compile(r"https?://\S+")
 _SENTENCE_END = re.compile(r"[.!?…](?:[\"')\]]*)\s+|\n+")
 _CLAUSE_END = re.compile(r"[,;:—–](?:\s+)")
 FIRST_CHUNK_MIN_WORDS = 2
-FIRST_CHUNK_MAX_WORDS = 8
+FIRST_CHUNK_MAX_WORDS = 6
 MAX_CHUNK_CHARS = 220
 
 

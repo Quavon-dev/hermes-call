@@ -48,12 +48,30 @@ def test_tls_only_relay_still_gets_a_turn_server() -> None:
 def test_call_timeouts_from_config(tmp_path) -> None:
     path = tmp_path / "bridge.toml"
     path.write_text(
-        "[calls]\nring_timeout = 30\nmax_call_seconds = 1800\n[voice]\nend_silence_ms = 700\n[log]\nformat = 'json'\n"
+        "[calls]\nring_timeout = 30\nmax_call_seconds = 1800\n"
+        "[voice]\nend_silence_ms = 700\nacknowledgement_after_ms = 900\nacknowledgement_text = 'One moment.'\n"
+        "[tts]\nspeed = 1.08\n"
+        "[hermes]\nmodel = 'voice-fast'\nprovider = 'openrouter'\nreasoning_effort = 'none'\n"
+        "[log]\nformat = 'json'\n"
     )
     config = load(path)
     assert (config.ring_timeout, config.max_call_seconds, config.approval_timeout) == (30.0, 1800.0, 60.0)
     assert config.end_silence_ms == 700 and config.log_format == "json" and config.turn_transport == "auto"
-    for bad in ("[calls]\nring_timeout = 1\n", "[voice]\nend_silence_ms = 'x'\n", "[turn]\ntransport = 'sctp'\n"):
+    assert config.acknowledgement_after_ms == 900 and config.acknowledgement_text == "One moment."
+    assert config.tts_speed == 1.08
+    assert (config.hermes_model, config.hermes_provider, config.hermes_reasoning_effort) == (
+        "voice-fast",
+        "openrouter",
+        "none",
+    )
+    for bad in (
+        "[calls]\nring_timeout = 1\n",
+        "[voice]\nend_silence_ms = 'x'\n",
+        "[voice]\nacknowledgement_after_ms = 6000\n",
+        "[tts]\nspeed = 3\n",
+        "[hermes]\nreasoning_effort = 'extreme'\n",
+        "[turn]\ntransport = 'sctp'\n",
+    ):
         path.write_text(bad)
         with pytest.raises(ConfigError):
             load(path)

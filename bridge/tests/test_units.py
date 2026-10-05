@@ -12,7 +12,7 @@ import pytest
 
 from hermescall_bridge import config as config_mod
 from hermescall_bridge.audio import SpeechTrack
-from hermescall_bridge.conversation import APPROVAL_DENIED, APPROVAL_PROMPT, Conversation
+from hermescall_bridge.conversation import APPROVAL_DENIED, APPROVAL_PROMPT, Conversation, TurnSettings
 from hermescall_bridge.hermes import ApprovalRequest, HermesClient, TextDelta
 from hermescall_bridge.state import StateStore, new_device
 from hermescall_bridge.text import Chunker, speakable
@@ -43,9 +43,9 @@ def test_first_chunk_ends_at_clause_then_sentences() -> None:
     assert out == ["Good evening,", "sir, the backup finished.", "Everything looks fine.", "Want details?"]
 
 
-def test_first_chunk_is_forced_after_eight_words() -> None:
+def test_first_chunk_is_forced_after_six_words() -> None:
     chunks = Chunker().feed("one two three four five six seven eight nine ten")
-    assert chunks == ["one two three four five six seven eight"]
+    assert chunks == ["one two three four five six"]
 
 
 def test_short_first_sentence_is_not_delayed() -> None:
@@ -248,6 +248,42 @@ async def test_utterance_triggers_one_turn_and_is_spoken() -> None:
     assert len(heard) == 1 and heard[0] >= 16000 * 2
     assert hermes.turns[0][1] == "what is on my calendar" and "note" in hermes.turns[0][0]
     assert tts.spoken == ["Sure, I heard you.", "Anything else?"]
+
+
+async def test_delayed_acknowledgement_fills_only_slow_silence() -> None:
+    class SlowHermes(FakeHermes):
+        async def turn(self, system: str, text: str, images=(), session_id=None):
+            self.turns.append((system, text))
+            await asyncio.sleep(0.05)
+            yield TextDelta("Done.")
+
+    slow, tts, out = SlowHermes(), FakeTts(), SpeechTrack()
+    conversation = Conversation(
+        slow,
+        tts,
+        lambda a: asyncio.sleep(0, "x"),
+        out,
+        lambda r: asyncio.sleep(0, "deny"),
+        settings=TurnSettings(acknowledgement_after_ms=10, acknowledgement_text="One moment."),
+    )
+    player = drain(out)
+    await conversation._run_turn(None, time.monotonic(), "status", 0)
+    player.cancel()
+    assert tts.spoken == ["One moment.", "Done."]
+
+    fast, fast_tts, fast_out = FakeHermes(), FakeTts(), SpeechTrack()
+    fast_conversation = Conversation(
+        fast,
+        fast_tts,
+        lambda a: asyncio.sleep(0, "x"),
+        fast_out,
+        lambda r: asyncio.sleep(0, "deny"),
+        settings=TurnSettings(acknowledgement_after_ms=100, acknowledgement_text="One moment."),
+    )
+    fast_player = drain(fast_out)
+    await fast_conversation._run_turn(None, time.monotonic(), "status", 0)
+    fast_player.cancel()
+    assert fast_tts.spoken == ["Sure, I heard you.", "Anything else?"]
 
 
 def test_one_word_clause_is_not_cut() -> None:

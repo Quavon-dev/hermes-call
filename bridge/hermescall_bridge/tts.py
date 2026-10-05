@@ -13,9 +13,25 @@ class KokoroTts:
         self._voice = voice
         self._model = model
         self._speed = speed
+        self._cache: dict[str, bytes] = {}
+
+    async def preload(self, text: str) -> None:
+        if not text or text in self._cache:
+            return
+        chunks = [chunk async for chunk in self._remote(text)]
+        if chunks:
+            self._cache[text] = b"".join(chunks)
 
     async def synthesize(self, text: str) -> AsyncIterator[bytes]:
         """Yields 16-bit little-endian mono PCM at 24 kHz."""
+        cached = self._cache.get(text)
+        if cached is not None:
+            yield cached
+            return
+        async for chunk in self._remote(text):
+            yield chunk
+
+    async def _remote(self, text: str) -> AsyncIterator[bytes]:
         body = {
             "model": self._model,
             "input": text,

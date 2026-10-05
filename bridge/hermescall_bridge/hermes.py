@@ -75,7 +75,15 @@ TOOL_STATUSES = ("running", "completed")
 
 
 class HermesClient:
-    def __init__(self, url: str, api_key: str, session_id: str, model: str = "hermes-agent") -> None:
+    def __init__(
+        self,
+        url: str,
+        api_key: str,
+        session_id: str,
+        model: str = "hermes-agent",
+        provider: str = "",
+        reasoning_effort: str = "",
+    ) -> None:
         self._client = httpx.AsyncClient(
             base_url=url,
             headers={"Authorization": f"Bearer {api_key}"},
@@ -83,6 +91,8 @@ class HermesClient:
         )
         self._session_id = session_id
         self._model = model
+        self._provider = provider
+        self._reasoning_effort = reasoning_effort
         self._runs: bool | None = None  # None: not known yet (asked on the first turn)
 
     async def turn(
@@ -117,6 +127,7 @@ class HermesClient:
     async def _run_turn(self, system: str, content: str | list[dict[str, Any]], session: str) -> AsyncIterator[Event]:
         user_input = content if isinstance(content, str) else [{"role": "user", "content": content}]
         body = {"input": user_input, "instructions": system, "session_id": session, "model": self._model}
+        self._apply_model_options(body)
         response = await self._client.post("/v1/runs", json=body)
         if response.status_code == 404:
             raise _RunsUnavailable
@@ -163,6 +174,7 @@ class HermesClient:
             "stream": True,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
         }
+        self._apply_model_options(body)
         headers = {"X-Hermes-Session-Id": session}
         async with self._client.stream("POST", "/v1/chat/completions", json=body, headers=headers) as response:
             response.raise_for_status()
@@ -183,6 +195,14 @@ class HermesClient:
                     completion_id = payload.get("id", completion_id)
                     if text := _delta_text(payload):
                         yield TextDelta(text)
+
+    def _apply_model_options(self, body: dict[str, Any]) -> None:
+        if self._provider:
+            body["provider"] = self._provider
+        if self._reasoning_effort == "none":
+            body["model_options"] = {"reasoning": {"enabled": False}}
+        elif self._reasoning_effort:
+            body["model_options"] = {"reasoning": {"enabled": True, "effort": self._reasoning_effort}}
 
     async def answer_approval(self, request: ApprovalRequest, choice: str) -> str | None:
         """Answers with retries; if `choice` cannot be delivered, a deny is tried last.

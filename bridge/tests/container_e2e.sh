@@ -78,7 +78,7 @@ print(' '.join(s.text for s in m.transcribe(sys.argv[1], language='en')[0]))\""
 REPLY=$(in_agent "$TRANSCRIBE /root/reply.wav" 2>/dev/null || true)
 echo "Agent said: $REPLY"
 verdict "round trip: Whisper → Hermes → Kokoro → back to phone" 'grep -qi calendar <<<"$REPLY"'
-check "Hermes got session id, auth and phone system prompt" "grep -q '\"auth_ok\": true, \"session\": \"hermes-call-phone\", \"stream\": true, \"roles\": \\[\"system\", \"user\"\\]' /tmp/hermes.log"
+check "Hermes got session id, auth and phone system prompt" "grep -q 'auth_ok.*true' /tmp/hermes.log && grep -q 'session.*hermes-call-phone-' /tmp/hermes.log && grep -q 'stream.*true' /tmp/hermes.log && grep -q 'roles.*system.*user' /tmp/hermes.log && grep -q 'phone_system.*true' /tmp/hermes.log"
 
 check "call_owner plugin installed for the Hermes user" "[[ \$(stat -c '%U' /home/hermes/.hermes/plugins/hermes-call/__init__.py) == hermes ]]"
 check "Hermes .env holds the ring-only token, not the admin token" "grep -qx \"HERMES_CALL_TOKEN=\$(cat /etc/hermes-call-bridge/call_token)\" /home/hermes/.hermes/.env && ! grep -q \"\$(cat /etc/hermes-call-bridge/api_token)\" /home/hermes/.hermes/.env"
@@ -93,9 +93,16 @@ except urllib.error.HTTPError as error:
     raise SystemExit(error.code != 403)\""
 
 echo "--- the agent calls the phone (Hermes plugin tool call_owner):"
-in_agent "cd /root && ($TC listen --once --wav /root/hc/bridge/tests/data/question.wav --record /root/outbound.wav --seconds 20 --delay 7 >/tmp/listen.log 2>&1 &) ; sleep 4; runuser -u hermes -- env \$(grep ^HERMES_CALL_TOKEN= /home/hermes/.hermes/.env) python3 /root/hc/bridge/tests/hermes_plugin_call.py /home/hermes/.hermes/plugins/hermes-call/__init__.py 'backup finished' 'Good evening, this is Hermes. Your backup has finished.'" | tee /tmp/hc-ring.log
-sleep 22
+in_agent "cd /root && $TC listen --once --wav /root/hc/bridge/tests/data/question.wav --record /root/outbound.wav --seconds 20 --delay 7 >/tmp/listen.log 2>&1" &
+LISTENER_PID=$!
+sleep 4
+in_agent "cd /root && runuser -u hermes -- env \$(grep ^HERMES_CALL_TOKEN= /home/hermes/.hermes/.env) python3 /root/hc/bridge/tests/hermes_plugin_call.py /home/hermes/.hermes/plugins/hermes-call/__init__.py 'backup finished' 'Good evening, this is Hermes. Your backup has finished.'" | tee /tmp/hc-ring.log
 verdict "call_owner: ring answered by the phone" "grep -q '\"status\": \"answered\"' /tmp/hc-ring.log"
+if ! wait "$LISTENER_PID"; then
+  in_agent "cat /tmp/listen.log" || true
+  FAILED=1
+fi
+sleep 1
 OUT=$(in_agent "$TRANSCRIBE /root/outbound.wav" 2>/dev/null || true)
 echo "Agent opened with: $OUT"
 verdict "first_message spoken on answer" 'grep -qi "backup has finished" <<<"$OUT"'
