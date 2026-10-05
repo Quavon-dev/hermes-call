@@ -15,6 +15,8 @@ LOG = sys.argv[2]
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        messages = body["messages"]
+        system = messages[0].get("content", "") if messages else ""
         with open(LOG, "a") as log:
             log.write(
                 json.dumps(
@@ -22,7 +24,8 @@ class Handler(BaseHTTPRequestHandler):
                         "auth_ok": self.headers.get("Authorization") == f"Bearer {KEY}",
                         "session": self.headers.get("X-Hermes-Session-Id"),
                         "stream": body.get("stream"),
-                        "roles": [m["role"] for m in body["messages"]],
+                        "roles": [m["role"] for m in messages],
+                        "phone_system": isinstance(system, str) and "live phone call" in system,
                     }
                 )
                 + "\n"
