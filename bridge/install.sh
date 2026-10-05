@@ -109,9 +109,9 @@ parse_flags() {
 # Both read files a fresh install does not have yet: never fail (set -e + pipefail).
 toml_value() { { sed -n "s/^$1 = \"\\(.*\\)\"\$/\\1/p" "$ETC/bridge.toml" 2>/dev/null || true; } | head -1; }
 
-toml_section_value() { { sed -n "/^\\[$1\\]/,/^\\[/ s/^$2 = \"\\(.*\\)\"\$/\\1/p" "$ETC/bridge.toml" 2>/dev/null || true; } | head -1; }
+toml_section_value() { python3 -c 'import sys,tomllib; data=tomllib.load(open(sys.argv[1], "rb")); value=data.get(sys.argv[2], {}).get(sys.argv[3], ""); print(value if isinstance(value, str) else "")' "$ETC/bridge.toml" "$1" "$2" 2>/dev/null || true; }
 
-toml_section_number() { { sed -n "/^\\[$1\\]/,/^\\[/ s/^$2 = \\([0-9.][0-9.]*\\)\$/\\1/p" "$ETC/bridge.toml" 2>/dev/null || true; } | head -1; }
+toml_section_number() { python3 -c 'import sys,tomllib; data=tomllib.load(open(sys.argv[1], "rb")); value=data.get(sys.argv[2], {}).get(sys.argv[3], ""); print(value if isinstance(value, (int, float)) and not isinstance(value, bool) else "")' "$ETC/bridge.toml" "$1" "$2" 2>/dev/null || true; }
 
 toml_port() { { sed -n "s/^$1 = \\([0-9][0-9]*\\)\$/\\1/p" "$ETC/bridge.toml" 2>/dev/null || true; } | head -1; }
 
