@@ -115,7 +115,7 @@ async def test_call_specific_model_provider_and_reasoning_are_forwarded() -> Non
     body = json.loads(api.seen[1].content)
     assert body["model"] == "voice-fast"
     assert body["provider"] == "openrouter"
-    assert body["model_options"] == {"reasoning_effort": "none"}
+    assert body["model_options"] == {"reasoning": {"enabled": False}}
 
 
 async def test_images_go_as_content_parts_of_the_run_input() -> None:
