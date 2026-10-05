@@ -159,9 +159,10 @@ load_settings() {
   AGENT_NAME=${AGENT_NAME:-Hermes}
   [[ -n ${MODEL_REVISIONS[$STT_MODEL]:-} ]] || die "unsupported --stt-model $STT_MODEL"
   [[ $HERMES_REASONING_EFFORT =~ ^(none|minimal|low|medium|high)?$ ]] || die "invalid --reasoning-effort"
-  [[ $TTS_SPEED =~ ^[0-9]+([.][0-9]+)?$ ]] || die "invalid --tts-speed"
-  [[ $END_SILENCE_MS =~ ^[0-9]+$ ]] || die "invalid --end-silence-ms"
-  [[ $ACKNOWLEDGEMENT_AFTER_MS =~ ^[0-9]+$ ]] || die "invalid --ack-after-ms"
+  [[ $TTS_SPEED =~ ^[0-9]+([.][0-9]+)?$ ]] && python3 -c 'import sys; raise SystemExit(not 0.5 <= float(sys.argv[1]) <= 2.0)' "$TTS_SPEED" || die "invalid --tts-speed"
+  [[ $END_SILENCE_MS =~ ^[0-9]+$ ]] && python3 -c 'import sys; raise SystemExit(not 200 <= int(sys.argv[1]) <= 3000)' "$END_SILENCE_MS" || die "invalid --end-silence-ms"
+  [[ $ACKNOWLEDGEMENT_AFTER_MS =~ ^[0-9]+$ ]] && python3 -c 'import sys; raise SystemExit(not 0 <= int(sys.argv[1]) <= 5000)' "$ACKNOWLEDGEMENT_AFTER_MS" || die "invalid --ack-after-ms"
+  python3 -c 'import sys; raise SystemExit(len(sys.argv[1]) > 120)' "$ACKNOWLEDGEMENT_TEXT" || die "invalid --ack-text (at most 120 characters)"
   [[ $HERMES_USER =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "invalid --hermes-user"
   [[ $TTS_VOICE =~ ^[a-z]{2}_[a-z0-9_]{1,40}$ ]] || die "invalid --voice"
   [[ $AGENT_NAME =~ ^[A-Za-z0-9][A-Za-z0-9\ ._\'-]{0,31}$ ]] || die "invalid --agent-name (1-32 letters, digits, spaces, . _ ' -)"
