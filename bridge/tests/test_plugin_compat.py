@@ -334,3 +334,32 @@ async def test_a_hermes_prompt_object_is_delivered_without_the_always_tier(adapt
     path, body = http.posts[-1]
     assert path == "/v1/chat/approvals" and body["choices"] == ["once", "session", "deny"]
     assert body["command"] == "rm -rf /w"
+
+
+async def test_reply_drafts_go_to_the_bridge_and_never_fail(adapter_module) -> None:
+    class DownHttp(FakeHttp):
+        async def post(self, path: str, json: dict, timeout: float | None = None):
+            raise adapter_module.httpx.ConnectError("bridge restarting")
+
+    adapter = adapter_module.HermesCallAdapter(None)
+    assert adapter.supports_draft_streaming("dm", chat_id="owner")
+    adapter._http = FakeHttp([])
+    result = await adapter.send_draft("owner", 3, "x" * 5000)
+    assert result.success
+    ((path, body),) = adapter._http.posts
+    assert path == "/v1/chat/draft" and body["draft_id"] == "3" and len(body["text"]) == adapter_module.MAX_DRAFT
+    adapter._http = DownHttp([])
+    assert (await adapter.send_draft("owner", 3, "more")).success  # Hermes must not fall back to edits
+    adapter._http = None
+    assert (await adapter.send_draft("owner", 3, "offline")).success
+
+
+def test_replies_stream_by_default_unless_hermes_config_says_otherwise(monkeypatch) -> None:
+    display = types.ModuleType("gateway.display_config")
+    display._PLATFORM_DEFAULTS = {"telegram": {"streaming": True}}
+    monkeypatch.setitem(sys.modules, "gateway.display_config", display)
+    plugin.stream_replies_by_default()
+    assert display._PLATFORM_DEFAULTS["hermes_call"] == {"streaming": True}
+    display._PLATFORM_DEFAULTS["hermes_call"]["streaming"] = False  # someone's own default stays
+    plugin.stream_replies_by_default()
+    assert display._PLATFORM_DEFAULTS["hermes_call"]["streaming"] is False

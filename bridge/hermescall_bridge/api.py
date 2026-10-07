@@ -35,6 +35,7 @@ HERMES_ROUTES = {
     ("POST", "/v1/chat/messages"),
     ("POST", "/v1/chat/files"),
     ("POST", "/v1/chat/typing"),
+    ("POST", "/v1/chat/draft"),
     ("POST", "/v1/chat/approvals"),
     ("POST", "/v1/chat/progress"),
     ("POST", "/v1/phone/queries"),
@@ -190,6 +191,12 @@ def add_chat_routes(app: web.Application, chat: ChatService) -> None:
         await chat.typing()
         return web.json_response({"ok": True})
 
+    async def chat_draft(request: web.Request) -> web.Response:
+        body = await json_body(request)
+        draft_id = text_field(body, "draft_id", 32, required=True)
+        chat.draft(draft_id, text_field(body, "text", MAX_TEXT))
+        return web.json_response({"ok": True})
+
     async def chat_approval(request: web.Request) -> web.Response:
         body = await json_body(request)
         request_id = text_field(body, "request_id", 64, required=True)
@@ -214,6 +221,7 @@ def add_chat_routes(app: web.Application, chat: ChatService) -> None:
     app.router.add_post("/v1/chat/files", chat_file)
     app.router.add_get("/v1/chat/files/{file_id}", chat_file_data)
     app.router.add_post("/v1/chat/typing", chat_typing)
+    app.router.add_post("/v1/chat/draft", chat_draft)
     app.router.add_post("/v1/chat/approvals", chat_approval)
 
 

@@ -59,6 +59,9 @@ APPROVAL_CHOICES = ("once", "session")
 APPROVAL_POST_TIMEOUT = 10.0
 BACKOFF_SECONDS = (1, 2, 5, 10, 30)
 TYPING_INTERVAL = 4.0
+# Live reply drafts: the bridge shows at most this much (the final reply carries everything).
+MAX_DRAFT = 4000
+DRAFT_TIMEOUT = 5.0
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic"}
 PLATFORM_HINT = (
     "You are chatting with your owner in the Hermes Call iPhone app (end-to-end encrypted to their phone). "
@@ -342,6 +345,21 @@ class HermesCallAdapter(BasePlatformAdapter):
         if reply_to and reply_to in self._answering:
             return reply_to
         return next(reversed(self._answering), None) if self._answering else None
+
+    def supports_draft_streaming(
+        self, chat_type: str | None = None, metadata: dict[str, Any] | None = None, chat_id: str | None = None
+    ) -> bool:
+        return True
+
+    async def send_draft(self, chat_id: str, draft_id: int, content: str, metadata: dict[str, Any] | None = None) -> SendResult:
+        """The reply so far, shown live in the app. Always "sent": a lost frame is replaced by the next one or
+        the final reply, and a failure would make Hermes fall back to edits, which this platform does not have."""
+        if self._http is not None:
+            try:
+                await _post(self._http, "/v1/chat/draft", {"draft_id": str(draft_id), "text": content[:MAX_DRAFT]}, DRAFT_TIMEOUT)
+            except httpx.HTTPError:
+                pass
+        return SendResult(success=True)
 
     async def send_typing(self, chat_id: str, metadata: dict[str, Any] | None = None) -> None:
         now = time.monotonic()

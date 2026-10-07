@@ -199,6 +199,7 @@ def build_bridge(
         prepare_speech,
     )
     phone.recent_activity = calls.last_activity
+    chat.supports = calls.peers.supports
 
     async def stop_agent() -> None:
         calls.interrupt()

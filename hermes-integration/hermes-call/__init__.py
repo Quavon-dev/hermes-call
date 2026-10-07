@@ -7,7 +7,9 @@
   `send_message`, cron delivery and `hermes send --to hermes_call` reach the phone;
 - hooks `pre_tool_call` / `post_tool_call`: tool progress of hermes_call chat turns goes to the
   phone's tasks ring and Live Activity (progress.py). This works with any
-  `display.platforms.hermes_call.tool_progress` setting; no Hermes config change is needed.
+  `display.platforms.hermes_call.tool_progress` setting; no Hermes config change is needed;
+- replies stream into the app while Hermes writes them (drafts); `display.platforms.hermes_call.streaming:
+  false` turns that off.
 """
 
 import base64
@@ -37,6 +39,7 @@ FEATURES = {
     "chat approvals": (("tools.approval", "resolve_gateway_approval"),),
     "task progress": (("gateway.session_context", "get_session_env"),),
     "tool previews": (("agent.display", "build_tool_preview"),),
+    "live replies": (("gateway.display_config", "_PLATFORM_DEFAULTS"),),
 }
 # How often a waiting tool checks whether the owner interrupted the agent.
 INTERRUPT_POLL = 0.5
@@ -575,3 +578,13 @@ def register(ctx) -> None:
         from . import adapter
 
         adapter.register(ctx)
+        if features["live replies"]:
+            stream_replies_by_default()
+
+
+def stream_replies_by_default() -> None:
+    """Replies appear in the app as they are written (Hermes streams them as drafts, adapter.send_draft).
+    Only the platform's default: `display.platforms.hermes_call.streaming: false` in Hermes' config wins."""
+    defaults = importlib.import_module("gateway.display_config")._PLATFORM_DEFAULTS
+    if isinstance(defaults, dict):
+        defaults.setdefault("hermes_call", {}).setdefault("streaming", True)

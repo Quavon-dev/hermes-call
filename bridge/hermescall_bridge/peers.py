@@ -16,7 +16,10 @@ from .version import PROTOCOL_VERSION, VERSION
 log = logging.getLogger(__name__)
 
 # Optional features this bridge offers (docs/protocol.md, "App ↔ bridge versions").
-BRIDGE_CAPS: tuple[str, ...] = ("unsupported", "call_resume", "history")
+BRIDGE_CAPS: tuple[str, ...] = ("unsupported", "call_resume", "history", "chat_draft", "voice_follow")
+# Phone caps the chat uses: live reply drafts, and a voice reply's audio sent after its text.
+DRAFT_CAP = "chat_draft"
+VOICE_FOLLOW_CAP = "voice_follow"
 NAME = re.compile(r"[a-z0-9_]{1,32}")
 MAX_CAPS = 32
 MAX_APP_VERSION = 40

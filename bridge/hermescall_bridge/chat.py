@@ -38,6 +38,7 @@ from .files import FileSpool, Incoming
 from .hermes import APPROVAL_CHOICES, MAX_APPROVAL_TEXT
 from .history import HISTORY_LIMIT, ChatHistory
 from .outbox import Outbox
+from .peers import DRAFT_CAP, VOICE_FOLLOW_CAP
 from .state import Device, State
 from .transport import Transport
 from .tts import SAMPLE_RATE as TTS_RATE
@@ -61,6 +62,9 @@ ATTACHMENT_KINDS = ("photo", "voice", "file")
 # (`answers`/`reply_to` = the note's id) comes within this time; TTS may take at most SPEAK_TIMEOUT.
 VOICE_REPLY_TTL = 600.0
 SPEAK_TIMEOUT = 20.0
+# Live reply drafts (Hermes streaming): at most one update per phone this often, the newest text wins.
+DRAFT_INTERVAL = 0.3
+MAX_DRAFT = 4000
 _MIME_OK = frozenset("abcdefghijklmnopqrstuvwxyz0123456789+-./")
 
 
@@ -167,6 +171,11 @@ class ChatService:
         self.last_poll = 0.0
         # The owner's `/stop` (set by the daemon): interrupt a call's turn, end the task on the phones.
         self.on_stop: Callable[[], Awaitable[None]] | None = None
+        # (device id, cap) -> whether that phone said it supports it (set by the daemon: CallManager.peers).
+        self.supports: Callable[[str, str], bool] = lambda device_id, cap: False
+        self._draft: dict[str, Any] | None = None
+        self._draft_sender: asyncio.Task | None = None
+        self._voice_followers: set[asyncio.Task] = set()
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -194,6 +203,9 @@ class ChatService:
             await self._db.call(self._db.store.drop_pending, pending.message_id)
 
     async def close(self) -> None:
+        for task in (*self._voice_followers, self._draft_sender):
+            if task is not None:
+                task.cancel()
         self.outbox.stop()
         await asyncio.get_running_loop().run_in_executor(None, self._db.close)
 
@@ -451,13 +463,36 @@ class ChatService:
         if reply_to:
             body["reply_to"] = reply_to
         self._remember(self._agent_name, text)
-        audio = await self._speak(text) if self._answers_voice_note(kind, answers or reply_to) else None
-        if audio is None:
+        self._draft = None  # the final reply replaces the phones' draft
+        if not self._answers_voice_note(kind, answers or reply_to):
             await self._record(body, [])
             await self._mail_all(body, alert=True)
-        else:
-            await self._send_voice_reply(body, audio)
+            return message_id
+        # Phones that can take the audio later get the text now; older apps get both together.
+        devices = list(self._state.devices.values())
+        early = [d for d in devices if self.supports(d.id, VOICE_FOLLOW_CAP)]
+        for device in early:
+            await self._mail(device, body, alert=True)
+        task = asyncio.ensure_future(self._follow_with_voice(body, early, [d for d in devices if d not in early]))
+        self._voice_followers.add(task)
+        task.add_done_callback(self._voice_followers.discard)
+        task.add_done_callback(_log_failure)
         return message_id
+
+    async def _follow_with_voice(self, body: dict[str, Any], early: list[Device], late: list[Device]) -> None:
+        audio = await self._speak(body["text"])
+        if audio is None:
+            await self._record(body, [])
+            for device in late:
+                await self._mail(device, body, alert=True)
+            return
+        file = await self.files.put(body["id"], audio, "voice", "reply.m4a", "audio/mp4")
+        await self._record(body, [file])
+        for device in early:
+            ref = await self._upload(device, file)
+            if ref is not None:
+                await self._mail(device, {"type": "chat_attach", "id": body["id"], "attachments": [ref]}, alert=False)
+        await self._send_voice_reply(body, file, late)
 
     async def queued(self, message_id: str) -> bool:
         """Whether some phone's copy still waits in the outbox (the relay has not taken it yet)."""
@@ -503,11 +538,9 @@ class ChatService:
         log.info("voice reply: %d chars spoken, %.1f s, %d bytes", len(spoken), len(pcm) / 2 / TTS_RATE, len(data))
         return data
 
-    async def _send_voice_reply(self, body: dict[str, Any], audio: bytes) -> None:
+    async def _send_voice_reply(self, body: dict[str, Any], file: StoredFile, devices: list[Device]) -> None:
         """One chat message: the reply text plus the voice note (text only for a phone whose upload failed)."""
-        file = await self.files.put(body["id"], audio, "voice", "reply.m4a", "audio/mp4")
-        await self._record(body, [file])
-        for device in list(self._state.devices.values()):
+        for device in devices:
             ref = await self._upload(device, file)
             voiced = {**body, "attachments": [ref]} if ref is not None else body
             if ref is not None and not self._fits(device, voiced):
@@ -594,6 +627,24 @@ class ChatService:
     async def typing(self) -> None:
         for device in list(self._state.devices.values()):
             await self._live(device, {"type": "typing"})
+
+    def draft(self, draft_id: str, text: str) -> None:
+        """Hermes streams a reply: its text so far, live to the phones that show drafts (never stored,
+        never pushed; the final reply comes as a normal message). Updates are coalesced."""
+        self._draft = {"type": "chat_draft", "draft": draft_id, "text": text[:MAX_DRAFT]}
+        if self._draft_sender is None or self._draft_sender.done():
+            self._draft_sender = asyncio.ensure_future(self._send_drafts())
+            self._draft_sender.add_done_callback(_log_failure)
+
+    async def _send_drafts(self) -> None:
+        sent: dict[str, Any] | None = None
+        while self._draft is not None and self._draft is not sent:
+            sent = self._draft
+            for device in list(self._state.devices.values()):
+                if self.supports(device.id, DRAFT_CAP):
+                    with contextlib.suppress(ProtocolError, TimeoutError, OSError):
+                        await self._live(device, sent)
+            await asyncio.sleep(DRAFT_INTERVAL)
 
     async def request_approval(
         self,

@@ -195,6 +195,8 @@ unknown mailbox message from its mailbox.
 | `unsupported` | both | answers unknown types with `unsupported` |
 | `call_resume` | both | a call survives a network change (see "Call resume") |
 | `history` | bridge: serves `history_request`; app: may ask for it | recent chat for a newly paired phone (see "Chat history") |
+| `chat_draft` | app: shows them | live drafts of a reply Hermes is still writing (see "Live reply drafts") |
+| `voice_follow` | app: takes them | a spoken reply's text arrives at once, its audio follows as `chat_attach` (see "Spoken replies") |
 
 The bridge's `state.json` carries `"schema": 1`; files without it are schema 0. On start the bridge
 runs its migration hooks from the file's schema up to its own and writes the file back; a file from a
@@ -306,6 +308,8 @@ after it has stored the message (`mail_ack`), so a crash cannot lose it.
 | bridge → device | `chat_ack` | `id`, `state: delivered/transcribed`, `transcript?` (voice notes) |
 | bridge → device | `chat` (mail) | `id`, `role: agent/owner` (owner = mirrored from another phone, with its attachments since 0.7: the sender's sealed blob uploaded again for this phone, same `key`; a failed upload becomes a `[kind: name]` line), `kind: text/missed_call/declined_call`, `text`, `attachments?` (with `size`) |
 | bridge → device | `typing` | – |
+| bridge → device | `chat_draft` (live, `chat_draft` cap) | `draft` (id of the reply being written, ≤ 32 chars), `text` (the reply so far, ≤ 4000) |
+| bridge → device | `chat_attach` (mail, `voice_follow` cap) | `id` (an agent `chat` the phone has), `attachments` (as in `chat`) |
 | bridge → device | `approval_request` (mail) | `request_id`, `command`, `description`, `chat: true`, `choices` (e.g. `["once","session","deny"]`; absent from older bridges = once/deny) |
 | device → bridge | `approval` (mailbox envelope, no `call_id`) | `request_id`, `choice: once/session/deny` |
 | bridge → device | `approval_done` | `request_id` (answered on another phone) |
@@ -314,6 +318,16 @@ A resent chat message (same `id`, new `mid`) is acked again but delivered once. 
 an owner message durably before it sends `delivered` (so `delivered` survives a bridge restart);
 agent messages wait in a persistent outbox on the bridge until the relay's mailbox took them
 (retried with backoff and after every reconnect, for up to 7 days, with the same `mid`).
+
+### Live reply drafts (`chat_draft`)
+
+With Hermes streaming on (the plugin turns it on for this platform by default;
+`display.platforms.hermes_call.streaming: false` in Hermes' config turns it off), Hermes sends drafts
+of a reply while it writes it: the adapter's `send_draft` → `POST /v1/chat/draft {draft_id, text}` →
+a live E2E `chat_draft` to every connected phone that listed the cap, at most one per 300 ms (the newest
+text wins). Drafts are never stored, mailed or pushed; a phone shows the newest one in place of the
+typing indicator and drops it when the reply arrives as a normal `chat` message (or after 30 s without
+an update). Older apps get no drafts and keep the typing indicator.
 
 ### Chat history (`history`)
 
@@ -343,6 +357,10 @@ message: `text` = the reply, `attachments: [{kind: "voice", name: "reply.m4a", m
 blob_id, key, size}]` (AAC-LC mono ≈ 32 kbit/s in MP4). Only that first reply is spoken. If TTS
 fails or takes over 20 s, encoding or the upload fails, or the message would exceed the mail
 limit, the text arrives alone.
+
+Phones with the `voice_follow` cap get the reply's `chat` (text only) at once and, once the audio is
+ready, a `chat_attach` mail (no alert) with the same `id` and the voice attachment, which the app adds to
+that message. Phones without the cap get one message with both, as above.
 
 ### Stop (`/stop`)
 
