@@ -69,6 +69,9 @@ class TurnSettings:
     start_ms: int = 96
     min_speech_ms: int = 200
     end_silence_ms: int = 550
+    # Recognition starts this far into the closing silence and is kept if the owner stays quiet;
+    # only this much of the silence goes to Whisper.
+    speculate_ms: int = 250
     barge_in_ms: int = 250
     preroll_ms: int = 320
     max_utterance_ms: int = 30_000
@@ -179,6 +182,7 @@ class Conversation:
             await self.stop()
 
     async def stop(self) -> None:
+        self._drop_speculation()
         self._cancel_captions()
         if self._announcer is not None:
             self._announcer.cancel()
@@ -245,6 +249,18 @@ class Conversation:
         self._voiced = 0
         self._silence = 0
         self._barged = False
+        self._speculation: asyncio.Task | None = None
+
+    def _drop_speculation(self) -> None:
+        if self._speculation is not None:
+            self._speculation.cancel()
+            self._speculation = None
+
+    def _trimmed(self) -> np.ndarray:
+        """The utterance without the closing silence beyond `speculate_ms` (same audio either way)."""
+        assert self._utterance is not None
+        extra = max(0, self._silence - min(self._s.speculate_ms, self._s.end_silence_ms)) // CHUNK_MS
+        return np.concatenate(self._utterance[: len(self._utterance) - extra])
 
     def _on_chunk(self, chunk: np.ndarray, probability: float | None = None) -> None:
         """`probability`: the VAD result computed off the event loop (None: compute it here)."""
@@ -269,17 +285,24 @@ class Conversation:
         if speech:
             self._voiced += CHUNK_MS
             self._silence = 0
+            self._drop_speculation()
         else:
             self._silence += CHUNK_MS
         if not self._barged and self.busy and self._voiced >= self._s.barge_in_ms:
             self._interrupt()
             self._barged = True
         duration = len(self._utterance) * CHUNK_MS
+        wanted = self._voiced >= self._s.min_speech_ms and (self._barged or not self.busy) and not self._device_stt
         if self._silence >= self._s.end_silence_ms or duration >= self._s.max_utterance_ms:
-            audio, voiced, barged = np.concatenate(self._utterance), self._voiced, self._barged
+            audio, guess = self._trimmed(), self._speculation
+            self._speculation = None
             self._reset_utterance()
-            if voiced >= self._s.min_speech_ms and (barged or not self.busy) and not self._device_stt:
-                self._submit(audio)
+            if wanted:
+                self._submit(audio, guess)
+            elif guess is not None:
+                guess.cancel()
+        elif wanted and self._speculation is None and self._silence >= self._s.speculate_ms:
+            self._speculation = asyncio.ensure_future(self._transcribe(self._trimmed()))
 
     def _interrupt(self) -> None:
         if self.busy:
@@ -319,14 +342,22 @@ class Conversation:
             handle.cancel()
         self._pending_captions.clear()
 
-    def _submit(self, audio: np.ndarray) -> None:
+    def _submit(self, audio: np.ndarray, guess: asyncio.Task | None = None) -> None:
+        """`guess`: recognition of this same audio, started early in the closing silence."""
         if self._turn is not None:
             self._turn.cancel()
-        self._turn = asyncio.ensure_future(self._run_turn(audio, time.monotonic()))
+        self._turn = asyncio.ensure_future(self._run_turn(audio, time.monotonic(), guess=guess))
 
-    async def _run_turn(self, audio: np.ndarray | None, ended: float, text: str = "", stt_ms: int | None = None) -> None:
+    async def _run_turn(
+        self,
+        audio: np.ndarray | None,
+        ended: float,
+        text: str = "",
+        stt_ms: int | None = None,
+        guess: asyncio.Task | None = None,
+    ) -> None:
         if audio is not None:
-            text = await self._transcribe(audio)
+            text = await (guess if guess is not None else self._transcribe(audio))
         stt_done = time.monotonic()
         if not text:
             return

@@ -251,6 +251,55 @@ async def test_utterance_triggers_one_turn_and_is_spoken() -> None:
     assert tts.spoken == ["Sure, I heard you.", "Anything else?"]
 
 
+async def run_until_quiet(conversation: Conversation, audio: np.ndarray) -> None:
+    async def source():
+        for block in blocks_of(audio):
+            yield block
+            await asyncio.sleep(0)
+        while conversation.busy:
+            await asyncio.sleep(0.01)
+
+    player = drain(conversation._out)
+    await asyncio.wait_for(conversation.run(source()), 10)
+    player.cancel()
+
+
+async def test_recognition_starts_in_the_closing_silence_and_is_kept() -> None:
+    hermes, tts, out = FakeHermes(), FakeTts(), SpeechTrack()
+    during_utterance: list[bool] = []
+
+    async def transcribe(audio: np.ndarray) -> str:
+        during_utterance.append(conversation._utterance is not None)
+        return "what is on my calendar"
+
+    conversation = Conversation(hermes, tts, transcribe, out, lambda r: asyncio.sleep(0, "deny"))
+    silence = np.zeros(16000, dtype=np.float32)
+    await run_until_quiet(conversation, np.concatenate([silence, speech_16k(), silence]))
+    assert during_utterance[-1] is True  # started before end_silence_ms of quiet
+    assert [turn[1] for turn in hermes.turns] == ["what is on my calendar"]
+
+
+async def test_early_recognition_is_dropped_when_the_owner_keeps_talking() -> None:
+    hermes, tts, out = FakeHermes(), FakeTts(), SpeechTrack()
+    calls: list[int] = []
+    finished: list[int] = []
+
+    async def transcribe(audio: np.ndarray) -> str:
+        calls.append(len(audio))
+        await asyncio.sleep(0.05)
+        finished.append(len(audio))
+        return f"heard {len(audio)} samples"
+
+    conversation = Conversation(hermes, tts, transcribe, out, lambda r: asyncio.sleep(0, "deny"))
+    speech, silence = speech_16k()[: 61 * 512], np.zeros(16000, dtype=np.float32)  # without its closing quiet
+    pause = np.zeros(16000 * 300 // 1000, dtype=np.float32)
+    await run_until_quiet(conversation, np.concatenate([silence, speech, pause, speech, silence]))
+    assert len(hermes.turns) == 1
+    assert hermes.turns[0][1] == f"heard {finished[-1]} samples"
+    assert finished[-1] == max(calls) > len(speech) * 2  # both halves in one utterance
+    assert len(finished) < len(calls)  # the early guess was cancelled, not used
+
+
 async def test_delayed_acknowledgement_fills_only_slow_silence() -> None:
     class SlowHermes(FakeHermes):
         async def turn(self, system: str, text: str, images=(), session_id=None):

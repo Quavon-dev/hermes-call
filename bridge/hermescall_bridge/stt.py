@@ -73,6 +73,8 @@ class Transcriber:
     def _work(self) -> None:
         while True:
             job = self._jobs.get()
+            if job.future.cancelled():
+                continue  # an early guess the owner talked over, or a hung-up call
             started = time.monotonic()
             try:
                 result: str | BaseException = self._transcribe(job.audio)

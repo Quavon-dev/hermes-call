@@ -225,7 +225,8 @@ max_call_seconds = 3600  # "We have about a minute left on this call." warning_s
 warning_seconds = 60
 media_timeout = 20       # a call whose audio never arrives ends
 [voice]
-end_silence_ms = 550     # silence that ends your utterance (200–3000)
+end_silence_ms = 550     # silence that ends your utterance (200–3000); recognition already
+                         # starts after 250 ms of it and is kept if you stay quiet
 [turn]
 transport = "auto"       # TURN transport the bridge uses: auto/udp, tcp or tls (turns:)
 [log]
