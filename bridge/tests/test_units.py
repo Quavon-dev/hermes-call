@@ -45,9 +45,9 @@ def test_first_chunk_ends_at_clause_then_sentences() -> None:
     assert out == ["Good evening,", "sir, the backup finished.", "Everything looks fine.", "Want details?"]
 
 
-def test_first_chunk_is_forced_after_six_words() -> None:
-    chunks = Chunker().feed("one two three four five six seven eight nine ten")
-    assert chunks == ["one two three four five six"]
+def test_long_first_chunk_is_forced_after_fourteen_words() -> None:
+    chunks = Chunker().feed(" ".join(f"w{i}" for i in range(20)))
+    assert chunks == [" ".join(f"w{i}" for i in range(14))]
 
 
 def test_short_first_sentence_is_not_delayed() -> None:
