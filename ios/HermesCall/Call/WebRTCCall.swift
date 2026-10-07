@@ -140,8 +140,8 @@ final class WebRTCCall: NSObject {
     /// A UDP relay candidate is enough to connect (the bridge uses UDP TURN unless told otherwise):
     /// the offer goes out shortly after it instead of waiting for TCP and TLS too. Without one, the
     /// offer still waits for all of them (networks that block UDP).
-    fileprivate func relayCandidateGathered(_ sdp: String) {
-        guard !gatheringComplete, !udpRelayFound, Self.isUDPRelay(sdp) else { return }
+    fileprivate func relayCandidateGathered(_ sdp: String, serverURL: String?) {
+        guard !gatheringComplete, !udpRelayFound, Self.isUDPRelay(sdp, serverURL: serverURL) else { return }
         udpRelayFound = true
         Task { [weak self] in
             try? await Task.sleep(for: Self.udpRelayGrace)
@@ -149,10 +149,13 @@ final class WebRTCCall: NSObject {
         }
     }
 
-    static func isUDPRelay(_ candidate: String) -> Bool {
+    /// A relay candidate always says `udp` (the relayed address is UDP); how the phone reaches the TURN
+    /// server shows only in the server URL: `turn:` without `transport=tcp` is UDP.
+    static func isUDPRelay(_ candidate: String, serverURL: String?) -> Bool {
         let fields = candidate.lowercased().split(separator: " ")
-        guard let typ = fields.firstIndex(of: "typ"), typ + 1 < fields.count else { return false }
-        return fields.count > 2 && fields[2] == "udp" && fields[typ + 1] == "relay"
+        guard let typ = fields.firstIndex(of: "typ"), typ + 1 < fields.count, fields[typ + 1] == "relay",
+              let url = serverURL?.lowercased(), url.hasPrefix("turn:") else { return false }
+        return !url.contains("transport=tcp")
     }
 
     fileprivate func finishGathering() {
@@ -194,8 +197,8 @@ private final class PeerDelegate: NSObject, RTCPeerConnectionDelegate, @unchecke
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
-        let sdp = candidate.sdp
-        Task { @MainActor [weak owner] in owner?.relayCandidateGathered(sdp) }
+        let sdp = candidate.sdp, server = candidate.serverUrl
+        Task { @MainActor [weak owner] in owner?.relayCandidateGathered(sdp, serverURL: server) }
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}

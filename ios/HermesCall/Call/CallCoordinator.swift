@@ -363,7 +363,13 @@ final class CallCoordinator: NSObject {
                 throw error
             }
             let transcriber = await preparing
-            let rtc = try WebRTCCall(turn: turn, relayHost: session.profile.relay.host, onDeviceSpeech: transcriber != nil)
+            let rtc: WebRTCCall
+            do {
+                rtc = try WebRTCCall(turn: turn, relayHost: session.profile.relay.host, onDeviceSpeech: transcriber != nil)
+            } catch {
+                await transcriber?.stop()
+                throw error
+            }
             EngineAudioDevice.shared.agentSpectrum.reset()
             EngineAudioDevice.shared.micSpectrum.reset()
             guard call?.uuid == uuid else {

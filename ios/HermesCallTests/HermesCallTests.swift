@@ -79,12 +79,15 @@ import Testing
     }
 
     @Test func onlyAUDPRelayCandidateEndsGatheringEarly() {
-        #expect(WebRTCCall.isUDPRelay("candidate:1 1 udp 41885439 203.0.113.7 49152 typ relay raddr 0.0.0.0 rport 0"))
-        #expect(WebRTCCall.isUDPRelay("candidate:1 1 UDP 41885439 203.0.113.7 49152 typ relay"))
-        #expect(!WebRTCCall.isUDPRelay("candidate:2 1 tcp 25108223 203.0.113.7 9 typ relay tcptype passive"))
-        #expect(!WebRTCCall.isUDPRelay("candidate:3 1 udp 2122260223 192.168.1.4 60000 typ host"))
-        #expect(!WebRTCCall.isUDPRelay("candidate:4 1 udp 1686052607 198.51.100.2 60000 typ srflx raddr 192.168.1.4"))
-        #expect(!WebRTCCall.isUDPRelay("garbage typ"))
+        let relay = "candidate:1 1 udp 41885439 203.0.113.7 49152 typ relay raddr 0.0.0.0 rport 0"
+        #expect(WebRTCCall.isUDPRelay(relay, serverURL: "turn:relay.example.com:3478?transport=udp"))
+        #expect(WebRTCCall.isUDPRelay(relay, serverURL: "TURN:relay.example.com:3478"))
+        #expect(!WebRTCCall.isUDPRelay(relay, serverURL: "turn:relay.example.com:3478?transport=tcp"))
+        #expect(!WebRTCCall.isUDPRelay(relay, serverURL: "turns:relay.example.com:5349?transport=tcp"))
+        #expect(!WebRTCCall.isUDPRelay(relay, serverURL: nil))
+        let host = "candidate:3 1 udp 2122260223 192.168.1.4 60000 typ host"
+        #expect(!WebRTCCall.isUDPRelay(host, serverURL: "turn:relay.example.com:3478"))
+        #expect(!WebRTCCall.isUDPRelay("garbage typ", serverURL: "turn:relay.example.com:3478"))
     }
 
     @Test func ringbackToneIsAFiveSecondLoopableWav() throws {
