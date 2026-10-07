@@ -353,8 +353,16 @@ final class CallCoordinator: NSObject {
         guard let current = call, current.uuid == uuid, let session = current.session else { return }
         do {
             try await session.waitUntilConnected(timeout: 15)
-            let turn = try await session.request(["t": "turn"])
-            let transcriber = await startPhoneTranscriber(callID: current.callID, session: session)
+            // On-device recognition gets ready while the TURN credentials are on their way.
+            async let preparing = startPhoneTranscriber(callID: current.callID, session: session)
+            let turn: JSON
+            do {
+                turn = try await session.request(["t": "turn"])
+            } catch {
+                await preparing?.stop()
+                throw error
+            }
+            let transcriber = await preparing
             let rtc = try WebRTCCall(turn: turn, relayHost: session.profile.relay.host, onDeviceSpeech: transcriber != nil)
             EngineAudioDevice.shared.agentSpectrum.reset()
             EngineAudioDevice.shared.micSpectrum.reset()
