@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable, Iterable
 
 LATENCY_BUCKETS = (0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 6.0, 10.0)
 RTF_BUCKETS = (0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0, 2.0)
+STAGE_BUCKETS = (0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0)
 
 
 class Counter:
@@ -102,6 +103,20 @@ class Registry:
         self.call_latency = Histogram(
             "hermescall_bridge_call_latency_seconds", "End of the owner's speech to the agent's first audio.", LATENCY_BUCKETS
         )
+        self.acknowledgement_latency = Histogram(
+            "hermescall_bridge_acknowledgement_latency_seconds",
+            "End of the owner's speech to the acknowledgement audio (excluded from call_latency).",
+            LATENCY_BUCKETS,
+        )
+        self.hermes_first_text = Histogram(
+            "hermescall_bridge_hermes_first_text_seconds", "Transcript ready to Hermes' first reply text.", STAGE_BUCKETS
+        )
+        self.tts_first_audio = Histogram(
+            "hermescall_bridge_tts_first_audio_seconds", "Speech synthesis request to its first audio.", STAGE_BUCKETS
+        )
+        self.speech_gaps = Counter(
+            "hermescall_bridge_speech_gaps_total", "Mid-reply silences: playback ran dry before the next sentence."
+        )
         self.stt_rtf = Histogram(
             "hermescall_bridge_stt_realtime_factor", "Speech recognition time divided by audio duration.", RTF_BUCKETS
         )
@@ -117,7 +132,17 @@ class Registry:
 
     def render(self) -> str:
         lines: list[str] = []
-        for metric in (self.call_latency, self.stt_rtf, self.turn_errors, self.calls, self.chat_messages):
+        for metric in (
+            self.call_latency,
+            self.acknowledgement_latency,
+            self.hermes_first_text,
+            self.tts_first_audio,
+            self.speech_gaps,
+            self.stt_rtf,
+            self.turn_errors,
+            self.calls,
+            self.chat_messages,
+        ):
             lines.extend(metric.render())
         for gauge in self.gauges.values():
             try:

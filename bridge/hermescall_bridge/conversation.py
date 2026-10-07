@@ -418,7 +418,9 @@ class Conversation:
                     continue
                 if isinstance(event, TextDelta):
                     spoken.append(event.text)
-                    marks.setdefault("delta", time.monotonic())
+                    if "delta" not in marks:
+                        marks["delta"] = time.monotonic()
+                        METRICS.hermes_first_text.observe(marks["delta"] - marks["stt"])
                     for chunk in chunker.feed(event.text):
                         marks.setdefault("chunk", time.monotonic())
                         await chunks.put(chunk)
@@ -435,26 +437,37 @@ class Conversation:
 
     async def _speak_queue(self, chunks: asyncio.Queue, ended: float | None = None) -> None:
         tts_failed = False
+        previous: str | None = None
         while (chunk := await chunks.get()) is not None:
             if tts_failed:
                 continue  # Kokoro is down: the tone played once; the rest of the turn is dropped
+            if previous not in (None, self._s.acknowledgement_text) and not self._out.speaking:
+                METRICS.speech_gaps.inc()
+            acknowledgement = bool(chunk) and chunk == self._s.acknowledgement_text
             try:
                 async with contextlib.aclosing(self._tts.synthesize(chunk)) as audio:
-                    await self._play(audio, ended, chunk)
+                    await self._play(audio, ended, chunk, acknowledgement)
             except TTS_ERRORS as exc:
                 log.warning("speech synthesis failed: %s; playing a tone instead", describe(exc))
                 METRICS.turn_errors.inc("tts")
                 tts_failed = True
                 self._out.enqueue_pcm(fallback_tone(), _TONE_RATE)
-            ended = None
+            previous = chunk
+            if not acknowledgement:
+                ended = None  # the acknowledgement is not the answer: keep timing until the reply plays
         await self._out.drained.wait()
 
-    async def _play(self, audio: AsyncIterator[bytes], ended: float | None, caption: str = "") -> None:
+    async def _play(
+        self, audio: AsyncIterator[bytes], ended: float | None, caption: str = "", acknowledgement: bool = False
+    ) -> None:
         async for pcm in audio:
             if ended is not None:
                 latency = time.monotonic() - ended
-                log.info("latency: end of speech → first audio %.0f ms", latency * 1000)
-                METRICS.call_latency.observe(latency)
+                if acknowledgement:
+                    METRICS.acknowledgement_latency.observe(latency)
+                else:
+                    log.info("latency: end of speech → first audio %.0f ms", latency * 1000)
+                    METRICS.call_latency.observe(latency)
                 ended = None
             if caption:
                 self._caption_when_heard(caption)

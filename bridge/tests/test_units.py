@@ -14,6 +14,7 @@ from hermescall_bridge import config as config_mod
 from hermescall_bridge.audio import SpeechTrack
 from hermescall_bridge.conversation import APPROVAL_DENIED, APPROVAL_PROMPT, Conversation, TurnSettings
 from hermescall_bridge.hermes import ApprovalRequest, HermesClient, TextDelta
+from hermescall_bridge.metrics import METRICS
 from hermescall_bridge.state import StateStore, new_device
 from hermescall_bridge.text import Chunker, speakable
 from hermescall_bridge.vad import StreamingVad
@@ -284,6 +285,32 @@ async def test_delayed_acknowledgement_fills_only_slow_silence() -> None:
     await fast_conversation._run_turn(None, time.monotonic(), "status", 0)
     fast_player.cancel()
     assert fast_tts.spoken == ["Sure, I heard you.", "Anything else?"]
+
+
+async def test_acknowledgement_is_timed_apart_from_the_answer() -> None:
+    class SlowHermes(FakeHermes):
+        async def turn(self, system: str, text: str, images=(), session_id=None):
+            self.turns.append((system, text))
+            await asyncio.sleep(0.05)
+            yield TextDelta("Done.")
+
+    tts, out = FakeTts(), SpeechTrack()
+    conversation = Conversation(
+        SlowHermes(),
+        tts,
+        lambda a: asyncio.sleep(0, "x"),
+        out,
+        lambda r: asyncio.sleep(0, "deny"),
+        settings=TurnSettings(acknowledgement_after_ms=10, acknowledgement_text="One moment."),
+    )
+    answers, acknowledgements = METRICS.call_latency.count, METRICS.acknowledgement_latency.count
+    first_text = METRICS.hermes_first_text.count
+    player = drain(out)
+    await conversation._run_turn(None, time.monotonic(), "status", 0)
+    player.cancel()
+    assert METRICS.acknowledgement_latency.count == acknowledgements + 1
+    assert METRICS.call_latency.count == answers + 1
+    assert METRICS.hermes_first_text.count == first_text + 1
 
 
 def test_one_word_clause_is_not_cut() -> None:

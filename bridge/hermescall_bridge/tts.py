@@ -1,8 +1,11 @@
 """Kokoro-FastAPI (OpenAI-compatible /v1/audio/speech) streaming client."""
 
+import time
 from collections.abc import AsyncIterator
 
 import httpx
+
+from .metrics import METRICS
 
 SAMPLE_RATE = 24_000
 
@@ -40,6 +43,7 @@ class KokoroTts:
             "stream": True,
             "speed": self._speed,
         }
+        started: float | None = time.monotonic()
         async with self._client.stream("POST", "/v1/audio/speech", json=body) as response:
             response.raise_for_status()
             carry = b""
@@ -48,6 +52,9 @@ class KokoroTts:
                 usable = len(data) - len(data) % 2
                 carry = data[usable:]
                 if usable:
+                    if started is not None:
+                        METRICS.tts_first_audio.observe(time.monotonic() - started)
+                        started = None
                     yield data[:usable]
 
     async def close(self) -> None:
