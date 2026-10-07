@@ -15,11 +15,19 @@ final class EngineAudioDevice: NSObject, RTCAudioDevice, @unchecked Sendable {
     let micSpectrum = SpectrumAnalyzer(sampleRate: EngineAudioDevice.rate)
 
     /// Voice-processed microphone audio in the input node's format (called on the audio tap thread).
-    var onMicBuffer: (@Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void)?
+    /// Set on the main thread while the tap reads it: under the lock.
+    var onMicBuffer: (@Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void)? {
+        get { lock.withLock { micHandler } }
+        set { lock.withLock { micHandler = newValue } }
+    }
+    private var micHandler: (@Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void)?
 
     private static let rate = 48_000.0
     private let log = Logger(subsystem: "de.quavon.hermescall", category: "audio")
     private let lock = NSLock()
+    /// Starting and stopping the engine: CallKit (main thread) and WebRTC (its worker thread) both do;
+    /// two graph setups at once install the input tap twice, which raises.
+    private let lifecycle = NSLock()
     private let engine = AVAudioEngine()
     /// WebRTC's side of the engine: 16-bit mono at 48 kHz (nil only if iOS refused the format; then no audio).
     private let ioFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: rate, channels: 1, interleaved: true)
@@ -91,6 +99,8 @@ final class EngineAudioDevice: NSObject, RTCAudioDevice, @unchecked Sendable {
 
     /// Returns true even when the session is not active yet; `sessionActivated` retries.
     private func startEngineIfPossible() -> Bool {
+        lifecycle.lock()
+        defer { lifecycle.unlock() }
         let (wanted, alreadyRunning) = lock.withLock { (wantsPlayout || wantsRecording, running) }
         guard wanted, !alreadyRunning else { return true }
         do {
@@ -111,6 +121,8 @@ final class EngineAudioDevice: NSObject, RTCAudioDevice, @unchecked Sendable {
     }
 
     private func stopEngine() {
+        lifecycle.lock()
+        defer { lifecycle.unlock() }
         guard lock.withLock({ running }) else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()

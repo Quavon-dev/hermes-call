@@ -15,7 +15,13 @@ final class PresenceHaptics {
         guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
         engine = try? CHHapticEngine()
         engine?.isAutoShutdownEnabled = true
-        engine?.resetHandler = { [weak self] in Task { @MainActor in self?.voice = nil } }
+        engine?.resetHandler = Self.resetHandler(for: self)
+    }
+
+    /// CoreHaptics calls this on its own queue: built outside the main actor, so it is not main-actor code
+    /// (Swift 6 traps when another thread runs a closure written in a main-actor context).
+    nonisolated static func resetHandler(for haptics: PresenceHaptics) -> @Sendable () -> Void {
+        { [weak haptics] in Task { @MainActor in haptics?.voice = nil } }
     }
 
     func tick(sharpness: Float = 0.7, intensity: Float = 0.6) {

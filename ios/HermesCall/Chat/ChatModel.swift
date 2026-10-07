@@ -579,8 +579,8 @@ final class ChatModel {
     /// Sends the outbox (of one agent, or all): messages written while offline or by the share extension.
     /// Runs with background time so a ping from the extension is honoured after the app leaves the screen.
     func drainOutbox(_ only: UUID? = nil) async {
-        let background = UIApplication.shared.beginBackgroundTask(withName: "chat-outbox")
-        defer { UIApplication.shared.endBackgroundTask(background) }
+        let background = BackgroundTime(name: "chat-outbox")
+        defer { background.end() }
         let entries = await store.outbox(only)
         let byProfile = Dictionary(grouping: entries, by: \.profile)
         await withTaskGroup(of: Void.self) { group in
@@ -656,5 +656,21 @@ extension OutgoingFile {
         let mime = type?.preferredMIMEType ?? "application/octet-stream"
         let kind: ChatAttachment.Kind = type?.conforms(to: .image) == true ? .photo : .file
         return OutgoingFile(kind: kind, name: url.lastPathComponent, mime: mime, data: data)
+    }
+}
+
+/// Background time that ends cleanly when iOS takes it back (without an expiration handler iOS kills the app).
+@MainActor
+final class BackgroundTime {
+    private var id = UIBackgroundTaskIdentifier.invalid
+
+    init(name: String) {
+        id = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in self?.end() }
+    }
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
     }
 }

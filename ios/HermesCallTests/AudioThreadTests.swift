@@ -41,4 +41,15 @@ extension AudioThreadTests {
         try? await Task.sleep(for: .milliseconds(300))
         calls.hangUp()
     }
+
+    /// CoreHaptics runs its reset handler on an internal queue.
+    @Test func hapticsResetRunsOffTheMainActor() async {
+        let handler = PresenceHaptics.resetHandler(for: PresenceHaptics())
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                handler()
+                continuation.resume()
+            }
+        }
+    }
 }
