@@ -23,10 +23,12 @@ UNIT_FILE=hermes-call-bridge.service
 declare -A MODEL_REVISIONS=(
   [small.en]=d1d751a5f8271d482d14ca55d9e2deeebbae577f
   [base.en]=3d3d5dee26484f91867d81cb899cfcf72b96be6c
+  [small]=536b0662742c02347bc0e980a01041f333bce120
 )
 declare -A MODEL_SHA256=(
   [small.en]=62b2a45b05ee59acb4a5341b33ee35e041395d378d418a18acfe4c9e768ee37a
   [base.en]=2a166925539a16005f14ff328359f9b9adb9dc4fb631bb3b227526862e93e2ef
+  [small]=3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671
 )
 SRC_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly SRC_ROOT
@@ -37,6 +39,8 @@ HERMES_MODEL=${HERMES_MODEL:-}
 HERMES_PROVIDER=${HERMES_PROVIDER:-}
 HERMES_REASONING_EFFORT=${HERMES_REASONING_EFFORT:-}
 STT_MODEL=${STT_MODEL:-}
+STT_LANGUAGE=${STT_LANGUAGE:-}
+STT_BEAM_SIZE=${STT_BEAM_SIZE:-}
 TTS_VOICE=${TTS_VOICE:-}
 TTS_SPEED=${TTS_SPEED:-}
 END_SILENCE_MS=${END_SILENCE_MS:-}
@@ -65,8 +69,9 @@ Usage: install.sh [install|update|uninstall] [options]
   --hermes-model NAME    model or API-server route used only for calls
   --hermes-provider NAME provider used only for calls
   --reasoning-effort NAME none, minimal, low, medium or high
-  --stt-model NAME       base.en (default: ~0.5 s per utterance on 2 cores) or small.en
-                         (more accurate, ~1.7 s per utterance on 2 cores, ~300 MB more RAM)
+  --stt-model NAME       base.en, small.en or multilingual small
+  --stt-language CODE    speech language such as en or de
+  --stt-beam-size N      Whisper beam size 1 to 5
   --voice NAME           Kokoro voice (default: bm_george)
   --tts-speed NUMBER     Kokoro speech speed between 0.5 and 2.0
   --end-silence-ms N     silence ending an utterance, 200 to 3000 ms
@@ -89,6 +94,8 @@ parse_flags() {
       --hermes-provider) HERMES_PROVIDER=${2:?}; shift ;;
       --reasoning-effort) HERMES_REASONING_EFFORT=${2:?}; shift ;;
       --stt-model) STT_MODEL=${2:?}; shift ;;
+      --stt-language) STT_LANGUAGE=${2:?}; shift ;;
+      --stt-beam-size) STT_BEAM_SIZE=${2:?}; shift ;;
       --voice) TTS_VOICE=${2:?}; shift ;;
       --tts-speed) TTS_SPEED=${2:?}; shift ;;
       --end-silence-ms) END_SILENCE_MS=${2:?}; shift ;;
@@ -143,6 +150,8 @@ load_settings() {
   [[ -n $TTS_VOICE ]] || TTS_VOICE=$(toml_section_value tts voice)
   [[ -n $TTS_SPEED ]] || TTS_SPEED=$(toml_section_number tts speed)
   [[ -n $STT_MODEL ]] || STT_MODEL=$(toml_section_value stt model)
+  [[ -n $STT_LANGUAGE ]] || STT_LANGUAGE=$(toml_section_value stt language)
+  [[ -n $STT_BEAM_SIZE ]] || STT_BEAM_SIZE=$(toml_section_number stt beam_size)
   [[ -n $END_SILENCE_MS ]] || END_SILENCE_MS=$(toml_section_number voice end_silence_ms)
   [[ -n $ACKNOWLEDGEMENT_AFTER_MS ]] || ACKNOWLEDGEMENT_AFTER_MS=$(toml_section_number voice acknowledgement_after_ms)
   [[ -n $ACKNOWLEDGEMENT_TEXT ]] || ACKNOWLEDGEMENT_TEXT=$(toml_section_value voice acknowledgement_text)
@@ -151,6 +160,8 @@ load_settings() {
   HERMES_PROVIDER=${HERMES_PROVIDER:-}
   HERMES_REASONING_EFFORT=${HERMES_REASONING_EFFORT:-}
   STT_MODEL=${STT_MODEL:-base.en}
+  STT_LANGUAGE=${STT_LANGUAGE:-en}
+  STT_BEAM_SIZE=${STT_BEAM_SIZE:-1}
   TTS_VOICE=${TTS_VOICE:-bm_george}
   TTS_SPEED=${TTS_SPEED:-1.0}
   END_SILENCE_MS=${END_SILENCE_MS:-550}
@@ -158,6 +169,11 @@ load_settings() {
   ACKNOWLEDGEMENT_TEXT=${ACKNOWLEDGEMENT_TEXT:-}
   AGENT_NAME=${AGENT_NAME:-Hermes}
   [[ -n ${MODEL_REVISIONS[$STT_MODEL]:-} ]] || die "unsupported --stt-model $STT_MODEL"
+  [[ $STT_LANGUAGE =~ ^[a-z]{2,3}$ ]] || die "invalid --stt-language"
+  [[ $STT_BEAM_SIZE =~ ^[1-5]$ ]] || die "invalid --stt-beam-size"
+  if [[ $STT_MODEL == *.en && $STT_LANGUAGE != en ]]; then
+    die "English-only STT models require --stt-language en"
+  fi
   [[ $HERMES_REASONING_EFFORT =~ ^(none|minimal|low|medium|high)?$ ]] || die "invalid --reasoning-effort"
   if [[ ! $TTS_SPEED =~ ^[0-9]+([.][0-9]+)?$ ]] ||
     ! python3 -c 'import sys; raise SystemExit(not 0.5 <= float(sys.argv[1]) <= 2.0)' "$TTS_SPEED"; then
@@ -383,6 +399,8 @@ speed = $TTS_SPEED
 model = $(toml_quote "$STT_MODEL")
 model_dir = "$STATE/models"
 threads = $(nproc)
+language = $(toml_quote "$STT_LANGUAGE")
+beam_size = $STT_BEAM_SIZE
 
 [voice]
 end_silence_ms = $END_SILENCE_MS
