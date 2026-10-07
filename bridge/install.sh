@@ -123,6 +123,8 @@ toml_section_value() { python3 -c 'import sys,tomllib; data=tomllib.load(open(sy
 
 toml_section_number() { python3 -c 'import sys,tomllib; data=tomllib.load(open(sys.argv[1], "rb")); value=data.get(sys.argv[2], {}).get(sys.argv[3], ""); print(value if isinstance(value, (int, float)) and not isinstance(value, bool) else "")' "$ETC/bridge.toml" "$1" "$2" 2>/dev/null || true; }
 
+toml_section_bool() { python3 -c 'import sys,tomllib; data=tomllib.load(open(sys.argv[1], "rb")); value=data.get(sys.argv[2], {}).get(sys.argv[3]); print(str(value).lower() if isinstance(value, bool) else "")' "$ETC/bridge.toml" "$1" "$2" 2>/dev/null || true; }
+
 toml_port() { { sed -n "s/^$1 = \\([0-9][0-9]*\\)\$/\\1/p" "$ETC/bridge.toml" 2>/dev/null || true; } | head -1; }
 
 toml_quote() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1], ensure_ascii=False))' "$1"; }
@@ -156,7 +158,7 @@ load_settings() {
   [[ -n $STT_LANGUAGE ]] || STT_LANGUAGE=$(toml_section_value stt language)
   [[ -n $STT_BEAM_SIZE ]] || STT_BEAM_SIZE=$(toml_section_number stt beam_size)
   [[ -n $END_SILENCE_MS ]] || END_SILENCE_MS=$(toml_section_number voice end_silence_ms)
-  [[ -n $BARGE_IN ]] || BARGE_IN=$(toml_section_value voice barge_in)
+  [[ -n $BARGE_IN ]] || BARGE_IN=$(toml_section_bool voice barge_in)
   [[ -n $ACKNOWLEDGEMENT_AFTER_MS ]] || ACKNOWLEDGEMENT_AFTER_MS=$(toml_section_number voice acknowledgement_after_ms)
   [[ -n $ACKNOWLEDGEMENT_TEXT ]] || ACKNOWLEDGEMENT_TEXT=$(toml_section_value voice acknowledgement_text)
   HERMES_USER=${HERMES_USER:-hermes}
