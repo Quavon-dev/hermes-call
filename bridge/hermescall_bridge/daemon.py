@@ -19,7 +19,7 @@ from .calls import CallManager, CallTimeouts, Ring
 from .chat import ChatService
 from .chatstore import ChatStore
 from .config import Config, ConfigError
-from .conversation import Conversation, TurnSettings
+from .conversation import TTS_ERRORS, Conversation, TurnSettings, describe
 from .devices import DeviceRegistry
 from .health import HealthChecker, sd_notify, watchdog, watchdog_interval
 from .hermes import HermesClient
@@ -30,11 +30,14 @@ from .seen import SeenLog
 from .sessions import PhoneSessions
 from .state import Device, State, StateStore
 from .tasks import TaskService
+from .text import Chunker
 from .tts import KokoroTts
 
 log = logging.getLogger(__name__)
 
 SHUTDOWN_FLUSH_SECONDS = 5.0
+# An outbound call's first sentences synthesized while the phone rings.
+PREPARED_CHUNKS = 3
 
 
 @dataclass
@@ -176,6 +179,12 @@ def build_bridge(
     phone = PhoneService(state, relay, channel)
     presenter = PresentService(chat, image_fetcher)
     tasks = TaskService(state, relay, channel, store.load_task_prefs(), store.save_task_prefs)
+
+    async def prepare_speech(text: str) -> None:
+        chunker = Chunker()
+        for chunk in (chunker.feed(text) + chunker.flush())[:PREPARED_CHUNKS]:
+            await tts.prepare(chunk)
+
     calls = CallManager(
         state,
         relay,
@@ -187,6 +196,7 @@ def build_bridge(
         chat.note_call,
         opts.timeouts,
         opts.turn_transport,
+        prepare_speech,
     )
     phone.recent_activity = calls.last_activity
 
@@ -269,7 +279,10 @@ async def serve(config: Config) -> None:
     )
     tts = KokoroTts(config.tts_url, config.tts_voice, speed=config.tts_speed)
     if config.acknowledgement_text:
-        await tts.preload(config.acknowledgement_text)
+        try:
+            await tts.preload(config.acknowledgement_text)
+        except TTS_ERRORS as exc:  # Kokoro still starting: the acknowledgement is synthesized when used
+            log.warning("acknowledgement not preloaded: %s", describe(exc))
     log.info("loading speech recognition model %s", config.stt_model)
     transcriber = Transcriber(str(Path(config.stt_model_dir) / config.stt_model), config.stt_threads)
     options = options_from(config, transcriber.transcribe_background)

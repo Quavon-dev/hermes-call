@@ -153,8 +153,12 @@ class CallManager:
         on_call_ended: Callable[[list[tuple[str, str]]], None] | None = None,
         timeouts: CallTimeouts | None = None,
         turn_transport: str = "auto",
+        prepare_speech: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
+        """`prepare_speech`: synthesizes an outbound call's first message while the phone rings."""
         self._timeouts = timeouts or CallTimeouts()
+        self._prepare_speech = prepare_speech
+        self._preparing: set[asyncio.Task] = set()
         self._turn_transport = turn_transport
         self._state = state
         self._on_unpair_request = on_unpair
@@ -191,6 +195,10 @@ class CallManager:
         self._ring_times.append(now)
         ring = Ring(new_call_id(), targets, reason[:MAX_REASON], first_message[:MAX_FIRST_MESSAGE])
         self._rings[ring.call_id] = ring
+        if self._prepare_speech is not None and ring.first_message:
+            task = asyncio.ensure_future(self._prepare_speech(ring.first_message))
+            self._preparing.add(task)
+            task.add_done_callback(self._prepared)
         try:
             try:
                 await self._relay.request({"t": "ring", "call_id": ring.call_id, "devices": sorted(targets)})
@@ -210,6 +218,11 @@ class CallManager:
         if status in ("no_answer", "declined") and self._on_missed is not None:
             result["messaged"] = await self._on_missed(ring, status)
         return result
+
+    def _prepared(self, task: asyncio.Task) -> None:
+        self._preparing.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            log.info("first message not prepared: %s", task.exception().__class__.__name__)
 
     # ---- inbound E2E ---------------------------------------------------
 

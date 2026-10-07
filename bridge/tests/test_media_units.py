@@ -1,6 +1,7 @@
 """Unit tests for stt.py, tts.py and common/blobs.py (K4)."""
 
 import asyncio
+import json
 
 import httpx
 import numpy as np
@@ -74,6 +75,27 @@ async def test_kokoro_streams_whole_samples_and_sends_the_voice() -> None:
     assert all(len(c) % 2 == 0 for c in chunks) and b"".join(chunks) == b"\x01\x02\x03\x04\x05\x06"
     sent = seen[0]
     assert sent.url.path == "/v1/audio/speech" and b'"voice":"bm_george"' in sent.content.replace(b" ", b"")
+    await tts.close()
+
+
+async def test_kokoro_prepared_speech_plays_once_and_is_bounded() -> None:
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content)["input"])
+        return httpx.Response(200, content=b"\x01\x00")
+
+    tts = KokoroTts("http://127.0.0.1:8880", "v")
+    tts._client = httpx.AsyncClient(base_url="http://127.0.0.1:8880", transport=httpx.MockTransport(handler))
+    for text in ("one", "two", "three", "four", "five"):
+        await tts.prepare(text)
+    await tts.prepare("five")
+    assert requests == ["one", "two", "three", "four", "five"]
+    assert [c async for c in tts.synthesize("five")] == [b"\x01\x00"]
+    assert requests[-1] == "five" and len(requests) == 5  # served from the prepared audio
+    [c async for c in tts.synthesize("five")]
+    [c async for c in tts.synthesize("one")]  # dropped as the oldest
+    assert requests[5:] == ["five", "one"]
     await tts.close()
 
 

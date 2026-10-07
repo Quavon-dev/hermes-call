@@ -105,6 +105,10 @@ class FakeHermes:
 class FakeTts:
     def __init__(self) -> None:
         self.spoken: list[str] = []
+        self.prepared: list[str] = []
+
+    async def prepare(self, text: str) -> None:
+        self.prepared.append(text)
 
     async def synthesize(self, text: str) -> AsyncIterator[bytes]:
         self.spoken.append(text)

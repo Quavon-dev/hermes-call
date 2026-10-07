@@ -101,6 +101,7 @@ async def test_ring_push_invite_and_decline(h) -> None:
         await device.send({"type": "decline", "call_id": invite["call_id"]})
         status, result = await asyncio.wait_for(ring, 10)
         assert status == 200 and result == {"status": "declined", "call_id": invite["call_id"], "messaged": True}
+        assert h.tts.prepared == ["Hi, Hermes here."]  # synthesized while it rang
     finally:
         device.session.stop()
         task.cancel()
