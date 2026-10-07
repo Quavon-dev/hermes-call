@@ -402,6 +402,8 @@ access › Place reminders lists them (swipe to delete).
   earlier steps. Live drafts stream in as an agent bubble with a caret, the typing dots bounce, and the
   title says what happens ("Running a command…", "writing…"). The chat follows along only while it is
   scrolled to the end. New messages spring in from their side; Reduce Motion turns the motion off.
+  Messages of one sender within three minutes are grouped (joined corners, one time stamp); an arrow
+  button returns to the newest message; an empty chat offers starter questions.
 - **Commands**: typing `/` lists Hermes' gateway commands (`/new`, `/retry`, `/undo`, `/compress`,
   `/usage`, `/model`, `/help`, `/stop`); a tap sends it (`/model` waits for an argument). New session,
   retry and undo are also in the composer's **+** menu, new session and retry in the call button's

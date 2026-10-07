@@ -83,7 +83,7 @@ struct ChatView: View {
     private var messageList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: 0) {
                     if chat.window.hasOlder {
                         pageLoader.onAppear { loadOlder(proxy) }
                     } else if chat.messages.isEmpty {
@@ -91,15 +91,18 @@ struct ChatView: View {
                     }
                     ForEach(Array(chat.messages.enumerated()), id: \.element.id) { index, message in
                         if index == 0 || !Calendar.current.isDate(chat.messages[index - 1].date, inSameDayAs: message.date) {
-                            DayHeader(date: message.date)
+                            DayHeader(date: message.date).padding(.top, 8)
                         }
-                        row(message).id(message.id)
+                        let joinsPrevious = index > 0 && chat.messages[index - 1].joins(message)
+                        let joinsNext = index + 1 < chat.messages.count && message.joins(chat.messages[index + 1])
+                        row(message, joinsPrevious: joinsPrevious, joinsNext: joinsNext).id(message.id)
+                            .padding(.top, joinsPrevious ? 2 : 10)
                             .modifier(Arrival(active: arriving == message.id, fromTrailing: message.role == .owner))
                     }
                     if chat.window.hasNewer {
                         pageLoader.onAppear { Task { await chat.loadNewer() } }
                     } else {
-                        liveTail.id(Self.liveID)
+                        liveTail.id(Self.liveID).padding(.top, 10)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -137,14 +140,18 @@ struct ChatView: View {
                     if highlighted == id { withAnimation(.easeOut(duration: 0.6)) { highlighted = nil } }
                 }
             }
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: atBottom)
             .overlay(alignment: .bottomTrailing) {
-                if chat.window.hasNewer { latestButton(proxy) }
+                if chat.window.hasNewer || !atBottom {
+                    latestButton(proxy).transition(.scale(scale: 0.6).combined(with: .opacity))
+                }
             }
         }
     }
 
-    private func row(_ message: ChatMessage) -> some View {
+    private func row(_ message: ChatMessage, joinsPrevious: Bool, joinsNext: Bool) -> some View {
         MessageRow(message: message, agentName: chat.agentName, hud: hud, player: chat.player, highlighted: highlighted == message.id,
+                   joinsPrevious: joinsPrevious, joinsNext: joinsNext,
                    open: { attachment in Task { preview = await chat.attachmentURL(attachment) } },
                    play: { attachment, fraction in
                        Task {
@@ -224,7 +231,7 @@ struct ChatView: View {
     private func latestButton(_ proxy: ScrollViewProxy) -> some View {
         Button {
             Task {
-                await chat.reload()
+                if chat.window.hasNewer { await chat.reload() }
                 scrollToEnd(proxy)
             }
         } label: {
@@ -242,6 +249,7 @@ struct ChatView: View {
             return
         }
         let last = chat.window.hasNewer ? lastMessage : Self.liveID
+        atBottom = true
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(80))
             if animated {
@@ -254,12 +262,26 @@ struct ChatView: View {
         }
     }
 
+    private static let starters = ["What can you do?", "Plan my day", "What's on my calendar today?"]
+
     private var emptyState: some View {
         VStack(spacing: 10) {
             Image(systemName: "lock.shield").font(.largeTitle).foregroundStyle(hud ? HUD.glow : .secondary)
             Text("Chat with \(chat.agentName)").font(.headline)
             Text("Messages, photos and voice notes are end-to-end encrypted to your bridge. The history stays on this iPhone.")
                 .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            VStack(spacing: 8) {
+                ForEach(Self.starters, id: \.self) { prompt in
+                    Button { Task { await chat.send(text: prompt) } } label: {
+                        Text(prompt).font(.subheadline.weight(.medium))
+                            .padding(.horizontal, 14).padding(.vertical, 9)
+                            .background(Capsule().fill(hud ? AnyShapeStyle(HUD.glow.opacity(0.1)) : AnyShapeStyle(.tint.opacity(0.12))))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(hud ? HUD.glow : HUD.alert)
+                }
+            }
+            .padding(.top, 8)
         }
         .padding(.horizontal, 32)
     }

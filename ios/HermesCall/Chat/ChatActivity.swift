@@ -17,7 +17,7 @@ struct TaskFeedCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var latest: TaskUpdate? { steps.last }
-    private var tint: Color { hud ? HUD.glow : .accentColor }
+    private var tint: Color { hud ? HUD.glow : HUD.alert }
 
     var body: some View {
         if let latest {
@@ -190,7 +190,7 @@ struct StreamingBubble: View {
         HStack(alignment: .bottom) {
             VStack(alignment: .leading, spacing: 6) {
                 MarkdownText(text)
-                Caret(tint: hud ? HUD.glow : .accentColor)
+                Caret(tint: hud ? HUD.glow : HUD.alert)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -199,7 +199,7 @@ struct StreamingBubble: View {
                     RoundedRectangle(cornerRadius: 16).fill(HUD.glow.opacity(0.05))
                         .overlay(RoundedRectangle(cornerRadius: 16).stroke(HUD.glow.opacity(0.22), lineWidth: 0.75))
                 } else {
-                    RoundedRectangle(cornerRadius: 18).fill(.quaternary)
+                    RoundedRectangle(cornerRadius: 20).fill(Color(.secondarySystemBackground))
                 }
             }
             .animation(.smooth(duration: 0.25), value: text)
@@ -240,7 +240,7 @@ struct TypingIndicator: View {
         .foregroundStyle(hud ? HUD.glow : .secondary)
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .background(RoundedRectangle(cornerRadius: 18).fill(.quaternary))
+        .background(RoundedRectangle(cornerRadius: 20).fill(hud ? AnyShapeStyle(HUD.glow.opacity(0.06)) : AnyShapeStyle(Color(.secondarySystemBackground))))
         .accessibilityElement()
         .accessibilityLabel("typing")
     }
@@ -271,7 +271,7 @@ struct SlashSuggestions: View {
                 HStack(spacing: 12) {
                     Image(systemName: command.symbol)
                         .font(.body.weight(.medium))
-                        .foregroundStyle(hud ? HUD.glow : .accentColor)
+                        .foregroundStyle(hud ? HUD.glow : HUD.alert)
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(command.text).font(.subheadline.monospaced().weight(.semibold))

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import HermesCallCore
 
@@ -43,5 +44,19 @@ struct ChatActivityTests {
         #expect(update(1, "browser_navigate").symbol == "safari")
         #expect(update(1, "write_file").symbol == "doc.text" && !update(1, "write_file").isCommand)
         #expect(update(1, "mystery").symbol == "gearshape.2")
+    }
+}
+
+struct ChatGroupingTests {
+    private func message(_ role: ChatMessage.Role, _ seconds: TimeInterval, text: String = "hi") -> ChatMessage {
+        ChatMessage(id: "\(role)\(seconds)", role: role, text: text, date: Date(timeIntervalSince1970: 1_800_000_000 + seconds),
+                    status: .received)
+    }
+
+    @Test func sameSenderCloseInTimeJoins() {
+        #expect(message(.agent, 0).joins(message(.agent, 60)))
+        #expect(!message(.agent, 0).joins(message(.agent, 600)))
+        #expect(!message(.agent, 0).joins(message(.owner, 10)))
+        #expect(!message(.owner, 0).joins(message(.owner, 10, text: "/stop")))
     }
 }

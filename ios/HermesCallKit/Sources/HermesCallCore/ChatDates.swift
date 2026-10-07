@@ -35,3 +35,14 @@ public enum ChatDates {
         Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
     }
 }
+
+extension ChatMessage {
+    public static let groupWindow: TimeInterval = 180
+
+    public func joins(_ next: ChatMessage) -> Bool {
+        guard role == next.role, role != .system, presentation == nil, next.presentation == nil,
+              !isStopRequest, !next.isStopRequest, next.date >= date,
+              next.date.timeIntervalSince(date) <= Self.groupWindow else { return false }
+        return Calendar.current.isDate(date, inSameDayAs: next.date)
+    }
+}

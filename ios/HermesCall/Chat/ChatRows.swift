@@ -23,6 +23,8 @@ struct MessageRow: View {
     let hud: Bool
     let player: VoicePlayer
     var highlighted = false
+    var joinsPrevious = false
+    var joinsNext = false
     let open: (ChatAttachment) -> Void
     /// nil: play or pause; a fraction: play from there (scrubbing).
     let play: (ChatAttachment, Double?) -> Void
@@ -48,7 +50,7 @@ struct MessageRow: View {
                 if isOwner { Spacer(minLength: 48) }
                 VStack(alignment: isOwner ? .trailing : .leading, spacing: 4) {
                     bubble
-                    footer
+                    if showsFooter { footer }
                 }
                 if !isOwner { Spacer(minLength: 48) }
             }
@@ -56,6 +58,18 @@ struct MessageRow: View {
     }
 
     private var isOwner: Bool { message.role == .owner }
+
+    private var showsFooter: Bool { !joinsNext || message.status == .failed || message.status == .pending }
+
+    private var bubbleShape: UnevenRoundedRectangle {
+        let full: CGFloat = hud ? 16 : 20
+        let joined: CGFloat = 6
+        let top = joinsPrevious ? joined : full
+        let bottom = joinsNext ? joined : full
+        return isOwner
+            ? UnevenRoundedRectangle(topLeadingRadius: full, bottomLeadingRadius: full, bottomTrailingRadius: bottom, topTrailingRadius: top)
+            : UnevenRoundedRectangle(topLeadingRadius: top, bottomLeadingRadius: bottom, bottomTrailingRadius: full, topTrailingRadius: full)
+    }
 
     private var systemSymbol: String {
         switch message.call?.direction {
@@ -103,6 +117,7 @@ struct MessageRow: View {
             }
         }
         .foregroundStyle(isOwner && !hud ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+        .contentShape(.contextMenuPreview, bubbleShape)
         .contextMenu {
             if !message.text.isEmpty {
                 Button { UIPasteboard.general.string = message.text } label: { Label("Copy", systemImage: "doc.on.doc") }
@@ -118,10 +133,14 @@ struct MessageRow: View {
     @ViewBuilder private var background: some View {
         if hud {
             let tint = isOwner ? HUD.light : HUD.glow
-            RoundedRectangle(cornerRadius: 16).fill(tint.opacity(isOwner ? 0.1 : 0.05))
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(tint.opacity(0.22), lineWidth: 0.75))
+            bubbleShape.fill(tint.opacity(isOwner ? 0.1 : 0.05))
+                .overlay(bubbleShape.stroke(tint.opacity(0.22), lineWidth: 0.75))
+        } else if isOwner {
+            bubbleShape.fill(LinearGradient(colors: [HUD.ownerBubble.opacity(0.88), HUD.ownerBubble], startPoint: .top, endPoint: .bottom))
+                .shadow(color: HUD.ownerBubble.opacity(0.25), radius: 6, y: 3)
         } else {
-            RoundedRectangle(cornerRadius: 18).fill(isOwner ? AnyShapeStyle(HUD.ownerBubble) : AnyShapeStyle(.quaternary))
+            bubbleShape.fill(Color(.secondarySystemBackground))
+                .overlay(bubbleShape.stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
         }
     }
 
