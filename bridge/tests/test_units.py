@@ -4,6 +4,7 @@ import os
 import stat
 import time
 import wave
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import httpx
@@ -360,6 +361,91 @@ async def test_acknowledgement_is_timed_apart_from_the_answer() -> None:
     assert METRICS.acknowledgement_latency.count == acknowledgements + 1
     assert METRICS.call_latency.count == answers + 1
     assert METRICS.hermes_first_text.count == first_text + 1
+
+
+class ThinkingHermes(FakeHermes):
+    """Takes a while before its first word, like a real agent turn."""
+
+    async def turn(self, system: str, text: str, images=(), session_id=None):
+        self.turns.append((system, text))
+        await asyncio.sleep(0.3)
+        yield TextDelta("Okay, done.")
+
+
+async def talk(conversation: Conversation, *parts: np.ndarray | Callable[[], Awaitable[None]]) -> None:
+    """Feeds audio parts; a callable part is awaited in between (the phone keeps sending audio)."""
+
+    async def source():
+        for part in parts:
+            if callable(part):
+                await part()
+                continue
+            for block in blocks_of(part):
+                yield block
+                await asyncio.sleep(0)
+        while conversation.busy:
+            await asyncio.sleep(0.01)
+
+    player = drain(conversation._out)
+    await asyncio.wait_for(conversation.run(source()), 10)
+    player.cancel()
+
+
+async def until(condition: Callable[[], bool]) -> None:
+    for _ in range(500):
+        if condition():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("condition not met")
+
+
+async def test_owner_going_on_before_the_answer_plays_continues_the_same_turn() -> None:
+    hermes, tts, out = ThinkingHermes(), FakeTts(), SpeechTrack()
+    texts = iter(["call mom", "and tell her I am late"])
+    conversation = Conversation(hermes, tts, lambda a: asyncio.sleep(0, next(texts)), out, lambda r: asyncio.sleep(0, "x"))
+    speech, quiet = speech_16k()[: 61 * 512], np.zeros(16000, dtype=np.float32)
+
+    async def first_turn_started() -> None:
+        await until(lambda: len(hermes.turns) == 1)
+
+    await talk(conversation, quiet, speech, quiet, first_turn_started, speech, quiet)
+    assert [turn[1] for turn in hermes.turns] == ["call mom", "call mom and tell her I am late"]
+    assert [entry for entry in conversation.transcript if entry[0] == "owner"] == [("owner", "call mom and tell her I am late")]
+    assert tts.spoken == ["Okay, done."]
+
+
+async def test_owner_going_on_before_recognition_finished_is_recognized_as_one() -> None:
+    hermes, tts, out = ThinkingHermes(), FakeTts(), SpeechTrack()
+    lengths: list[int] = []
+
+    async def transcribe(audio: np.ndarray) -> str:
+        lengths.append(len(audio))
+        await asyncio.sleep(0.2 if len(lengths) == 1 else 0)
+        return f"{len(audio)} samples"
+
+    conversation = Conversation(hermes, tts, transcribe, out, lambda r: asyncio.sleep(0, "x"))
+    speech, quiet = speech_16k()[: 61 * 512], np.zeros(16000, dtype=np.float32)
+
+    async def recognizing() -> None:
+        await until(lambda: len(lengths) >= 1 and conversation._utterance is None)
+
+    await talk(conversation, quiet, speech, quiet, recognizing, speech, quiet)
+    assert len(hermes.turns) == 1 and hermes.turns[0][1] == f"{lengths[-1]} samples"
+    assert lengths[-1] > 2 * len(speech) and not hermes.turns[0][1].startswith("(I interrupted you.)")
+
+
+async def test_speaking_over_an_answer_that_is_playing_still_interrupts() -> None:
+    hermes, tts, out = FakeHermes(), FakeTts(), SpeechTrack()
+    texts = iter(["first question", "second question"])
+    conversation = Conversation(hermes, tts, lambda a: asyncio.sleep(0, next(texts)), out, lambda r: asyncio.sleep(0, "x"))
+    speech, quiet = speech_16k()[: 61 * 512], np.zeros(16000, dtype=np.float32)
+
+    async def answering() -> None:
+        await until(lambda: out.speaking)
+        out.enqueue_pcm(b"\1\0" * 48000 * 5, 48000)  # a long answer, still playing
+
+    await talk(conversation, quiet, speech, quiet, answering, speech, quiet)
+    assert hermes.turns[-1][1] == "(I interrupted you.) second question"
 
 
 def test_one_word_clause_is_not_cut() -> None:
