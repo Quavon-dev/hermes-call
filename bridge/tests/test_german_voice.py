@@ -354,3 +354,29 @@ async def test_live_recognition_decodes_once_and_uses_the_vocabulary_prompt(monk
     assert live["language"] == "de" and live["beam_size"] == 2 and live["temperature"] == 0.0
     assert live["initial_prompt"] == "Hermes, Home Assistant"
     assert "temperature" not in note
+
+
+# ---- doctor ---------------------------------------------------------------------
+
+
+async def test_doctor_finds_a_missing_german_voice(tmp_path, aiohttp_server) -> None:
+    from aiohttp import web
+
+    from hermescall_bridge.doctor import _language, _voice
+
+    async def voices(request: web.Request) -> web.Response:
+        return web.json_response({"voices": ["af_heart", "bm_george"]})
+
+    app = web.Application()
+    app.router.add_get("/v1/audio/voices", voices)
+    server = await aiohttp_server(app)
+    url = f"http://127.0.0.1:{server.port}"
+    german = load(write(tmp_path, f"[voice]\nlanguage = 'de'\n[tts]\nurl = '{url}'\n"))
+    check = await _voice(german)
+    assert check.status == "fail" and "dm_thorsten is not offered" in check.detail
+    english = load(write(tmp_path, f"[tts]\nurl = '{url}'\n"))
+    assert (await _voice(english)).status == "ok"
+    hack = load(write(tmp_path, f"[voice]\nlanguage = 'de'\n[tts]\nurl = '{url}'\nvoice = 'bm_george'\n"))
+    assert _language(hack).status == "warn" and _language(german).status == "ok"
+    down = load(write(tmp_path, "[tts]\nurl = 'http://127.0.0.1:9'\n"))
+    assert (await _voice(down)).status == "warn"
