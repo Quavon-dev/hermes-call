@@ -51,6 +51,7 @@ def test_call_timeouts_from_config(tmp_path) -> None:
         "[calls]\nring_timeout = 30\nmax_call_seconds = 1800\n"
         "[voice]\nend_silence_ms = 700\nacknowledgement_after_ms = 900\nacknowledgement_text = 'One moment.'\n"
         "[tts]\nspeed = 1.08\n"
+        "[stt]\nmodel = 'small'\nlanguage = 'de'\nbeam_size = 3\n"
         "[hermes]\nmodel = 'voice-fast'\nprovider = 'openrouter'\nreasoning_effort = 'none'\n"
         "[log]\nformat = 'json'\n"
     )
@@ -59,6 +60,7 @@ def test_call_timeouts_from_config(tmp_path) -> None:
     assert config.end_silence_ms == 700 and config.log_format == "json" and config.turn_transport == "auto"
     assert config.acknowledgement_after_ms == 900 and config.acknowledgement_text == "One moment."
     assert config.tts_speed == 1.08
+    assert (config.stt_model, config.stt_language, config.stt_beam_size) == ("small", "de", 3)
     assert (config.hermes_model, config.hermes_provider, config.hermes_reasoning_effort) == (
         "voice-fast",
         "openrouter",
@@ -69,6 +71,9 @@ def test_call_timeouts_from_config(tmp_path) -> None:
         "[voice]\nend_silence_ms = 'x'\n",
         "[voice]\nacknowledgement_after_ms = 6000\n",
         "[tts]\nspeed = 3\n",
+        "[stt]\nlanguage = 'german'\n",
+        "[stt]\nbeam_size = 9\n",
+        "[stt]\nmodel = 'base.en'\nlanguage = 'de'\n",
         "[hermes]\nreasoning_effort = 'extreme'\n",
         "[turn]\ntransport = 'sctp'\n",
     ):

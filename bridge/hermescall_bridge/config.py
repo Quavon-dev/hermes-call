@@ -33,6 +33,8 @@ class Config:
     stt_model: str
     stt_model_dir: str
     stt_threads: int
+    stt_language: str
+    stt_beam_size: int
     # [calls]: timeouts in seconds
     ring_timeout: float = 45.0
     approval_timeout: float = 60.0
@@ -133,6 +135,8 @@ def load(path: Path = DEFAULT_CONFIG) -> Config:
             stt_model=str(stt.get("model", "base.en")),
             stt_model_dir=str(stt.get("model_dir", "/var/lib/hermes-call-bridge/models")),
             stt_threads=int(stt.get("threads", 2)),
+            stt_language=str(stt.get("language", "en")).strip().lower(),
+            stt_beam_size=int(stt.get("beam_size", 1)),
             **_extras(raw),
         )
     except (OSError, KeyError, ValueError, tomllib.TOMLDecodeError) as exc:
@@ -145,4 +149,10 @@ def load(path: Path = DEFAULT_CONFIG) -> Config:
         raise ConfigError("tts.speed: a number between 0.5 and 2.0")
     if config.hermes_reasoning_effort not in ("", "none", "minimal", "low", "medium", "high"):
         raise ConfigError("hermes.reasoning_effort: one of none, minimal, low, medium, high")
+    if not re.fullmatch(r"[a-z]{2,3}", config.stt_language):
+        raise ConfigError("stt.language: a 2-3 letter language code")
+    if not 1 <= config.stt_beam_size <= 5:
+        raise ConfigError("stt.beam_size: an integer between 1 and 5")
+    if config.stt_model.endswith(".en") and config.stt_language != "en":
+        raise ConfigError("English-only STT models require stt.language = 'en'")
     return config
