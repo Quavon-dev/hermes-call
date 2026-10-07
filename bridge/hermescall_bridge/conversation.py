@@ -77,6 +77,7 @@ class TurnSettings:
     max_utterance_ms: int = 30_000
     acknowledgement_after_ms: int = 0
     acknowledgement_text: str = ""
+    barge_in: bool = True
 
 
 @dataclass
@@ -327,6 +328,10 @@ class Conversation:
             return
         if probability is None:
             probability = self._vad.probability(chunk)
+        if self._out.speaking and not self._s.barge_in:
+            self._drop_speculation()
+            self._reset_utterance()
+            return
         speech = probability >= self._s.threshold
         if self._utterance is None:
             self._preroll.append(chunk)
