@@ -62,57 +62,72 @@ final class ChatNotifications: NSObject {
     func didFailToRegister(_ error: Error) {
         log.error("alert push registration failed: \(error.localizedDescription, privacy: .public)")
     }
-
-    private func profileID(_ content: UNNotificationContent) -> UUID? {
-        (content.userInfo["profile"] as? String).flatMap(UUID.init(uuidString:))
-    }
 }
 
 extension ChatNotifications: UNUserNotificationCenterDelegate {
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification)
-        async -> UNNotificationPresentationOptions {
-        let content = notification.request.content
-        return await MainActor.run {
-            let showing = chat.isVisible && app.isForeground && profileID(content) == app.activeProfile?.id
-            return showing ? [] : [.banner, .list, .sound]
+    // Completion-handler variants: the async ones return on a background executor under Swift 6, and
+    // UIKit asserts that a response that foregrounds the app completes on the main thread.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void) {
+        let profile = (notification.request.content.userInfo["profile"] as? String).flatMap(UUID.init(uuidString:))
+        Task { @MainActor in
+            let showing = chat.isVisible && app.isForeground && profile == app.activeProfile?.id
+            completionHandler(showing ? [] : [.banner, .list, .sound])
         }
     }
 
-    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping @Sendable () -> Void) {
         let content = response.notification.request.content
-        let reply = (response as? UNTextInputNotificationResponse)?.userText
-        await MainActor.run {
-            if let id = profileID(content), id != app.activeProfile?.id, app.profiles.contains(where: { $0.id == id }) {
-                if reply == nil { app.activate(id) }
-            }
-        }
-        if content.categoryIdentifier == PhoneContextModel.notificationCategory {
-            await handleQuery(response.actionIdentifier, content: content)
-            return
-        }
-        if content.categoryIdentifier == PlaceMonitor.notificationCategory {
-            // A place reminder with the Ask rule: only the "Tell" button sends it to the agent.
-            if response.actionIdentifier == PlaceMonitor.tellAction, let text = content.userInfo["place_message"] as? String {
-                let profile = await MainActor.run { profileID(content) }
-                await chat.send(text: text, profileID: profile)
-            }
-            return
-        }
-        if let reply, response.actionIdentifier == Self.replyAction {
-            let profile = await MainActor.run { profileID(content) }
-            await chat.send(text: reply, profileID: profile)
-        } else if content.categoryIdentifier != Self.phoneInfoCategory {
-            // A tap opens the chat of the agent that wrote.
-            await MainActor.run { app.openChat(profileID(content)) }
+        let tap = Tap(
+            category: content.categoryIdentifier,
+            action: response.actionIdentifier,
+            reply: (response as? UNTextInputNotificationResponse)?.userText,
+            profile: (content.userInfo["profile"] as? String).flatMap(UUID.init(uuidString:)),
+            query: content.userInfo["query"] as? String,
+            placeMessage: content.userInfo["place_message"] as? String
+        )
+        Task { @MainActor in
+            await handle(tap)
+            completionHandler()
         }
     }
+}
 
-    /// "Answer…" (or a tap) opens the app wherever it was: the question shows on top once its mail is
-    /// fetched. "Deny" answers without opening the app.
-    private nonisolated func handleQuery(_ action: String, content: UNNotificationContent) async {
-        guard action == Self.denyQueryAction, let queryID = content.userInfo["query"] as? String else { return }
-        let profile = await MainActor.run { profileID(content) }
-        await phone?.deny(queryID: queryID, profileID: profile)
+private struct Tap: Sendable {
+    let category: String
+    let action: String
+    let reply: String?
+    let profile: UUID?
+    let query: String?
+    let placeMessage: String?
+}
+
+extension ChatNotifications {
+    fileprivate func handle(_ tap: Tap) async {
+        if let id = tap.profile, tap.reply == nil, id != app.activeProfile?.id, app.profiles.contains(where: { $0.id == id }) {
+            app.activate(id)
+        }
+        switch tap.category {
+        case PhoneContextModel.notificationCategory:
+            // "Answer…" (or a tap) opens the app wherever it was: the question shows on top once its mail
+            // is fetched. "Deny" answers without opening the app.
+            if tap.action == Self.denyQueryAction, let query = tap.query {
+                await phone?.deny(queryID: query, profileID: tap.profile)
+            }
+        case PlaceMonitor.notificationCategory:
+            // A place reminder with the Ask rule: only the "Tell" button sends it to the agent.
+            if tap.action == PlaceMonitor.tellAction, let text = tap.placeMessage {
+                _ = await chat.send(text: text, profileID: tap.profile)
+            }
+        default:
+            if let reply = tap.reply, tap.action == Self.replyAction {
+                _ = await chat.send(text: reply, profileID: tap.profile)
+            } else if tap.category != Self.phoneInfoCategory {
+                // A tap opens the chat of the agent that wrote.
+                app.openChat(tap.profile)
+            }
+        }
     }
 }
 
