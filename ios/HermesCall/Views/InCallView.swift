@@ -1,3 +1,4 @@
+import HermesCallCore
 import SwiftUI
 
 struct InCallView: View {
@@ -18,43 +19,68 @@ struct InCallView: View {
     }
 
     private var standard: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 0) {
             ConnectionBanner()
-            Spacer()
-            Text(calls.peerName).font(.largeTitle.bold()).multilineTextAlignment(.center)
-            status.font(.title3).foregroundStyle(.secondary)
+            header.padding(.top, 32)
+            if let task = tasks.activeTask, task.state == .running {
+                CallTaskRow(task: task).padding(.top, 16).transition(.opacity)
+            }
+            CallTranscript(captions: Array(calls.captions.suffix(4)), hud: false)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .padding(.vertical, 16)
+            if app.preferences.talkMode == .pushToTalk {
+                pushToTalkButton.padding(.bottom, 24)
+            }
+            controls.padding(.bottom, 24)
+        }
+        .padding(.horizontal, 20)
+        .background(Color(.systemBackground))
+        .animation(.easeInOut(duration: 0.2), value: tasks.activeTask?.step)
+        .animation(.easeInOut(duration: 0.2), value: tasks.activeTask?.state)
+    }
+
+    @Environment(TaskActivityModel.self) private var tasks
+
+    private var header: some View {
+        VStack(spacing: 6) {
+            AgentAvatar(name: calls.peerName, size: 88, speaking: speaking)
+                .padding(.bottom, 10)
+            Text(calls.peerName).font(.title2.weight(.semibold)).multilineTextAlignment(.center).lineLimit(2)
+            status.font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
             if !calls.callReason.isEmpty {
-                Text(calls.callReason)
-                    .font(.callout)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(4)
+                Text(calls.callReason).font(.callout).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center).lineLimit(3).padding(.top, 4)
             }
-            if calls.isDemoCall {
-                Label("Demo call · simulated on this iPhone, nothing is recorded", systemImage: "info.circle")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            } else {
-                Label("End-to-end encrypted via \(calls.relayLabel)", systemImage: "lock.fill")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            Group {
+                if calls.isDemoCall {
+                    Label("Demo call · simulated on this iPhone", systemImage: "info.circle")
+                } else {
+                    Label("End-to-end encrypted", systemImage: "lock.fill")
+                }
             }
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+            .padding(.top, 4)
             if calls.audio.isInterrupted {
                 Label("Audio paused by another call or app", systemImage: "pause.circle")
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(.orange)
+                    .font(.footnote.weight(.medium)).foregroundStyle(.orange)
             }
-            captions
-            Spacer()
-            if app.preferences.talkMode == .pushToTalk {
-                pushToTalkButton
-            }
-            HStack(spacing: 28) {
-                RoundButton(icon: calls.isMuted ? "mic.slash.fill" : "mic.fill", label: calls.isMuted ? "Unmute" : "Mute",
+        }
+    }
+
+    private var speaking: Bool {
+        guard calls.isConnected, let level = calls.agentPlayoutLevel else { return false }
+        return level > 0.06
+    }
+
+    private var controls: some View {
+        VStack(spacing: 28) {
+            HStack(spacing: 0) {
+                CallControl(icon: calls.isMuted ? "mic.slash.fill" : "mic.fill", label: calls.isMuted ? "Unmute" : "Mute",
                             active: calls.isMuted) { calls.setMuted(!calls.isMuted) }
-                RoundButton(icon: "speaker.wave.3.fill", label: "Speaker", active: calls.isSpeaker) { calls.toggleSpeaker() }
+                CallControl(icon: "speaker.wave.3.fill", label: "Speaker", active: calls.isSpeaker) { calls.toggleSpeaker() }
                 AudioOutputButton(size: buttonSize)
-                RoundButton(icon: "camera.viewfinder", label: "Look", active: false) { looking = true }
+                CallControl(icon: "camera.viewfinder", label: "Look", active: false) { looking = true }
                     .disabled(!calls.isConnected || calls.isDemoCall)
             }
             Button(role: .destructive) {
@@ -68,30 +94,10 @@ struct InCallView: View {
             }
             .accessibilityLabel("Hang up")
             .accessibilityIdentifier("call.hangUp")
-            .padding(.bottom, 32)
         }
-        .padding()
     }
 
     @ScaledMetric(relativeTo: .title2) private var buttonSize = Metrics.callButton
-
-    /// The last spoken lines (bridge captions, or the demo's).
-    @ViewBuilder private var captions: some View {
-        let recent = calls.captions.suffix(2)
-        if !recent.isEmpty {
-            VStack(spacing: 6) {
-                ForEach(recent) { caption in
-                    Text(caption.text)
-                        .font(caption.fromAgent ? .body : .subheadline)
-                        .foregroundStyle(caption.fromAgent ? .primary : .secondary)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(3)
-                }
-            }
-            .padding(.horizontal)
-            .accessibilityElement(children: .combine)
-        }
-    }
 
     @ViewBuilder private var status: some View {
         switch calls.phase {
@@ -111,12 +117,13 @@ struct InCallView: View {
 
     private var pushToTalkButton: some View {
         Text(calls.isTalking ? "Listening…" : "Hold to talk")
-            .font(.title3.bold())
+            .font(.headline)
             .foregroundStyle(.white)
-            .frame(width: 180, height: 180)
+            .frame(width: 140, height: 140)
             .background(Circle().fill(calls.isTalking ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.tint)))
-            .scaleEffect(calls.isTalking ? 1.08 : 1)
+            .scaleEffect(calls.isTalking ? 1.05 : 1)
             .animation(.spring(duration: 0.2), value: calls.isTalking)
+            .sensoryFeedback(.impact(weight: .light), trigger: calls.isTalking)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in calls.setTalking(true) }
@@ -127,12 +134,76 @@ struct InCallView: View {
     }
 }
 
-private struct RoundButton: View {
+struct AgentAvatar: View {
+    let name: String
+    var size: CGFloat = 44
+    var speaking = false
+
+    var body: some View {
+        Circle().fill(HUD.alert)
+            .frame(width: size, height: size)
+            .overlay {
+                Text(String(name.prefix(1)).uppercased())
+                    .font(.system(size: size * 0.42, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .padding(5)
+            .overlay(Circle().stroke(HUD.alert.opacity(speaking ? 0.5 : 0), lineWidth: 2.5))
+            .animation(.easeInOut(duration: 0.25), value: speaking)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct CallTaskRow: View {
+    let task: TaskUpdate
+
+    var body: some View {
+        Label(task.label, systemImage: task.symbol)
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(Capsule().fill(Color(.secondarySystemBackground)))
+            .contentTransition(.opacity)
+            .accessibilityElement(children: .combine)
+    }
+}
+
+struct CallTranscript: View {
+    let captions: [CallCoordinator.Caption]
+    let hud: Bool
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 6) {
+                ForEach(captions) { caption in
+                    HStack {
+                        if !caption.fromAgent { Spacer(minLength: 48) }
+                        Text(caption.text)
+                            .font(.callout)
+                            .foregroundStyle(caption.fromAgent ? Color.primary : .white)
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .background(RoundedRectangle(cornerRadius: 18)
+                                .fill(caption.fromAgent ? AnyShapeStyle(Color(.secondarySystemBackground)) : AnyShapeStyle(HUD.ownerBubble)))
+                        if caption.fromAgent { Spacer(minLength: 48) }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+            }
+        }
+        .defaultScrollAnchor(.bottom)
+        .scrollBounceBehavior(.basedOnSize)
+        .animation(.easeOut(duration: 0.25), value: captions.map(\.id))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct CallControl: View {
     let icon: String
     let label: String
     let active: Bool
     let action: () -> Void
     @ScaledMetric(relativeTo: .title2) private var size = Metrics.callButton
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: action) {
@@ -140,16 +211,18 @@ private struct RoundButton: View {
                 Image(systemName: icon)
                     .font(.title2)
                     .frame(width: size, height: size)
-                    .background(Circle().fill(active ? Color.primary : Color.secondary.opacity(0.2)))
                     .foregroundStyle(active ? Color(.systemBackground) : Color.primary)
-                Text(label).font(.caption).lineLimit(1).minimumScaleFactor(0.8)
+                    .background(Circle().fill(active ? AnyShapeStyle(Color.primary) : AnyShapeStyle(Color(.secondarySystemBackground))))
+                Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize()
             }
+            .opacity(isEnabled ? 1 : 0.4)
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
+        .animation(.easeInOut(duration: 0.15), value: active)
     }
 }
 
-/// iOS' output picker (AirPods, car, speaker…) in the look of the other call buttons.
 private struct AudioOutputButton: View {
     let size: CGFloat
 
@@ -158,9 +231,10 @@ private struct AudioOutputButton: View {
             RoutePicker()
                 .frame(width: size * 0.45, height: size * 0.45)
                 .frame(width: size, height: size)
-                .background(Circle().fill(Color.secondary.opacity(0.2)))
-            Text("Audio").font(.caption).lineLimit(1)
+                .background(Circle().fill(Color(.secondarySystemBackground)))
+            Text("Audio").font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize()
         }
+        .frame(maxWidth: .infinity)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Audio output")
     }

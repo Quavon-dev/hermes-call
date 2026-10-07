@@ -14,6 +14,10 @@ versioned separately and is at **0.8.2** in this release.
   retry and undo are one tap away in the composer and call menus.
 - New chat animations: arriving messages, bouncing typing dots, the send/mic button morph and the
   command list (all off with Reduce Motion).
+- Chat: consecutive messages from one sender are grouped (one time stamp, joined corners), a button
+  jumps back to the newest message, and an empty chat offers a few first questions.
+- Cleaner call screens: the call shows the agent, timer, current step and the conversation as chat
+  bubbles above flat controls; the Call tab gets a Message shortcut next to Call.
 - Tapping a notification no longer crashes the app: notification responses complete on the main
   thread (Swift 6 ran the async delegate methods on a background executor).
 - Faster call turns: speech recognition starts 250 ms into the closing silence and is kept when you
