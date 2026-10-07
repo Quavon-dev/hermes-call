@@ -39,8 +39,10 @@ HERMES_MODEL=${HERMES_MODEL:-}
 HERMES_PROVIDER=${HERMES_PROVIDER:-}
 HERMES_REASONING_EFFORT=${HERMES_REASONING_EFFORT:-}
 STT_MODEL=${STT_MODEL:-}
-STT_LANGUAGE=${STT_LANGUAGE:-}
+LANGUAGE=${LANGUAGE:-${STT_LANGUAGE:-}}
 STT_BEAM_SIZE=${STT_BEAM_SIZE:-}
+STT_PROMPT=${STT_PROMPT:-}
+TTS_URL=${TTS_URL:-}
 TTS_VOICE=${TTS_VOICE:-}
 TTS_SPEED=${TTS_SPEED:-}
 END_SILENCE_MS=${END_SILENCE_MS:-}
@@ -70,15 +72,18 @@ Usage: install.sh [install|update|uninstall] [options]
   --hermes-model NAME    model or API-server route used only for calls
   --hermes-provider NAME provider used only for calls
   --reasoning-effort NAME none, minimal, low, medium or high
-  --stt-model NAME       base.en, small.en or multilingual small
-  --stt-language CODE    speech language such as en or de
-  --stt-beam-size N      Whisper beam size 1 to 5
-  --voice NAME           Kokoro voice (default: bm_george)
-  --tts-speed NUMBER     Kokoro speech speed between 0.5 and 2.0
+  --language CODE        call language such as de or en: speech recognition, voice, acknowledgement
+                         and the agent's spoken lines (default: en; --stt-language is the old name)
+  --stt-model NAME       base.en, small.en or multilingual small (default: base.en for en, else small)
+  --stt-beam-size N      Whisper beam size 1 to 5 (default: 1 for en, else 2)
+  --stt-prompt TEXT      optional vocabulary hint for Whisper (names it should expect), up to 200 characters
+  --tts-url URL          loopback TTS service (default: http://127.0.0.1:8880, for de: http://127.0.0.1:8881)
+  --voice NAME           TTS voice (default: bm_george for en, dm_thorsten for de)
+  --tts-speed NUMBER     speech speed between 0.5 and 2.0
   --end-silence-ms N     silence ending an utterance, 200 to 3000 ms
   --barge-in BOOL         true lets speech interrupt playback; false suppresses playback echo
-  --ack-after-ms N       0 disables; otherwise speak the acknowledgement after 1 to 5000 ms
-  --ack-text TEXT        short acknowledgement spoken while Hermes is still working
+  --ack-after-ms N       0 disables; otherwise speak the acknowledgement after 1 to 5000 ms (default 1800)
+  --ack-text TEXT        short acknowledgement spoken while Hermes is still working (default: per language)
   --agent-name NAME      name shown on the phone for calls (default: Hermes)
   --instance NAME        install/update/uninstall a named extra bridge (another agent on this host)
   --api-port PORT        the bridge's local API port (default 8765; each instance needs its own)
@@ -96,8 +101,10 @@ parse_flags() {
       --hermes-provider) HERMES_PROVIDER=${2:?}; shift ;;
       --reasoning-effort) HERMES_REASONING_EFFORT=${2:?}; shift ;;
       --stt-model) STT_MODEL=${2:?}; shift ;;
-      --stt-language) STT_LANGUAGE=${2:?}; shift ;;
+      --language | --stt-language) LANGUAGE=${2:?}; shift ;;
       --stt-beam-size) STT_BEAM_SIZE=${2:?}; shift ;;
+      --stt-prompt) STT_PROMPT=${2:?}; shift ;;
+      --tts-url) TTS_URL=${2:?}; shift ;;
       --voice) TTS_VOICE=${2:?}; shift ;;
       --tts-speed) TTS_SPEED=${2:?}; shift ;;
       --end-silence-ms) END_SILENCE_MS=${2:?}; shift ;;
@@ -152,11 +159,16 @@ load_settings() {
   [[ -n $HERMES_MODEL ]] || HERMES_MODEL=$(toml_section_value hermes model)
   [[ -n $HERMES_PROVIDER ]] || HERMES_PROVIDER=$(toml_section_value hermes provider)
   [[ -n $HERMES_REASONING_EFFORT ]] || HERMES_REASONING_EFFORT=$(toml_section_value hermes reasoning_effort)
+  [[ -n $LANGUAGE ]] || LANGUAGE=$(toml_section_value voice language)
+  [[ -n $LANGUAGE ]] || LANGUAGE=$(toml_section_value stt language)
+  LANGUAGE=${LANGUAGE:-en}
+  [[ $LANGUAGE =~ ^[a-z]{2,3}$ ]] || die "invalid --language"
+  [[ -n $TTS_URL ]] || TTS_URL=$(section_url tts)
   [[ -n $TTS_VOICE ]] || TTS_VOICE=$(toml_section_value tts voice)
   [[ -n $TTS_SPEED ]] || TTS_SPEED=$(toml_section_number tts speed)
   [[ -n $STT_MODEL ]] || STT_MODEL=$(toml_section_value stt model)
-  [[ -n $STT_LANGUAGE ]] || STT_LANGUAGE=$(toml_section_value stt language)
   [[ -n $STT_BEAM_SIZE ]] || STT_BEAM_SIZE=$(toml_section_number stt beam_size)
+  [[ -n $STT_PROMPT ]] || STT_PROMPT=$(toml_section_value stt initial_prompt)
   [[ -n $END_SILENCE_MS ]] || END_SILENCE_MS=$(toml_section_number voice end_silence_ms)
   [[ -n $BARGE_IN ]] || BARGE_IN=$(toml_section_bool voice barge_in)
   [[ -n $ACKNOWLEDGEMENT_AFTER_MS ]] || ACKNOWLEDGEMENT_AFTER_MS=$(toml_section_number voice acknowledgement_after_ms)
@@ -165,21 +177,36 @@ load_settings() {
   HERMES_MODEL=${HERMES_MODEL:-hermes-agent}
   HERMES_PROVIDER=${HERMES_PROVIDER:-}
   HERMES_REASONING_EFFORT=${HERMES_REASONING_EFFORT:-}
-  STT_MODEL=${STT_MODEL:-base.en}
-  STT_LANGUAGE=${STT_LANGUAGE:-en}
-  STT_BEAM_SIZE=${STT_BEAM_SIZE:-1}
-  TTS_VOICE=${TTS_VOICE:-bm_george}
+  if [[ $LANGUAGE == en ]]; then
+    STT_MODEL=${STT_MODEL:-base.en}
+    STT_BEAM_SIZE=${STT_BEAM_SIZE:-1}
+  else
+    STT_MODEL=${STT_MODEL:-small}
+    STT_BEAM_SIZE=${STT_BEAM_SIZE:-2}
+  fi
+  case $LANGUAGE in
+    en) TTS_VOICE=${TTS_VOICE:-bm_george} TTS_URL=${TTS_URL:-http://127.0.0.1:8880} ;;
+    de) TTS_VOICE=${TTS_VOICE:-dm_thorsten} TTS_URL=${TTS_URL:-http://127.0.0.1:8881} ;;
+    *)
+      [[ -n $TTS_VOICE ]] || die "no default voice for --language $LANGUAGE; pass --voice"
+      TTS_URL=${TTS_URL:-http://127.0.0.1:8880}
+      ;;
+  esac
   TTS_SPEED=${TTS_SPEED:-1.0}
-  END_SILENCE_MS=${END_SILENCE_MS:-550}
+  END_SILENCE_MS=${END_SILENCE_MS:-500}
   BARGE_IN=${BARGE_IN:-true}
-  ACKNOWLEDGEMENT_AFTER_MS=${ACKNOWLEDGEMENT_AFTER_MS:-0}
+  ACKNOWLEDGEMENT_AFTER_MS=${ACKNOWLEDGEMENT_AFTER_MS:-1800}
   ACKNOWLEDGEMENT_TEXT=${ACKNOWLEDGEMENT_TEXT:-}
   AGENT_NAME=${AGENT_NAME:-Hermes}
   [[ -n ${MODEL_REVISIONS[$STT_MODEL]:-} ]] || die "unsupported --stt-model $STT_MODEL"
-  [[ $STT_LANGUAGE =~ ^[a-z]{2,3}$ ]] || die "invalid --stt-language"
   [[ $STT_BEAM_SIZE =~ ^[1-5]$ ]] || die "invalid --stt-beam-size"
-  if [[ $STT_MODEL == *.en && $STT_LANGUAGE != en ]]; then
-    die "English-only STT models require --stt-language en"
+  if [[ $STT_MODEL == *.en && $LANGUAGE != en ]]; then
+    die "--stt-model $STT_MODEL is English-only; --language $LANGUAGE needs a multilingual model (small)"
+  fi
+  [[ $TTS_URL =~ ^http://(127\.0\.0\.1|localhost|\[::1\]):[0-9]{2,5}$ ]] || die "invalid --tts-url (a loopback http:// URL with a port)"
+  python3 -c 'import sys; raise SystemExit(len(sys.argv[1]) > 200)' "$STT_PROMPT" || die "invalid --stt-prompt (at most 200 characters)"
+  if [[ $LANGUAGE != en && $TTS_VOICE =~ ^[ab][fm]_ ]]; then
+    warn "--voice $TTS_VOICE is an English Kokoro voice but the call language is $LANGUAGE (see docs/german-voice.md)"
   fi
   [[ $HERMES_REASONING_EFFORT =~ ^(none|minimal|low|medium|high)?$ ]] || die "invalid --reasoning-effort"
   if [[ ! $TTS_SPEED =~ ^[0-9]+([.][0-9]+)?$ ]] ||
@@ -197,7 +224,7 @@ load_settings() {
   fi
   python3 -c 'import sys; raise SystemExit(len(sys.argv[1]) > 120)' "$ACKNOWLEDGEMENT_TEXT" || die "invalid --ack-text (at most 120 characters)"
   [[ $HERMES_USER =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "invalid --hermes-user"
-  [[ $TTS_VOICE =~ ^[a-z]{2}_[a-z0-9_]{1,40}$ ]] || die "invalid --voice"
+  [[ $TTS_VOICE =~ ^[a-z0-9][a-z0-9_.+-]{0,63}$ ]] || die "invalid --voice"
   [[ $AGENT_NAME =~ ^[A-Za-z0-9][A-Za-z0-9\ ._\'-]{0,31}$ ]] || die "invalid --agent-name (1-32 letters, digits, spaces, . _ ' -)"
 }
 
@@ -399,7 +426,7 @@ provider = $(toml_quote "$HERMES_PROVIDER")
 reasoning_effort = $(toml_quote "$HERMES_REASONING_EFFORT")
 
 [tts]
-url = "http://127.0.0.1:8880"
+url = $(toml_quote "$TTS_URL")
 voice = $(toml_quote "$TTS_VOICE")
 speed = $TTS_SPEED
 
@@ -407,14 +434,40 @@ speed = $TTS_SPEED
 model = $(toml_quote "$STT_MODEL")
 model_dir = "$STATE/models"
 threads = $(nproc)
-language = $(toml_quote "$STT_LANGUAGE")
 beam_size = $STT_BEAM_SIZE
+initial_prompt = $(toml_quote "$STT_PROMPT")
 
 [voice]
+language = $(toml_quote "$LANGUAGE")
 end_silence_ms = $END_SILENCE_MS
 barge_in = $BARGE_IN
 acknowledgement_after_ms = $ACKNOWLEDGEMENT_AFTER_MS
 acknowledgement_text = $(toml_quote "$ACKNOWLEDGEMENT_TEXT")
+$(optional_sections)
+EOF
+  chmod 0644 "$ETC/bridge.toml.tmp"
+  mv "$ETC/bridge.toml.tmp" "$ETC/bridge.toml"
+}
+
+# [calls], [turn] and [log] set by hand in the installed bridge.toml survive; otherwise the defaults are shown.
+optional_sections() {
+  local kept
+  kept=$(python3 -c '
+import json, sys, tomllib
+with open(sys.argv[1], "rb") as file:
+    data = tomllib.load(file)
+for name in ("calls", "turn", "log"):
+    table = {k: v for k, v in data.get(name, {}).items() if k.replace("_", "").isalnum() and isinstance(v, str | int | float | bool)}
+    if table:
+        print(f"\n[{name}]")
+        for key, value in table.items():
+            print(key, "=", str(value).lower() if isinstance(value, bool) else json.dumps(value, ensure_ascii=False))
+' "$ETC/bridge.toml" 2>/dev/null || true)
+  if [[ -n $kept ]]; then
+    printf '%s\n' "$kept"
+    return 0
+  fi
+  cat <<'EOF'
 
 # Optional (defaults shown):
 # [calls]
@@ -429,8 +482,6 @@ acknowledgement_text = $(toml_quote "$ACKNOWLEDGEMENT_TEXT")
 # level = "INFO"           # DEBUG, INFO, WARNING, ERROR
 # format = "text"          # or "json"
 EOF
-  chmod 0644 "$ETC/bridge.toml.tmp"
-  mv "$ETC/bridge.toml.tmp" "$ETC/bridge.toml"
 }
 
 install_unit() {
@@ -541,4 +592,4 @@ main() {
   esac
 }
 
-main "$@"
+[[ ${BASH_SOURCE[0]} != "$0" ]] || main "$@"
