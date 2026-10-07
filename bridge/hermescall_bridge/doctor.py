@@ -1,5 +1,6 @@
-"""`hermes-call-bridge doctor`: checks config, secrets, pairing, relay, Hermes, Kokoro, the speech
-model, disk space and the running service. Prints one line per check; exit 1 when one failed."""
+"""`hermes-call-bridge doctor`: checks config, secrets, pairing, relay, Hermes, the TTS service and its
+voice, the call language, the speech model, disk space and the running service. Prints one line per
+check; exit 1 when one failed."""
 
 import asyncio
 import shutil
