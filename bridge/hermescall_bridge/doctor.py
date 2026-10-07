@@ -8,8 +8,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
+
 from .config import Config, ConfigError
-from .health import probe_http
+from .health import PROBE_TIMEOUT, probe_http
 from .state import StateStore
 
 MIN_FREE_BYTES = 500 * 1024 * 1024
@@ -61,6 +63,28 @@ def _model(config: Config) -> Check:
     return Check("speech model", "ok" if ok else "fail", f"{config.stt_model} {'found' if ok else 'missing'} in {path.parent}")
 
 
+def _language(config: Config) -> Check:
+    detail = f"{config.language}: speech recognition {config.stt_model} (beam {config.stt_beam_size}), voice {config.tts_voice}"
+    if config.warnings:
+        return Check("language", "warn", "; ".join(config.warnings))
+    return Check("language", "ok", detail)
+
+
+async def _voice(config: Config) -> Check:
+    """The configured voice is one the TTS service offers (a missing German TTS shows up here)."""
+    try:
+        async with httpx.AsyncClient(base_url=config.tts_url, timeout=PROBE_TIMEOUT, trust_env=False) as client:
+            response = await client.get("/v1/audio/voices")
+        voices = response.json().get("voices") if response.status_code == 200 else None
+    except (httpx.HTTPError, ValueError, AttributeError) as exc:
+        return Check("voice", "warn", f"{config.tts_url}/v1/audio/voices: {exc.__class__.__name__}")
+    if not isinstance(voices, list):
+        return Check("voice", "warn", f"{config.tts_url} does not list its voices; {config.tts_voice} not checked")
+    if config.tts_voice not in voices:
+        return Check("voice", "fail", f"{config.tts_voice} is not offered by {config.tts_url} (language {config.language})")
+    return Check("voice", "ok", f"{config.tts_voice} offered by {config.tts_url}")
+
+
 def _disk(config: Config) -> Check:
     try:
         free = shutil.disk_usage(config.state_dir).free
@@ -71,14 +95,16 @@ def _disk(config: Config) -> Check:
 
 
 async def _http_checks(config: Config) -> list[Check]:
-    hermes, kokoro, service = await asyncio.gather(
+    hermes, kokoro, service, voice = await asyncio.gather(
         probe_http(config.hermes_url),
         probe_http(config.tts_url),
         probe_http(f"http://{config.api_host}:{config.api_port}", "/healthz"),
+        _voice(config),
     )
     return [
         Check("hermes", "ok" if hermes.ok else "fail", f"{config.hermes_url}/health: {hermes.detail}"),
         Check("kokoro", "ok" if kokoro.ok else "fail", f"{config.tts_url}/health: {kokoro.detail}"),
+        voice,
         Check(
             "service",
             "ok" if service.ok else "warn",
@@ -91,7 +117,7 @@ def run_checks(config: Config, timeout: float = 5.0) -> list[Check]:
     pairing, address = _pairing(config)
     checks = [Check("config", "ok", "loaded"), _secrets(config), pairing, _relay(address, timeout)]
     checks += asyncio.run(_http_checks(config))
-    return [*checks, _model(config), _disk(config)]
+    return [*checks, _language(config), _model(config), _disk(config)]
 
 
 def doctor(config: Config, out: Callable[[str], None] = print) -> int:

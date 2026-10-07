@@ -42,7 +42,7 @@ from .peers import DRAFT_CAP, VOICE_FOLLOW_CAP
 from .state import Device, State
 from .transport import Transport
 from .tts import SAMPLE_RATE as TTS_RATE
-from .voice import MAX_SPOKEN_SECONDS, encode_voice, speech_text
+from .voice import MAX_SPOKEN_CHARS, MAX_SPOKEN_SECONDS, encode_voice, speech_text
 
 log = logging.getLogger(__name__)
 
@@ -141,11 +141,13 @@ class ChatService:
         store: ChatStore | None = None,
         transcribe_long: Callable[[np.ndarray], Awaitable[str]] | None = None,
         files_dir: Path | None = None,
+        language: str = "en",
     ) -> None:
         """`transcribe_long` (voice notes) runs behind live-call speech recognition (stt.py); `files_dir`:
         where attachments are spooled (files.py; default a temporary directory, for tests)."""
         self._state = state
         self._tts = tts
+        self._language = language
         # (owner voice-note id, monotonic deadline): the agent's reply to it is also spoken
         self._voice_note: tuple[str, float] | None = None
         self._relay = relay
@@ -518,7 +520,7 @@ class ChatService:
 
     async def _synthesize(self, text: str) -> bytes | None:
         loop = asyncio.get_running_loop()
-        spoken = await loop.run_in_executor(None, speech_text, text)
+        spoken = await loop.run_in_executor(None, speech_text, text, MAX_SPOKEN_CHARS, self._language)
         if self._tts is None or not spoken:
             return None
         limit = MAX_SPOKEN_SECONDS * TTS_RATE * 2

@@ -117,6 +117,17 @@ class Registry:
         self.speech_gaps = Counter(
             "hermescall_bridge_speech_gaps_total", "Mid-reply silences: playback ran dry before the next sentence."
         )
+        self.stt_seconds = Histogram(
+            "hermescall_bridge_stt_seconds", "Speech recognition time of a live-call utterance.", STAGE_BUCKETS
+        )
+        self.utterance_seconds = Histogram(
+            "hermescall_bridge_utterance_seconds", "Length of the owner's utterances sent to recognition.", STAGE_BUCKETS
+        )
+        self.playback_ignored_seconds = Counter(
+            "hermescall_bridge_playback_ignored_seconds_total",
+            "Microphone audio dropped while the agent was audible (barge_in = false: speakerphone echo guard).",
+        )
+        self.barge_ins = Counter("hermescall_bridge_barge_ins_total", "Owner speech or taps that cut the agent off.")
         self.stt_rtf = Histogram(
             "hermescall_bridge_stt_realtime_factor", "Speech recognition time divided by audio duration.", RTF_BUCKETS
         )
@@ -138,6 +149,10 @@ class Registry:
             self.hermes_first_text,
             self.tts_first_audio,
             self.speech_gaps,
+            self.stt_seconds,
+            self.utterance_seconds,
+            self.playback_ignored_seconds,
+            self.barge_ins,
             self.stt_rtf,
             self.turn_errors,
             self.calls,

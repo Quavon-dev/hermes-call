@@ -6,10 +6,11 @@ import re
 import av
 import numpy as np
 
+from .lang import phrases
+
 # About two minutes of speech at Kokoro's pace.
 MAX_SPOKEN_CHARS = 1800
 MAX_SPOKEN_SECONDS = 150
-MORE_IN_CHAT = "More in the chat."
 BIT_RATE = 32_000
 FRAME = 1024
 
@@ -34,7 +35,7 @@ def _clean_line(line: str) -> str:
     return _SPACE_BEFORE_PUNCT.sub(r"\1", line).strip()
 
 
-def _cap(paragraphs: list[str], limit: int) -> str:
+def _cap(paragraphs: list[str], limit: int, more: str) -> str:
     """The first paragraphs (or sentences, or words) that fit, then a pointer to the chat."""
     kept: list[str] = []
     for paragraph in paragraphs:
@@ -43,17 +44,17 @@ def _cap(paragraphs: list[str], limit: int) -> str:
             break
         kept.append(paragraph)
     if kept:
-        return "\n\n".join(kept) + "\n\n" + MORE_IN_CHAT
+        return "\n\n".join(kept) + "\n\n" + more
     sentences: list[str] = []
     for sentence in _SENTENCE_END.split(paragraphs[0]):
         if len(" ".join([*sentences, sentence])) > limit:
             break
         sentences.append(sentence)
     head = " ".join(sentences) or paragraphs[0][:limit].rsplit(" ", 1)[0]
-    return f"{head} {MORE_IN_CHAT}"
+    return f"{head} {more}"
 
 
-def speech_text(text: str, limit: int = MAX_SPOKEN_CHARS) -> str:
+def speech_text(text: str, limit: int = MAX_SPOKEN_CHARS, language: str = "en") -> str:
     """Markdown-ish chat text → plain sentences: no code blocks, URLs, markers or emoji; ≤ `limit` chars."""
     text = _CODE_BLOCK.sub("", text)
     text = _URL.sub("", _LINK.sub(r"\1", text))
@@ -68,7 +69,7 @@ def speech_text(text: str, limit: int = MAX_SPOKEN_CHARS) -> str:
     spoken = "\n\n".join(paragraphs)
     if len(spoken) <= limit:
         return spoken
-    return _cap(paragraphs, limit)
+    return _cap(paragraphs, limit, phrases(language).more_in_chat)
 
 
 def encode_voice(pcm: bytes, rate: int = 24_000) -> bytes:

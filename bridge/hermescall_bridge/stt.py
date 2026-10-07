@@ -58,9 +58,11 @@ class Transcriber:
         language: str = "en",
         beam_size: int = 1,
         compute_type: str = "int8",
+        initial_prompt: str = "",
     ) -> None:
         self._language = language
         self._beam_size = beam_size
+        self._initial_prompt = initial_prompt or None
         self._model = WhisperModel(model_path, device="cpu", compute_type=compute_type, cpu_threads=threads)
         self._model.transcribe(np.zeros(RATE, dtype=np.float32), language=language, beam_size=beam_size)
         self._jobs: queue.PriorityQueue[_Job] = queue.PriorityQueue()
@@ -68,7 +70,9 @@ class Transcriber:
         self._worker = threading.Thread(target=self._work, name="stt", daemon=True)
         self._worker.start()
 
-    def _transcribe(self, audio: np.ndarray) -> str:
+    def _transcribe(self, audio: np.ndarray, live: bool) -> str:
+        """Live utterances decode once (greedy temperature): the fallback re-decodes cost latency, not accuracy."""
+        options = {"temperature": 0.0} if live else {}
         segments, _ = self._model.transcribe(
             audio,
             language=self._language,
@@ -76,6 +80,8 @@ class Transcriber:
             vad_filter=False,
             condition_on_previous_text=False,
             without_timestamps=True,
+            initial_prompt=self._initial_prompt,
+            **options,
         )
         return " ".join(segment.text.strip() for segment in segments if segment.no_speech_prob < 0.6).strip()
 
@@ -86,11 +92,13 @@ class Transcriber:
                 continue  # an early guess the owner talked over, or a hung-up call
             started = time.monotonic()
             try:
-                result: str | BaseException = self._transcribe(job.audio)
+                result: str | BaseException = self._transcribe(job.audio, job.priority == LIVE)
             except Exception as exc:  # handed to the waiting coroutine, which re-raises it
                 result = exc
             if job.priority == LIVE and len(job.audio):
-                METRICS.stt_rtf.observe((time.monotonic() - started) / (len(job.audio) / RATE))
+                took = time.monotonic() - started
+                METRICS.stt_seconds.observe(took)
+                METRICS.stt_rtf.observe(took / (len(job.audio) / RATE))
             try:
                 job.loop.call_soon_threadsafe(_settle, job.future, result)
             except RuntimeError:  # that event loop is closed (shutdown): nobody waits for this result

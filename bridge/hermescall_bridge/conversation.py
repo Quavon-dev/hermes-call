@@ -17,6 +17,7 @@ import numpy as np
 
 from .audio import SpeechTrack
 from .hermes import ApprovalRequest, HermesClient, TextDelta, ToolProgress
+from .lang import Phrases, phrases
 from .metrics import METRICS
 from .tasks import TOOL_NAME, Progress
 from .text import Chunker
@@ -32,16 +33,18 @@ MAX_BUFFERED_SPEECH_S = 10.0
 MAX_PENDING_IMAGES = 3
 
 PHONE_SYSTEM = (
-    "You are on a live phone call with your owner through Hermes Call. Everything you write is spoken "
-    "aloud by a text-to-speech voice. Talk naturally in short, plain sentences. Never use markdown, lists, "
-    "tables, code blocks, emojis or URLs. Keep answers brief unless asked for detail. Start with a very "
-    "short sentence when possible. Do not add filler before tool calls; Hermes Call handles progress audio. "
-    "Commands that need approval are approved on the "
-    "owner's phone screen, never by voice; do not ask for spoken approval."
+    "You are on a live phone call with your owner through Hermes Call. Everything you write is spoken aloud "
+    "by a text-to-speech voice, so write only plain spoken sentences: no markdown, lists, tables, code, emojis, "
+    "URLs or symbols that cannot be read aloud. Answer in the language the owner speaks. {language}"
+    "Start with a short, useful sentence that answers or says what you are doing, then add detail only when "
+    "it helps; sound natural and conversational, not clipped. Say numbers, times and dates the way people "
+    "speak them. Do not introduce yourself, do not mention being an AI and skip filler phrases. Before a "
+    "tool call, do not announce it at length; Hermes Call plays a short progress line while tools run. "
+    "Commands that need approval are approved on the owner's phone screen, never by voice; do not ask for "
+    "spoken approval."
 )
-APPROVAL_PROMPT = "I need your approval on your phone screen before I run that."
-APPROVAL_DENIED = "Understood, I will not run it."
-FALLBACK_LINE = "Sorry, I couldn't reach {agent} just now."
+APPROVAL_PROMPT = phrases("en").approval_prompt
+APPROVAL_DENIED = phrases("en").approval_denied
 # Hermes (API server) or Kokoro failing mid-turn: the owner hears a short line or tone, never silence.
 HERMES_ERRORS = (httpx.HTTPError, TimeoutError, OSError, ValueError)
 TTS_ERRORS = (httpx.HTTPError, TimeoutError, OSError)
@@ -78,6 +81,10 @@ class TurnSettings:
     acknowledgement_after_ms: int = 0
     acknowledgement_text: str = ""
     barge_in: bool = True
+    # barge_in = false: the agent's voice keeps reaching the microphone this long after the bridge
+    # sent its last audio (the phone's jitter buffer, the network both ways, the room).
+    echo_tail_ms: int = 400
+    language: str = "en"
 
 
 @dataclass
@@ -93,6 +100,8 @@ class _Said:
     interrupted: bool = False
     # The owner line this turn put into the transcript (replaced when the turn is continued).
     sent: str = ""
+    acknowledged: bool = False
+    audio_at: float | None = None
 
     @property
     def full(self) -> str:
@@ -168,8 +177,10 @@ class Conversation:
         self._transcribe = transcribe
         self._out = out
         self._on_approval = on_approval
-        self._system = PHONE_SYSTEM + (f"\n\n{system_note}" if system_note else "")
         self._s = settings or TurnSettings()
+        self._phrases = phrases(self._s.language)
+        language = "" if self._s.language == "en" else f"This call is in {self._phrases.name}. "
+        self._system = PHONE_SYSTEM.format(language=language) + (f"\n\n{system_note}" if system_note else "")
         self._vad = StreamingVad()
         self._turn: asyncio.Task | None = None
         self._speaker: asyncio.Task | None = None
@@ -180,6 +191,7 @@ class Conversation:
         self._carry_wait: asyncio.TimerHandle | None = None
         self._ptt_mode = False
         self._ptt_down = False
+        self._audible_until = 0.0
         self._ptt_audio: list[np.ndarray] = []
         self._device_stt = False
         self._agent_name = agent_name
@@ -191,6 +203,10 @@ class Conversation:
         # What was said, kept in memory only, so the chat can continue where the call ended.
         self.transcript: list[tuple[str, str]] = []
         self._reset_utterance()
+
+    @property
+    def phrases(self) -> Phrases:
+        return self._phrases
 
     @property
     def busy(self) -> bool:
@@ -229,6 +245,9 @@ class Conversation:
 
     def submit_text(self, text: str, stt_ms: int | None = None) -> None:
         if not self._device_stt:
+            return
+        if not self._ptt_mode and self._hears_playback():
+            log.info("phone transcript ignored: the agent was speaking (barge_in = false)")
             return
         if self._turn is not None:
             self._turn.cancel()
@@ -328,7 +347,8 @@ class Conversation:
             return
         if probability is None:
             probability = self._vad.probability(chunk)
-        if self._out.speaking and not self._s.barge_in:
+        if self._hears_playback():
+            METRICS.playback_ignored_seconds.inc(amount=CHUNK_MS / 1000)
             self._drop_speculation()
             self._reset_utterance()
             return
@@ -367,6 +387,16 @@ class Conversation:
             self._guessed = True
             self._speculation = asyncio.ensure_future(self._transcribe(self._trimmed()))
 
+    def _hears_playback(self) -> bool:
+        """barge_in = false: the microphone may be hearing the agent (speakerphone echo), so it makes no turn."""
+        if self._s.barge_in:
+            return False
+        now = time.monotonic()
+        if self._out.speaking:
+            self._audible_until = now + self._s.echo_tail_ms / 1000
+            return True
+        return now < self._audible_until
+
     def _interrupt(self, continuing: bool = False) -> None:
         """`continuing`: the owner started speaking (not a tap); before any answer played, that is
         the rest of what they were saying, so it is joined to it instead of cutting the agent off."""
@@ -377,7 +407,9 @@ class Conversation:
             log.info("owner kept talking")
         elif self.busy:
             self._interrupted = True
+            METRICS.barge_ins.inc()
             log.info("barge-in")
+        self._audible_until = 0.0
         # Cancel the speaker directly too, so not one more TTS block is queued after the clear.
         for task in (self._turn, self._speaker):
             if task is not None:
@@ -422,6 +454,7 @@ class Conversation:
             if guess is not None:
                 guess.cancel()
                 guess = None
+        METRICS.utterance_seconds.observe(len(audio) / SAMPLE_RATE)
         self._turn = asyncio.ensure_future(self._run_turn(audio, time.monotonic(), guess=guess, carry=carry))
 
     async def _run_turn(
@@ -437,7 +470,12 @@ class Conversation:
         audio when it had not been recognized yet)."""
         recognized_before = carry is not None and bool(carry.text)
         prefix = carry.full if recognized_before else (carry.prefix if carry is not None else "")
-        said = self._said = _Said(audio, prefix, interrupted=carry is not None and carry.interrupted)
+        said = self._said = _Said(
+            audio,
+            prefix,
+            interrupted=carry is not None and carry.interrupted,
+            acknowledged=carry is not None and carry.acknowledged,
+        )
         try:
             await self._answer(said, audio, ended, text, stt_ms, guess, carry)
         finally:
@@ -475,7 +513,7 @@ class Conversation:
         marks = {"stt": stt_done}
         acknowledgement = None
         if self._s.acknowledgement_after_ms and self._s.acknowledgement_text:
-            acknowledgement = asyncio.ensure_future(self._acknowledge(chunks, marks))
+            acknowledgement = asyncio.ensure_future(self._acknowledge(chunks, marks, said, ended))
         self.transcript.append(("owner", text))
         said.sent = text
         try:
@@ -485,7 +523,7 @@ class Conversation:
                 log.warning("turn failed: Hermes %s after %.0f ms", describe(exc), (time.monotonic() - stt_done) * 1000)
                 METRICS.turn_errors.inc("hermes")
                 marks.setdefault("chunk", time.monotonic())
-                await chunks.put(FALLBACK_LINE.format(agent=self._agent_name))
+                await chunks.put(self._phrases.fallback.format(agent=self._agent_name))
             await chunks.put(None)
             await speaker
         finally:
@@ -493,25 +531,31 @@ class Conversation:
                 acknowledgement.cancel()
             speaker.cancel()
         log.info(
-            "turn timings: stt %.0f ms (%s), llm first text %.0f ms, first chunk %.0f ms",
+            "turn timings: utterance %.1f s, stt %.0f ms (%s), llm first text %.0f ms, first chunk %.0f ms, "
+            "end of speech to first answer audio %s, acknowledgement %s",
+            len(audio) / SAMPLE_RATE if audio is not None else 0.0,
             (stt_done - ended) * 1000 if audio is not None else (stt_ms or 0),
             "bridge" if audio is not None else "phone",
             (marks.get("delta", stt_done) - stt_done) * 1000,
             (marks.get("chunk", stt_done) - stt_done) * 1000,
+            f"{(said.audio_at - ended) * 1000:.0f} ms" if said.audio_at is not None else "none",
+            f"{(marks['acknowledgement'] - ended) * 1000:.0f} ms" if "acknowledgement" in marks else "none",
         )
 
-    async def _acknowledge(self, chunks: asyncio.Queue, marks: dict[str, float]) -> None:
-        await asyncio.sleep(self._s.acknowledgement_after_ms / 1000)
-        await self._queue_acknowledgement(chunks, marks)
+    async def _acknowledge(self, chunks: asyncio.Queue, marks: dict[str, float], said: _Said, ended: float) -> None:
+        """No answer this long after the owner stopped speaking: say the acknowledgement once."""
+        await asyncio.sleep(max(0.0, ended + self._s.acknowledgement_after_ms / 1000 - time.monotonic()))
+        await self._queue_acknowledgement(chunks, marks, said)
 
-    async def _queue_acknowledgement(self, chunks: asyncio.Queue, marks: dict[str, float]) -> None:
-        if "chunk" in marks or "acknowledgement" in marks or not self._s.acknowledgement_text:
+    async def _queue_acknowledgement(self, chunks: asyncio.Queue, marks: dict[str, float], said: _Said) -> None:
+        if "chunk" in marks or said.acknowledged or not self._s.acknowledgement_after_ms or not self._s.acknowledgement_text:
             return
+        said.acknowledged = True
         marks["acknowledgement"] = time.monotonic()
         await chunks.put(self._s.acknowledgement_text)
 
     async def _stream_reply(self, text: str, chunks: asyncio.Queue, marks: dict[str, float], said: _Said) -> None:
-        chunker = Chunker()
+        chunker = Chunker(self._phrases.link)
         spoken: list[str] = []
         progress = _TurnProgress(self._on_progress)
         state = "failed"
@@ -553,7 +597,7 @@ class Conversation:
                     progress.tool(event)
                     if event.status == "running":
                         said.acting = True
-                        await self._queue_acknowledgement(chunks, marks)
+                        await self._queue_acknowledgement(chunks, marks, said)
                     continue
                 if isinstance(event, TextDelta):
                     spoken.append(event.text)
@@ -565,11 +609,11 @@ class Conversation:
                         await chunks.put(chunk)
                     continue
                 marks.setdefault("chunk", time.monotonic())
-                await chunks.put(APPROVAL_PROMPT)
+                await chunks.put(self._phrases.approval_prompt)
                 choice = await self._on_approval(event)
                 accepted = await self._hermes.answer_approval(event, choice)
                 if choice == "deny" or accepted in ("deny", None):
-                    await chunks.put(APPROVAL_DENIED)
+                    await chunks.put(self._phrases.approval_denied)
         self._forget_images(images)
         for chunk in chunker.flush():
             await chunks.put(chunk)
@@ -577,11 +621,12 @@ class Conversation:
     async def _speak_queue(self, chunks: asyncio.Queue, ended: float | None = None, said: _Said | None = None) -> None:
         tts_failed = False
         previous: str | None = None
+        own_lines = (None, self._s.acknowledgement_text, self._phrases.approval_prompt, self._phrases.approval_denied)
         while (chunk := await chunks.get()) is not None:
             if tts_failed:
                 continue  # Kokoro is down: the tone played once; the rest of the turn is dropped
             # Silence after the bridge's own lines is expected (a tool runs, the owner approves).
-            watch_gap = previous not in (None, self._s.acknowledgement_text, APPROVAL_PROMPT, APPROVAL_DENIED)
+            watch_gap = previous not in own_lines
             acknowledgement = bool(chunk) and chunk == self._s.acknowledgement_text
             try:
                 async with contextlib.aclosing(self._tts.synthesize(chunk)) as audio:
@@ -610,6 +655,8 @@ class Conversation:
         async for pcm in audio:
             if answer is not None:
                 answer.answered = True
+                if answer.audio_at is None:
+                    answer.audio_at = time.monotonic()
             if watch_gap:
                 if not self._out.speaking:
                     METRICS.speech_gaps.inc()
@@ -633,7 +680,7 @@ class Conversation:
     async def _speak_all(self, texts: list[str]) -> None:
         queue: asyncio.Queue[str | None] = asyncio.Queue()
         for text in texts:
-            chunker = Chunker()
+            chunker = Chunker(self._phrases.link)
             for chunk in chunker.feed(text) + chunker.flush():
                 await queue.put(chunk)
         await queue.put(None)

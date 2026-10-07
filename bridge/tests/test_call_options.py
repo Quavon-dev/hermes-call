@@ -11,6 +11,7 @@ from hermescall_bridge import calls as calls_mod
 from hermescall_bridge.calls import ActiveCall, CallTimeouts
 from hermescall_bridge.config import ConfigError, load
 from hermescall_bridge.hermes import ApprovalRequest, HermesClient
+from hermescall_bridge.lang import phrases
 from hermescall_bridge.metrics import METRICS
 from hermescall_bridge.sessions import PhoneSessions
 from hermescall_bridge.webrtc import order_turn_urls
@@ -61,7 +62,7 @@ def test_call_timeouts_from_config(tmp_path) -> None:
     assert config.barge_in is False
     assert config.acknowledgement_after_ms == 900 and config.acknowledgement_text == "One moment."
     assert config.tts_speed == 1.08
-    assert (config.stt_model, config.stt_language, config.stt_beam_size) == ("small", "de", 3)
+    assert (config.stt_model, config.language, config.stt_beam_size) == ("small", "de", 3)
     assert (config.hermes_model, config.hermes_provider, config.hermes_reasoning_effort) == (
         "voice-fast",
         "openrouter",
@@ -97,8 +98,9 @@ async def test_call_without_media_ends_after_the_media_timeout(monkeypatch) -> N
 
 
 class Announcer:
-    def __init__(self) -> None:
+    def __init__(self, language: str = "en") -> None:
         self.said: list[str] = []
+        self.phrases = phrases(language)
 
     def announce(self, text: str) -> None:
         self.said.append(text)
@@ -107,11 +109,11 @@ class Announcer:
 def test_warning_before_the_call_time_limit() -> None:
     manager, device = call_manager(SlowTurnRelay())
     call = ActiveCall("c", device, pc=None)
-    call.conversation = Announcer()
+    call.conversation = Announcer("de")
     manager.active = call
     manager._warn_ending(call)
     manager._warn_ending(ActiveCall("other", device, pc=None))  # not the active call: nothing
-    assert call.conversation.said == [calls_mod.CALL_ENDING_LINE]
+    assert call.conversation.said == ["Wir haben noch etwa eine Minute."]
 
 
 async def test_pending_approval_and_lost_captions_are_resent_after_a_relay_reconnect() -> None:
