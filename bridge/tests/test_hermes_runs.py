@@ -64,6 +64,23 @@ def client_for(api: FakeApi) -> HermesClient:
     return client
 
 
+async def test_warming_up_asks_hermes_once_so_the_first_turn_does_not() -> None:
+    api = FakeApi(events=runs_events(ev("message.delta", delta="Hi."), ev("run.completed", completed=True)))
+    client = client_for(api)
+    await client.warm()
+    assert api.paths() == ["GET /health"]
+    [e async for e in client.turn("sys", "hello")]
+    assert api.paths() == ["GET /health", "POST /v1/runs", "GET /v1/runs/run_1/events"]
+
+    def down(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    offline = HermesClient("http://127.0.0.1:8642", "key", "phone-session")
+    offline._client = httpx.AsyncClient(base_url="http://127.0.0.1:8642", transport=httpx.MockTransport(down))
+    await offline.warm()  # logged, not raised
+    assert offline._runs is None
+
+
 async def test_a_call_turn_runs_through_v1_runs_and_streams_approvals() -> None:
     api = FakeApi(
         events=runs_events(

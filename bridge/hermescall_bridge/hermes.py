@@ -115,6 +115,14 @@ class HermesClient:
             async for event in events:
                 yield event
 
+    async def warm(self) -> None:
+        """At start: learn which API Hermes speaks and open the connection, so the first call turn
+        does not pay for it. Hermes not up yet: the first turn asks instead."""
+        try:
+            await self._uses_runs()
+        except httpx.HTTPError as exc:
+            log.info("Hermes not reachable at start (%s); asked again on the first turn", exc.__class__.__name__)
+
     async def _uses_runs(self) -> bool:
         """Asked once: Hermes' /health names its version from 0.21 on. Unreachable: ask again next turn."""
         if self._runs is None:

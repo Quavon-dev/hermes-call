@@ -302,6 +302,7 @@ async def serve(config: Config) -> None:
     await web.TCPSite(runner, config.api_host, config.api_port).start()
     log.info("local API on %s:%s", config.api_host, config.api_port)
     relay_task = asyncio.ensure_future(bridge.relay.run())
+    warming = asyncio.ensure_future(hermes.warm())
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGTERM, signal.SIGINT):
@@ -313,7 +314,7 @@ async def serve(config: Config) -> None:
         await asyncio.wait({relay_task, asyncio.ensure_future(stop.wait())}, return_when=asyncio.FIRST_COMPLETED)
         await shutdown(bridge)
     finally:
-        for task in (relay_task, pinger):
+        for task in (relay_task, pinger, warming):
             if task is not None:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
