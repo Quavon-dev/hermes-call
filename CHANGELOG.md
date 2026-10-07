@@ -20,6 +20,16 @@ versioned separately and is at **0.8.2** in this release.
 - `/metrics`: Hermes first-text time, Kokoro first-audio time, mid-reply speech gaps and
   acknowledgement latency; the acknowledgement no longer counts as the answer in `call_latency`.
 - The bridge starts even when Kokoro is not reachable yet.
+- Chat replies appear while the agent writes them: the Hermes plugin turns on Hermes' draft streaming
+  for its platform (`display.platforms.hermes_call.streaming: false` turns it off) and the app shows the
+  reply so far in place of the typing dots. Needs the new app, bridge and plugin; older ones keep the
+  typing indicator.
+- A spoken reply to a voice note shows its text at once; the voice note follows (older apps still get
+  both together).
+- Fixes from a review: noise after a question no longer drops it; speaking while a tool runs starts a
+  new turn instead of repeating the action; early speech recognition runs once per utterance.
+- iOS threading fixes: the haptic engine's reset no longer traps, the call audio engine cannot be set up
+  twice at once, and the chat outbox ends its background time cleanly.
 
 ## [0.7.2] — 2026-10-01
 
