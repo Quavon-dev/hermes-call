@@ -13,6 +13,7 @@ final class TaskActivityModel {
     private(set) var current: TaskUpdate?
     /// Its agent (a task from another paired agent shows in the Live Activity only).
     private(set) var currentProfile: UUID?
+    private(set) var trail = TaskTrail()
 
     static let lingerAfterEnd: Duration = .seconds(4)
     /// A running task without news for this long is treated as over (a lost end message). The bridge
@@ -79,8 +80,10 @@ final class TaskActivityModel {
         // Only the newest turn matters; a late message of an older turn is dropped.
         if let current, currentProfile == profile, current.turnID != update.turnID, update.startedAt < current.startedAt { return }
         if let current, currentProfile == profile, current.turnID == update.turnID, current.state != .running { return }
+        if currentProfile != profile { trail.clear() }
         current = update
         currentProfile = profile
+        trail.record(update)
         clearTask?.cancel()
         enqueue { await self.showActivity(update, profile: profile, agentName: agentName) }
         // Ended: linger briefly. Running: if the end never arrives (lost message), give up after `staleAfter`.
@@ -89,6 +92,7 @@ final class TaskActivityModel {
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled, self.current?.turnID == update.turnID else { return }
             self.current = nil
+            self.trail.clear()
             if update.state == .running, let id = self.activity?.id {
                 self.activity = nil
                 self.enqueue { await Self.change(id, to: nil, end: true) }
@@ -101,12 +105,15 @@ final class TaskActivityModel {
     func runDemoIfRequested() {
         guard UserDefaults.standard.bool(forKey: "TaskDemo"), let profile = app.activeProfile else { return }
         let started = Int64(Date().timeIntervalSince1970 * 1000)
-        let steps = [("web_search", "Searching the web"), ("web_extract", "Reading pages"), ("web_search", "Searching the web"),
-                     ("terminal", "Running a command"), ("write_file", "Working on files")]
+        let steps = [("web_search", "Searching the web", "swift concurrency actor reentrancy"),
+                     ("web_extract", "Reading pages", "https://www.swift.org/documentation/concurrency/"),
+                     ("terminal", "Running a command", "cd ~/projects/app && swift test --filter ActorTests"),
+                     ("read_file", "Working on files", "Sources/App/Store.swift"),
+                     ("terminal", "Running a command", "git diff --stat && git commit -am 'Fix reentrancy'")]
         Task {
             try? await Task.sleep(for: .seconds(3))
             for (index, step) in steps.enumerated() {
-                show(TaskUpdate(turnID: "demo", step: index + 1, total: steps.count, tool: step.0, label: step.1, preview: nil,
+                show(TaskUpdate(turnID: "demo", step: index + 1, total: steps.count, tool: step.0, label: step.1, preview: step.2,
                                 state: .running, startedAt: started), profile: profile.id, agentName: profile.bridgeName)
                 try? await Task.sleep(for: .seconds(4))
             }
@@ -121,6 +128,8 @@ final class TaskActivityModel {
         guard currentProfile == app.activeProfile?.id else { return nil }
         return current
     }
+
+    var activeTrail: [TaskUpdate] { activeTask == nil ? [] : trail.steps }
 
     // MARK: Live Activity
 
@@ -246,6 +255,7 @@ final class TaskActivityModel {
         for activity in Activity<HermesTaskAttributes>.activities { await Self.change(activity.id, to: nil, end: true) }
         activity = nil
         current = nil
+        trail.clear()
     }
 }
 

@@ -396,6 +396,16 @@ access › Place reminders lists them (swipe to delete).
   headings, lists (nested, numbered, task lists), code blocks, quotes, tables and rules. The
   composer takes up to 4 photos or files at once and photos from the camera; voice notes show a
   waveform, can be scrubbed and played at 1×/1.5×/2×; a denied microphone offers Settings.
+- **Live activity in the chat**: while the agent works, a card at the end of the chat shows the
+  current tool (`task` messages: label, step, elapsed time, a progress bar when the total is known)
+  and its argument preview, commands with a `$` prompt in a terminal look; tap it for the turn's
+  earlier steps. Live drafts stream in as an agent bubble with a caret, the typing dots bounce, and the
+  title says what happens ("Running a command…", "writing…"). The chat follows along only while it is
+  scrolled to the end. New messages spring in from their side; Reduce Motion turns the motion off.
+- **Commands**: typing `/` lists Hermes' gateway commands (`/new`, `/retry`, `/undo`, `/compress`,
+  `/usage`, `/model`, `/help`, `/stop`); a tap sends it (`/model` waits for an argument). New session,
+  retry and undo are also in the composer's **+** menu, new session and retry in the call button's
+  menu. Commands that change the session come back as an approval (Face ID).
 - **Outbox**: owner messages not yet confirmed by the bridge (also those the share sheet wrote).
   A sender *claims* a message in the database while sending it, so the app and the share
   extension never send the same one twice.
@@ -420,7 +430,8 @@ access › Place reminders lists them (swipe to delete).
   shows "Call <agent>?" first (the agent becomes active only after **Call**), and a chat link opens the
   active agent's chat. The app writes agent names and colours (no keys) to the app group for this.
 - Debug builds: `-ChatDemo YES` seeds a demo agent and history for screenshots
-  (`-ChatDemoQuery <text>`, `-ChatDemoPlay YES`, `-ChatDemoReveal <text>`).
+  (`-ChatDemoQuery <text>`, `-ChatDemoPlay YES`, `-ChatDemoReveal <text>`). `-TaskDemo YES` runs a
+  five-step task with command previews; the on-device demo agent streams its replies as drafts.
 
 ### Apple Watch
 

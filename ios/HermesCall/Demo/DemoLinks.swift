@@ -51,8 +51,22 @@ final class DemoLinkProvider: ChatLinkProvider {
             chat?.handle(["type": "typing"], profile: profile, link: link)
             try? await Task.sleep(for: thinking)
             guard !Task.isCancelled else { return }
-            chat?.handle(DemoAgent.reply(to: text, attachments: attachments), profile: profile, link: link)
+            let reply = DemoAgent.reply(to: text, attachments: attachments)
+            if reply["kind"] == nil, let full = reply["text"]?.string { await stream(full, profile: profile, link: link) }
+            guard !Task.isCancelled else { return }
+            chat?.handle(reply, profile: profile, link: link)
             replying = nil
+        }
+    }
+
+    private func stream(_ text: String, profile: RelayProfile, link: DemoLink) async {
+        let words = text.split(separator: " ", omittingEmptySubsequences: false)
+        let step = max(3, words.count / 16)
+        for end in stride(from: step, to: words.count, by: step) {
+            guard !Task.isCancelled else { return }
+            chat?.handle(["type": "chat_draft", "draft": "demo", "text": .string(words[..<end].joined(separator: " "))],
+                         profile: profile, link: link)
+            try? await Task.sleep(for: .milliseconds(90))
         }
     }
 

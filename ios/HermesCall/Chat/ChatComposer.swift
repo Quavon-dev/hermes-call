@@ -17,26 +17,31 @@ struct ChatComposer: View {
     @State private var capturing = false
     @State private var micDenied = false
     @State private var recorder = VoiceRecorder()
+    @State private var sent = 0
 
     static let maxFiles = 4
 
+    private var suggestions: [SlashCommand] { recorder.isRecording ? [] : SlashCommand.suggestions(for: draft) }
+
     var body: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            if recorder.isRecording {
-                recordingBar
-            } else {
-                attachMenu
-                field
-                if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Button { Task { await startRecording() } } label: { ComposerIcon(symbol: "mic.fill", hud: hud) }
-                        .disabled(calls.inCall)
-                        .accessibilityLabel("Record a voice note")
+        VStack(spacing: 8) {
+            if !suggestions.isEmpty {
+                SlashSuggestions(commands: suggestions, hud: hud, pick: pick)
+                    .transition(.move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.96, anchor: .bottom)))
+            }
+            HStack(alignment: .bottom, spacing: 10) {
+                if recorder.isRecording {
+                    recordingBar.transition(.move(edge: .trailing).combined(with: .opacity))
                 } else {
-                    Button(action: sendDraft) { ComposerIcon(symbol: "arrow.up", hud: hud) }
-                        .accessibilityLabel("Send")
+                    attachMenu
+                    field
+                    actionButton
                 }
             }
         }
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: suggestions.map(\.name))
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: recorder.isRecording)
+        .sensoryFeedback(.impact(weight: .light), trigger: sent)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(hud ? AnyShapeStyle(Color.black) : AnyShapeStyle(.bar))
@@ -62,8 +67,37 @@ struct ChatComposer: View {
         }
     }
 
+    private var isEmpty: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    private var actionButton: some View {
+        Button {
+            if isEmpty { Task { await startRecording() } } else { sendDraft() }
+        } label: {
+            ComposerIcon(symbol: isEmpty ? "mic.fill" : "arrow.up", hud: hud)
+                .symbolEffect(.bounce, value: sent)
+        }
+        .disabled(isEmpty && calls.inCall)
+        .animation(.snappy(duration: 0.2), value: isEmpty)
+        .accessibilityLabel(isEmpty ? "Record a voice note" : "Send")
+    }
+
+    private func pick(_ command: SlashCommand) {
+        if command.takesArgument {
+            draft = command.text + " "
+            return
+        }
+        draft = ""
+        sent += 1
+        chat.run(command, calls: calls)
+    }
+
     private var attachMenu: some View {
         Menu {
+            Section("Commands") {
+                ForEach([SlashCommand.new, .retry, .undo]) { command in
+                    Button { chat.run(command, calls: calls) } label: { Label(command.summary, systemImage: command.symbol) }
+                }
+            }
             Button { choosingPhotos = true } label: { Label("Photos", systemImage: "photo.on.rectangle") }
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
                 Button { capturing = true } label: { Label("Camera", systemImage: "camera") }
@@ -132,6 +166,7 @@ struct ChatComposer: View {
 
     private func sendDraft() {
         let text = takeCaption()
+        sent += 1
         Task { await chat.send(text: text) }
     }
 
@@ -180,6 +215,7 @@ struct ComposerIcon: View {
 
     var body: some View {
         Image(systemName: symbol)
+            .contentTransition(.symbolEffect(.replace))
             .font(.system(size: Metrics.iconButton * 0.42, weight: .semibold))
             .foregroundStyle(hud ? HUD.deep : .white)
             .frame(width: Metrics.iconButton, height: Metrics.iconButton)

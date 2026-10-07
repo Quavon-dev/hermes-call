@@ -15,6 +15,9 @@ struct ChatView: View {
     @State private var pendingDelete: ChatMessage?
     /// Older pages load only after the first scroll to the newest message.
     @State private var settled = false
+    @State private var arriving: String?
+    @State private var draftSeen = Date.distantPast
+    @State private var atBottom = true
     @FocusState private var composing: Bool
     @FocusState private var searchFocused: Bool
 
@@ -58,23 +61,8 @@ struct ChatView: View {
                 messageList
                 if searching && !query.trimmingCharacters(in: .whitespaces).isEmpty { searchResults }
             }
-            if let draft = chat.agentDraft, !searching {
-                DraftBubble(text: draft, hud: hud)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
-                    .transition(.opacity)
-            } else if chat.agentTyping && !searching {
-                TypingIndicator(hud: hud)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
-                    .transition(.opacity)
-            }
             if !searching { ChatComposer(hud: hud, composing: $composing) }
         }
-        .animation(.easeInOut(duration: 0.2), value: chat.agentTyping)
-        .animation(.easeInOut(duration: 0.2), value: chat.agentDraft == nil)
         .animation(.easeInOut(duration: 0.2), value: searching)
         .background { if hud { Color.black.ignoresSafeArea() } }
         .navigationBarTitleDisplayMode(.inline)
@@ -106,22 +94,38 @@ struct ChatView: View {
                             DayHeader(date: message.date)
                         }
                         row(message).id(message.id)
+                            .modifier(Arrival(active: arriving == message.id, fromTrailing: message.role == .owner))
                     }
                     if chat.window.hasNewer {
                         pageLoader.onAppear { Task { await chat.loadNewer() } }
+                    } else {
+                        liveTail.id(Self.liveID)
                     }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
             }
             .scrollDismissesKeyboard(.interactively)
-            .onScrollPhaseChange { _, phase in
+            .onScrollPhaseChange { _, phase, context in
                 if phase == .interacting, highlighted != nil { withAnimation(.easeOut(duration: 0.6)) { highlighted = nil } }
+                if phase == .idle {
+                    atBottom = context.geometry.visibleRect.maxY >= context.geometry.contentSize.height - 160
+                }
             }
             // No .defaultScrollAnchor(.bottom): with a lazy stack and the keyboard it loops layout forever.
             .onAppear { scrollToEnd(proxy, animated: false) }
             .onChange(of: chat.shownProfileID) { scrollToEnd(proxy, animated: false) }
-            .onChange(of: chat.messages.last?.id) { if !chat.window.hasNewer { scrollToEnd(proxy) } }
+            .onChange(of: chat.messages.last?.id) { _, id in
+                guard !chat.window.hasNewer else { return }
+                markArrival(id)
+                scrollToEnd(proxy)
+            }
+            .onChange(of: chat.agentDraft) { _, draft in
+                if draft != nil { draftSeen = Date() }
+                followLive(proxy)
+            }
+            .onChange(of: chat.agentTyping) { followLive(proxy) }
+            .onChange(of: tasks.activeTrail) { followLive(proxy) }
             .onChange(of: composing) { _, focused in if focused { scrollToEnd(proxy) } }
             .onChange(of: highlighted) { _, id in
                 guard let id else { return }
@@ -160,6 +164,49 @@ struct ChatView: View {
                    delete: { pendingDelete = message })
     }
 
+    private static let liveID = "chat.live"
+
+    private var liveTrail: [TaskUpdate] { searching ? [] : tasks.activeTrail }
+
+    private var liveTail: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !liveTrail.isEmpty {
+                TaskFeedCard(steps: liveTrail, hud: hud)
+                    .transition(.asymmetric(insertion: .scale(scale: 0.92, anchor: .bottomLeading).combined(with: .opacity),
+                                            removal: .opacity.combined(with: .scale(scale: 0.96, anchor: .topLeading))))
+            }
+            if let draft = chat.agentDraft {
+                StreamingBubble(text: draft, hud: hud)
+                    .transition(.asymmetric(insertion: .scale(scale: 0.9, anchor: .bottomLeading).combined(with: .opacity),
+                                            removal: .opacity))
+            } else if chat.agentTyping {
+                TypingIndicator(hud: hud)
+                    .transition(.scale(scale: 0.6, anchor: .bottomLeading).combined(with: .opacity))
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 1, alignment: .leading)
+        .animation(.spring(response: 0.4, dampingFraction: 0.82), value: liveTrail.isEmpty)
+        .animation(.spring(response: 0.4, dampingFraction: 0.82), value: chat.agentDraft == nil)
+        .animation(.spring(response: 0.4, dampingFraction: 0.82), value: chat.agentTyping)
+    }
+
+    private func markArrival(_ id: String?) {
+        guard settled, let id, let message = chat.messages.last, message.id == id else { return }
+        let replacesDraft = message.role == .agent && Date().timeIntervalSince(draftSeen) < 2
+        arriving = replacesDraft ? nil : id
+        if message.role == .agent { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
+    }
+
+    private func followLive(_ proxy: ScrollViewProxy) {
+        guard settled, atBottom, !chat.window.hasNewer else { return }
+        Task { @MainActor in
+            for delay in [80, 420] {
+                try? await Task.sleep(for: .milliseconds(delay))
+                withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(Self.liveID, anchor: .bottom) }
+            }
+        }
+    }
+
     private var pageLoader: some View {
         ProgressView().frame(maxWidth: .infinity).padding(8)
     }
@@ -190,10 +237,11 @@ struct ChatView: View {
     }
 
     private func scrollToEnd(_ proxy: ScrollViewProxy, animated: Bool = true) {
-        guard let last = chat.messages.last?.id else {
+        guard let lastMessage = chat.messages.last?.id else {
             settled = true
             return
         }
+        let last = chat.window.hasNewer ? lastMessage : Self.liveID
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(80))
             if animated {
@@ -302,7 +350,10 @@ struct ChatView: View {
                 } else {
                     Text(chat.agentName).font(.headline)
                 }
-                Text(subtitle).font(.caption2).foregroundStyle(chat.agentTyping ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                Text(subtitle).font(.caption2)
+                    .foregroundStyle(agentWorking || chat.agentDraft != nil ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.2), value: subtitle)
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("chat.title")
@@ -329,6 +380,9 @@ struct ChatView: View {
                 Button { Task { await chat.send(text: ChatModel.callMeText) } } label: {
                     Label("Ask \(chat.agentName) to call me", systemImage: "phone.arrow.down.left")
                 }
+                Divider()
+                Button { chat.run(.new, calls: calls) } label: { Label(SlashCommand.new.summary, systemImage: SlashCommand.new.symbol) }
+                Button { chat.run(.retry, calls: calls) } label: { Label(SlashCommand.retry.summary, systemImage: SlashCommand.retry.symbol) }
                 Divider()
                 // Always here, also while the agent looks idle (a turn without tools shows nothing).
                 Button(role: .destructive) { AgentStop.tapped(chat: chat, calls: calls) } label: {
@@ -361,6 +415,8 @@ struct ChatView: View {
     }
 
     private var subtitle: String {
+        if chat.agentDraft != nil { return "writing…" }
+        if let task = tasks.activeTask, task.state == .running { return task.label + "…" }
         if chat.agentTyping { return "typing…" }
         if app.activeProfile?.isDemo == true { return "demo · stays on this iPhone" }
         switch app.relayStatus {

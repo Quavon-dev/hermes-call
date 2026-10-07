@@ -74,3 +74,58 @@ public struct TaskUpdate: Sendable, Equatable {
                          startedAt: Double(startedAt) / 1000)
     }
 }
+
+extension TaskUpdate {
+    public var symbol: String {
+        let name = tool.lowercased()
+        let table: [(String, String)] = [
+            ("terminal", "terminal"), ("process", "terminal"), ("execute_code", "chevron.left.forwardslash.chevron.right"),
+            ("web_search", "magnifyingglass"), ("search", "magnifyingglass"), ("web", "globe"), ("browser", "safari"),
+            ("vision", "eye"), ("image", "photo"), ("file", "doc.text"), ("patch", "doc.badge.gearshape"),
+            ("memory", "brain"), ("delegate", "person.2"), ("todo", "checklist"), ("skill", "book"),
+            ("cron", "clock"), ("send_message", "paperplane"), ("speech", "waveform"),
+        ]
+        return table.first { name.contains($0.0) }?.1 ?? "gearshape.2"
+    }
+
+    public var isCommand: Bool {
+        let name = tool.lowercased()
+        return name.contains("terminal") || name.contains("process") || name.contains("execute_code")
+    }
+}
+
+public struct TaskTrail: Sendable, Equatable {
+    public static let maxSteps = 40
+
+    public private(set) var turnID: String?
+    public private(set) var steps: [TaskUpdate] = []
+
+    public init() {}
+
+    public var latest: TaskUpdate? { steps.last }
+
+    public mutating func record(_ update: TaskUpdate) {
+        if update.turnID != turnID {
+            turnID = update.turnID
+            steps = []
+        }
+        if update.state != .running {
+            guard let last = steps.last else { return }
+            steps[steps.count - 1] = TaskUpdate(turnID: last.turnID, step: last.step, total: last.total, tool: last.tool,
+                                                label: last.label, preview: last.preview, state: update.state,
+                                                startedAt: last.startedAt)
+            return
+        }
+        if let index = steps.lastIndex(where: { $0.step == update.step }) {
+            steps[index] = update
+        } else {
+            steps.append(update)
+            if steps.count > Self.maxSteps { steps.removeFirst(steps.count - Self.maxSteps) }
+        }
+    }
+
+    public mutating func clear() {
+        turnID = nil
+        steps = []
+    }
+}

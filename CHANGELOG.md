@@ -8,6 +8,12 @@ versioned separately and is at **0.8.2** in this release.
 
 ## [Unreleased]
 
+- Chat shows what the agent is doing: a live card with the running tool, its command or argument and
+  the turn's steps; streaming replies appear as a growing bubble; the title names the current step.
+- Typing `/` in the chat lists Hermes' commands (`/new`, `/retry`, `/undo`, `/model` …); new session,
+  retry and undo are one tap away in the composer and call menus.
+- New chat animations: arriving messages, bouncing typing dots, the send/mic button morph and the
+  command list (all off with Reduce Motion).
 - Tapping a notification no longer crashes the app: notification responses complete on the main
   thread (Swift 6 ran the async delegate methods on a background executor).
 - Faster call turns: speech recognition starts 250 ms into the closing silence and is kept when you
