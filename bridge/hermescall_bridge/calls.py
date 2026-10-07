@@ -37,7 +37,6 @@ MAX_CALL_SECONDS = 3600.0
 CALL_WARNING_SECONDS = 60.0
 # No audio track from the phone this long after the answer: the call never really started.
 MEDIA_TIMEOUT = 20.0
-CALL_ENDING_LINE = "We have about a minute left on this call."
 # Captions that could not be sent while the relay was away; re-sent after it reconnects.
 MAX_UNSENT_CAPTIONS = 3
 MAX_SDP = 16 * 1024
@@ -586,7 +585,7 @@ class CallManager:
     def _warn_ending(self, call: ActiveCall) -> None:
         if self.active is call and call.conversation is not None:
             log.info("call reaches its time limit soon; telling the owner")
-            call.conversation.announce(CALL_ENDING_LINE)
+            call.conversation.announce(call.conversation.phrases.call_ending)
 
     def _check_media(self, call: ActiveCall, waited: float) -> None:
         if self.active is call and not call.media:

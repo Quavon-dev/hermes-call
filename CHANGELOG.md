@@ -18,6 +18,27 @@ versioned separately and is at **0.8.2** in this release.
   jumps back to the newest message, and an empty chat offers a few first questions.
 - Cleaner call screens: the call shows the agent, timer, current step and the conversation as chat
   bubbles above flat controls; the Call tab gets a Message shortcut next to Call.
+- German calls: `voice.language` (installer `--language de`) sets speech recognition (`small`, beam 2),
+  the voice, the acknowledgement ("Einen Moment.") and the bridge's own spoken lines, and tells the agent
+  the call language. A new local German speech service (`tts/install.sh`, 127.0.0.1:8881, Kokoro German
+  voices `dm_thorsten`, `df_victoria`, `dm_martin`; pinned wheels, commits and model hashes) replaces
+  English voices reading German. See [docs/german-voice.md](docs/german-voice.md).
+- Invalid language setups fail clearly: an English-only model with another language is refused, and a
+  voice made for another language is reported by the log and `doctor`. `doctor` also checks that the TTS
+  service offers the configured voice.
+- Speakerphone echo guard (`barge_in = false`): the microphone also stays closed for 400 ms after the
+  agent's last audio, and phone transcripts heard during playback are dropped; tap and push-to-talk still
+  interrupt at once.
+- The acknowledgement is on by default (1.8 s after you stop speaking without an answer, or when a tool
+  starts), plays once per request and is timed from the end of your speech.
+- Live speech recognition decodes once (no temperature fallback), which removed multi-second outliers;
+  `stt.initial_prompt` optionally names words Whisper should expect.
+- German replies are split for speech at natural points: not after "3." or "Dr.", and a long first
+  sentence before "und"/"weil"/"dass" instead of after six words.
+- The installer keeps the TTS URL and hand-set `[calls]`, `[turn]` and `[log]` settings on update and has
+  `--language`, `--tts-url` and `--stt-prompt`.
+- `hermes-call-bridge voice-bench` measures synthesis, recognition and Hermes latency on the host;
+  `/metrics` adds recognition time, utterance length, ignored playback audio and barge-ins.
 - Tapping a notification no longer crashes the app: notification responses complete on the main
   thread (Swift 6 ran the async delegate methods on a background executor).
 - Faster call turns: speech recognition starts 250 ms into the closing silence and is kept when you

@@ -23,6 +23,7 @@ from .conversation import TTS_ERRORS, Conversation, TurnSettings, describe
 from .devices import DeviceRegistry
 from .health import HealthChecker, sd_notify, watchdog, watchdog_interval
 from .hermes import HermesClient
+from .lang import phrases
 from .metrics import METRICS
 from .phone import PhoneService
 from .present import Fetcher, PresentService, fetch_image
@@ -64,6 +65,7 @@ class BridgeOptions:
     turn_transport: str = "auto"
     # (Hermes URL, Kokoro URL) for /healthz; None: /healthz reports the relay only
     health_urls: tuple[str, str] | None = None
+    language: str = "en"
 
 
 def outbound_note(ring: Ring | None, chat_context: str = "") -> str:
@@ -174,14 +176,23 @@ def build_bridge(
 
     chat_store = ChatStore(store.directory / "chat.db")
     chat = ChatService(
-        state, relay, channel, transcribe, agent_name, tts, chat_store, opts.transcribe_long, store.directory / "files"
+        state,
+        relay,
+        channel,
+        transcribe,
+        agent_name,
+        tts,
+        chat_store,
+        opts.transcribe_long,
+        store.directory / "files",
+        opts.language,
     )
     phone = PhoneService(state, relay, channel)
     presenter = PresentService(chat, image_fetcher)
     tasks = TaskService(state, relay, channel, store.load_task_prefs(), store.save_task_prefs)
 
     async def prepare_speech(text: str) -> None:
-        chunker = Chunker()
+        chunker = Chunker(phrases(opts.language).link)
         for chunk in (chunker.feed(text) + chunker.flush())[:PREPARED_CHUNKS]:
             await tts.prepare(chunk)
 
@@ -237,6 +248,7 @@ def options_from(config: Config, transcribe_long: Callable | None) -> BridgeOpti
             acknowledgement_after_ms=config.acknowledgement_after_ms,
             acknowledgement_text=config.acknowledgement_text,
             barge_in=config.barge_in,
+            language=config.language,
         ),
         timeouts=CallTimeouts(
             ring=config.ring_timeout,
@@ -247,6 +259,7 @@ def options_from(config: Config, transcribe_long: Callable | None) -> BridgeOpti
         ),
         turn_transport=config.turn_transport,
         health_urls=(config.hermes_url, config.tts_url),
+        language=config.language,
     )
 
 
@@ -279,23 +292,31 @@ async def serve(config: Config) -> None:
         config.hermes_provider,
         config.hermes_reasoning_effort,
     )
+    for warning in config.warnings:
+        log.warning("config: %s", warning)
     tts = KokoroTts(config.tts_url, config.tts_voice, speed=config.tts_speed)
-    if config.acknowledgement_text:
+    if config.acknowledgement_after_ms and config.acknowledgement_text:
         try:
             await tts.preload(config.acknowledgement_text)
         except TTS_ERRORS as exc:  # Kokoro still starting: the acknowledgement is synthesized when used
             log.warning("acknowledgement not preloaded: %s", describe(exc))
     log.info(
-        "loading speech recognition model %s for %s with beam size %d",
+        "call language %s: speech recognition %s (beam %d, %d threads%s), speech %s at %s (speed %.2f)",
+        config.language,
         config.stt_model,
-        config.stt_language,
         config.stt_beam_size,
+        config.stt_threads,
+        ", vocabulary prompt" if config.stt_initial_prompt else "",
+        config.tts_voice,
+        config.tts_url,
+        config.tts_speed,
     )
     transcriber = Transcriber(
         str(Path(config.stt_model_dir) / config.stt_model),
         config.stt_threads,
-        config.stt_language,
+        config.language,
         config.stt_beam_size,
+        initial_prompt=config.stt_initial_prompt,
     )
     options = options_from(config, transcriber.transcribe_background)
     bridge = build_bridge(

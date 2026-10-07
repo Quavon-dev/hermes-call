@@ -13,6 +13,7 @@ members = [
     "hermescall-common",
     "hermescall-relay",
     "hermescall-testclient",
+    "hermescall-tts",
 ]
 
 [[package]]
@@ -794,6 +795,7 @@ dependencies = [
     { name = "hermescall-common" },
     { name = "hermescall-relay" },
     { name = "hermescall-testclient" },
+    { name = "hermescall-tts" },
 ]
 
 [package.dev-dependencies]
@@ -811,6 +813,7 @@ requires-dist = [
     { name = "hermescall-common", editable = "common" },
     { name = "hermescall-relay", editable = "relay" },
     { name = "hermescall-testclient", editable = "testclient" },
+    { name = "hermescall-tts", editable = "tts" },
 ]
 
 [package.metadata.requires-dev]
@@ -893,6 +896,22 @@ requires-dist = [
     { name = "hermescall-bridge", editable = "bridge" },
     { name = "hermescall-common", editable = "common" },
     { name = "sounddevice", specifier = ">=0.5" },
+]
+
+[[package]]
+name = "hermescall-tts"
+version = "0.7.2"
+source = { editable = "tts" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.10,<4" },
+    { name = "numpy", specifier = ">=1.26" },
 ]
 
 [[package]]

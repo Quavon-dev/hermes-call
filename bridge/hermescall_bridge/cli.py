@@ -171,6 +171,11 @@ def main(argv: list[str] | None = None) -> int:
     call.add_argument("--device", default="all")
     sub.add_parser("status")
     sub.add_parser("doctor", help="check config, relay, Hermes, Kokoro, speech model and disk")
+    bench = sub.add_parser("voice-bench", help="measure speech synthesis, recognition and Hermes latency on this host")
+    bench.add_argument("--voice", action="append", default=[], help="TTS voice (repeatable; default: the configured one)")
+    bench.add_argument("--speed", action="append", default=[], type=float, help="TTS speed (repeatable)")
+    bench.add_argument("--beam", action="append", default=[], type=int, help="Whisper beam size (repeatable; default 1, 2, 3)")
+    bench.add_argument("--hermes", default=0, type=int, help="also time this many short Hermes turns")
     args = parser.parse_args(protect_ids(sys.argv[1:] if argv is None else argv))
     configure_logging()
     try:
@@ -196,6 +201,10 @@ def main(argv: list[str] | None = None) -> int:
             from .doctor import doctor
 
             return doctor(config)
+        elif args.command == "voice-bench":
+            from .bench import voice_bench
+
+            return voice_bench(config, args.voice, args.speed, args.beam or [1, 2, 3], args.hermes)
         elif args.command == "call":
             body = {"reason": args.reason, "first_message": args.first_message, "device": args.device}
             print(json.dumps(_api(config, "POST", "/v1/calls", body, timeout=120)))

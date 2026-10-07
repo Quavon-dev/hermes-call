@@ -96,11 +96,18 @@ pct exec <hermes-id> -- journalctl -u hermes-call-bridge -f
 "Hermes", e.g. `--agent-name Atlas`); you can also rename it per relay in the
 app (*Relays → relay → Assistant*).
 
-`base.en` is the default English model. `small.en` improves English accuracy. For other languages,
-use the multilingual `small` model together with `--stt-language`, for example
-`--stt-model small --stt-language de --stt-beam-size 3`. A larger beam can improve recognition at
-the cost of additional CPU time. Keep `end_silence_ms` near the 550 ms default when recognition
-quality matters more than shaving a few hundred milliseconds from turn-taking.
+`--language CODE` sets the call language. It picks the speech recognition model and beam size, the
+voice and TTS service, the acknowledgement and the bridge's own spoken lines, and tells the agent
+which language the call is in. English (`en`, the default) uses `base.en` and Kokoro-FastAPI's
+`bm_george` on port 8880; German (`de`) uses the multilingual `small` model with beam size 2 and the
+local German speech service on port 8881 with the voice `dm_thorsten` (install it first, see
+[german-voice.md](german-voice.md)). Each default can be overridden (`--stt-model`,
+`--stt-beam-size`, `--tts-url`, `--voice`, `--tts-speed`); English-only models with another language
+are refused. `--stt-prompt "Hermes, Home Assistant"` gives Whisper names it should expect (optional:
+it helps with unusual names but can make recognition invent them in noise).
+
+`hermes-call-bridge voice-bench [--voice V]… [--speed S]… [--beam N]… [--hermes 10]` measures
+speech synthesis, recognition and Hermes' first-text time on this host with fixed sample sentences.
 
 ## Test client (M2): call the agent without the app
 
@@ -228,9 +235,14 @@ max_call_seconds = 3600  # "We have about a minute left on this call." warning_s
 warning_seconds = 60
 media_timeout = 20       # a call whose audio never arrives ends
 [voice]
-end_silence_ms = 550     # silence that ends your utterance (200–3000); recognition already
+language = "en"          # call language: recognition, voice, acknowledgement, spoken lines
+end_silence_ms = 500     # silence that ends your utterance (200–3000); recognition already
                          # starts after 250 ms of it and is kept if you stay quiet
-barge_in = true          # false ignores microphone audio while agent audio is playing
+barge_in = true          # false: speakerphone echo guard (see below)
+acknowledgement_after_ms = 1800  # no answer yet this long after you stopped: a short line, once; 0 = off
+acknowledgement_text = ""        # empty: "One moment." / "Einen Moment." by language
+[stt]
+initial_prompt = ""      # optional names Whisper should expect
 [turn]
 transport = "auto"       # TURN transport the bridge uses: auto/udp, tcp or tls (turns:)
 [log]
@@ -240,7 +252,15 @@ format = "text"          # or "json" (one object per line)
 
 The bridge gets all TURN URLs from the relay and uses the preferred one (aiortc uses one TURN
 server per call; the phone uses all of them). Set `transport = "tcp"` or `"tls"` when the bridge's
-network blocks outbound UDP. With `barge_in = false`, speaker echo cannot become an owner turn while the agent is playing audio. Voice barge-in is disabled in that mode, but tapping the presence still interrupts playback. Restart the service after changing the file.
+network blocks outbound UDP. Restart the service after changing the file.
+
+With `barge_in = false` (recommended on speakerphone) the microphone makes no turn while the agent
+is audible and for 400 ms after its last audio left the bridge (the phone's jitter buffer, the
+network and the room still carry it): no recognition runs, a half-heard utterance is dropped,
+transcripts the phone recognized during playback are ignored, and `/metrics` counts the ignored
+seconds. Tapping the presence and push-to-talk still interrupt at once. While the agent works
+silently (a tool run), speaking is heard normally. The phone keeps its own echo cancellation
+(voice processing) in both modes.
 
 ## Several agents on one host
 
@@ -263,6 +283,7 @@ bridge. `install.sh uninstall --instance atlas [--purge]` removes only that one.
 |---|---|
 | bridge incl. Whisper small.en int8 | see M2 report |
 | Kokoro-FastAPI (existing) | ~1.5–2 GB |
+| hermes-call-tts, one German voice (optional) | ~1–1.3 GB (limit 2 GB) |
 | Hermes (existing) | ~0.5 GB+ |
 
 With 6 GB for the Hermes container there is comfortable headroom.

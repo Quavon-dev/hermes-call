@@ -88,6 +88,12 @@ development environment's.
 - **Kokoro-82M (text-to-speech weights)** — Apache-2.0 — <https://huggingface.co/hexgrad/Kokoro-82M>  
   Not downloaded or distributed by Hermes Call: the bridge talks to a Kokoro-FastAPI server you run yourself (ghcr.io/remsky/kokoro-fastapi-cpu, 127.0.0.1:8880).
 
+- **German Kokoro voices: Thorsten-Voice/Kokoro, kikiri-tts/kikiri-german-martin and kikiri-german-victoria** — Apache-2.0 (Thorsten-Voice dataset: CC0-1.0) — <https://huggingface.co/Thorsten-Voice/Kokoro>  
+  Downloaded by tts/install.sh at pinned revisions (734e593d320a3d876bede7020f773dfd481a0cc7, 1e9dcd16ed48fda0a7a1f62e5e37130a5fdf10d9, ce81e200ff9203e1a3b042cd678c48e3ffb85cef), each file checked against a pinned SHA-256; not distributed with Hermes Call.
+
+- **kokoro and misaki German forks (semidark/kokoro, semidark/misaki)** — Apache-2.0 — <https://github.com/semidark/kokoro>  
+  Checked out by tts/install.sh at pinned commits (kokoro b96fef95e6a746495f92443fac7c688f90fc57fc, misaki 6d252a2e02f3b030f22f56686f1a73786c16ffc8); they use the distribution's espeak-ng (GPL-3.0).
+
 - **Kokoro-FastAPI (container image ghcr.io/remsky/kokoro-fastapi-cpu)** — Apache-2.0 — <https://github.com/remsky/Kokoro-FastAPI>  
   Run by the operator, not distributed with Hermes Call. The image bundles further components under their own licenses (for example espeak-ng, GPL-3.0).
 
