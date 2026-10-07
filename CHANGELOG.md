@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 and iOS app share one version; the Hermes plugin (`hermes-integration/hermes-call`) is
 versioned separately and is at **0.8.2** in this release.
 
+## [Unreleased]
+
+- Tapping a notification no longer crashes the app: notification responses complete on the main
+  thread (Swift 6 ran the async delegate methods on a background executor).
+- Faster call turns: speech recognition starts 250 ms into the closing silence and is kept when you
+  stay quiet; an outbound call's greeting is synthesized while the phone rings; Hermes' API version
+  is asked at bridge start instead of in the first turn.
+- Faster call setup: the phone sends its offer shortly after a UDP relay candidate is ready instead
+  of waiting up to 10 s for TCP and TLS too; on-device recognition is prepared in parallel.
+- Pausing mid-sentence no longer splits it: speaking again before the answer plays joins both parts
+  into one turn instead of "(I interrupted you.)" plus the second half.
+- `/metrics`: Hermes first-text time, Kokoro first-audio time, mid-reply speech gaps and
+  acknowledgement latency; the acknowledgement no longer counts as the answer in `call_latency`.
+- The bridge starts even when Kokoro is not reachable yet.
+
 ## [0.7.2] — 2026-10-01
 
 - Hermes Agent v0.21 and its current main branch: command approvals reach the phone again (Face ID
