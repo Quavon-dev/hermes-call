@@ -87,15 +87,26 @@ class _Said:
     prefix: str = ""
     text: str = ""
     answered: bool = False
+    # A tool started: the request is being acted on, so more speech is a new turn, not its rest.
+    acting: bool = False
+    interrupted: bool = False
+    # The owner line this turn put into the transcript (replaced when the turn is continued).
+    sent: str = ""
 
     @property
     def full(self) -> str:
         return f"{self.prefix} {self.text}".strip()
 
+    @property
+    def open(self) -> bool:
+        return not self.answered and not self.acting
+
 
 ApprovalHandler = Callable[[ApprovalRequest], Awaitable[str]]
 # (role, text) with role "agent" or "owner"; best-effort, must not block.
 CaptionHandler = Callable[[str, str], None]
+# Device STT: how long the phone's transcript may take after the bridge heard the utterance end.
+CARRY_WAIT_S = 2.0
 # Tool progress of the agent's turns (tasks ring / Live Activity); must not block.
 ProgressHandler = Callable[[Progress], None]
 
@@ -165,6 +176,7 @@ class Conversation:
         # The owner went on talking before the answer played: their words so far, joined to the next.
         self._said: _Said | None = None
         self._carry: _Said | None = None
+        self._carry_wait: asyncio.TimerHandle | None = None
         self._ptt_mode = False
         self._ptt_down = False
         self._ptt_audio: list[np.ndarray] = []
@@ -200,6 +212,7 @@ class Conversation:
 
     async def stop(self) -> None:
         self._drop_speculation()
+        self._cancel_carry_wait()
         self._cancel_captions()
         if self._announcer is not None:
             self._announcer.cancel()
@@ -211,15 +224,33 @@ class Conversation:
     def use_device_stt(self) -> None:
         """The phone transcribes on-device and sends text; audio is used only for barge-in."""
         self._device_stt = True
+        self._drop_speculation()
 
     def submit_text(self, text: str, stt_ms: int | None = None) -> None:
         if not self._device_stt:
             return
         if self._turn is not None:
             self._turn.cancel()
+        self._cancel_carry_wait()
         carry, self._carry = self._carry, None
-        prefix = carry.full if carry is not None else ""
-        self._turn = asyncio.ensure_future(self._run_turn(None, time.monotonic(), text, stt_ms, prefix=prefix))
+        self._turn = asyncio.ensure_future(self._run_turn(None, time.monotonic(), text, stt_ms, carry=carry))
+
+    def _cancel_carry_wait(self) -> None:
+        if self._carry_wait is not None:
+            self._carry_wait.cancel()
+            self._carry_wait = None
+
+    def _await_phone_transcript(self) -> None:
+        """Device STT: the owner's going-on was noise the phone does not transcribe. Their question
+        must not be lost, so it is asked again on its own if no transcript follows."""
+        self._cancel_carry_wait()
+        self._carry_wait = asyncio.get_running_loop().call_later(CARRY_WAIT_S, self._resubmit_carry)
+
+    def _resubmit_carry(self) -> None:
+        self._carry_wait = None
+        carry, self._carry = self._carry, None
+        if carry is not None and carry.full and (self._turn is None or self._turn.done()):
+            self._turn = asyncio.ensure_future(self._run_turn(None, time.monotonic(), "", carry=carry))
 
     def announce(self, text: str, wait: float = 30.0) -> None:
         """Say something on the bridge's own account (e.g. the call's time limit) once the agent is quiet."""
@@ -254,6 +285,7 @@ class Conversation:
 
     def set_ptt(self, down: bool) -> None:
         self._ptt_mode = True
+        self._drop_speculation()
         if down and not self._ptt_down:
             self._interrupt()
             self._ptt_audio = []
@@ -269,6 +301,9 @@ class Conversation:
         self._silence = 0
         self._barged = False
         self._speculation: asyncio.Task | None = None
+        # One early guess per utterance: a guess already running on the single Whisper worker
+        # finishes even when cancelled, and the final recognition would wait behind each one.
+        self._guessed = False
 
     def _drop_speculation(self) -> None:
         if self._speculation is not None:
@@ -318,9 +353,13 @@ class Conversation:
             self._reset_utterance()
             if wanted:
                 self._submit(audio, guess)
-            elif guess is not None:
-                guess.cancel()
-        elif wanted and self._speculation is None and self._silence >= self._s.speculate_ms:
+            else:
+                if guess is not None:
+                    guess.cancel()
+                if self._device_stt and self._carry is not None:
+                    self._await_phone_transcript()
+        elif wanted and not self._guessed and self._silence >= self._s.speculate_ms:
+            self._guessed = True
             self._speculation = asyncio.ensure_future(self._transcribe(self._trimmed()))
 
     def _interrupt(self, continuing: bool = False) -> None:
@@ -328,7 +367,7 @@ class Conversation:
         the rest of what they were saying, so it is joined to it instead of cutting the agent off."""
         said = self._said
         running = self._turn is not None and not self._turn.done()
-        if continuing and running and said is not None and not said.answered:
+        if continuing and running and said is not None and said.open:
             self._carry = said
             log.info("owner kept talking")
         elif self.busy:
@@ -373,16 +412,12 @@ class Conversation:
         if self._turn is not None:
             self._turn.cancel()
         carry, self._carry = self._carry, None
-        prefix = ""
-        if carry is not None:
-            prefix = carry.full
-            if not carry.text and carry.audio is not None:  # not recognized yet: recognize both as one
-                audio = np.concatenate([carry.audio, audio])
-                prefix = carry.prefix
-                if guess is not None:
-                    guess.cancel()
-                    guess = None
-        self._turn = asyncio.ensure_future(self._run_turn(audio, time.monotonic(), guess=guess, prefix=prefix))
+        if carry is not None and not carry.text and carry.audio is not None:  # not recognized yet: both as one
+            audio = np.concatenate([carry.audio, audio])
+            if guess is not None:
+                guess.cancel()
+                guess = None
+        self._turn = asyncio.ensure_future(self._run_turn(audio, time.monotonic(), guess=guess, carry=carry))
 
     async def _run_turn(
         self,
@@ -391,24 +426,45 @@ class Conversation:
         text: str = "",
         stt_ms: int | None = None,
         guess: asyncio.Task | None = None,
-        prefix: str = "",
+        carry: "_Said | None" = None,
     ) -> None:
-        said = self._said = _Said(audio, prefix)
+        """`carry`: the turn the owner went on from; its words come first (`audio` already holds its
+        audio when it had not been recognized yet)."""
+        recognized_before = carry is not None and bool(carry.text)
+        prefix = carry.full if recognized_before else (carry.prefix if carry is not None else "")
+        said = self._said = _Said(audio, prefix, interrupted=carry is not None and carry.interrupted)
+        try:
+            await self._answer(said, audio, ended, text, stt_ms, guess, carry)
+        finally:
+            if self._said is said:
+                self._said = None
+
+    async def _answer(
+        self,
+        said: _Said,
+        audio: np.ndarray | None,
+        ended: float,
+        text: str,
+        stt_ms: int | None,
+        guess: asyncio.Task | None,
+        carry: "_Said | None",
+    ) -> None:
         if audio is not None:
             text = await (guess if guess is not None else self._transcribe(audio))
         stt_done = time.monotonic()
         said.text = text
-        if not text:
+        if not said.full:
             return
-        if audio is not None:
+        if audio is not None and text:
             self._caption("owner", text)
-        if prefix:
-            if self.transcript and self.transcript[-1] == ("owner", prefix):
-                self.transcript.pop()
-            text = said.full
+        if carry is not None and carry.sent and self.transcript and self.transcript[-1] == ("owner", carry.sent):
+            self.transcript.pop()
+        text = said.full
         if self._interrupted:
-            text = f"(I interrupted you.) {text}"
+            said.interrupted = True
             self._interrupted = False
+        if said.interrupted:
+            text = f"(I interrupted you.) {text}"
         chunks: asyncio.Queue[str | None] = asyncio.Queue()
         speaker = self._speaker = asyncio.ensure_future(self._speak_queue(chunks, ended, said))
         marks = {"stt": stt_done}
@@ -416,6 +472,7 @@ class Conversation:
         if self._s.acknowledgement_after_ms and self._s.acknowledgement_text:
             acknowledgement = asyncio.ensure_future(self._acknowledge(chunks, marks))
         self.transcript.append(("owner", text))
+        said.sent = text
         try:
             try:
                 await self._stream_reply(text, chunks, marks, said)
@@ -454,7 +511,7 @@ class Conversation:
         progress = _TurnProgress(self._on_progress)
         state = "failed"
         try:
-            await self._stream_events(text, chunks, marks, chunker, spoken, progress)
+            await self._stream_events(text, chunks, marks, chunker, spoken, progress, said)
             state = "done"
         except asyncio.CancelledError:
             state = "done"  # barge-in or hang-up ends the turn; it did not fail
@@ -473,6 +530,7 @@ class Conversation:
         chunker: Chunker,
         spoken: list[str],
         progress: _TurnProgress,
+        said: _Said,
     ) -> None:
         images = list(self._images)
         extra: dict = {"images": images} if images else {}
@@ -489,6 +547,7 @@ class Conversation:
                 if isinstance(event, ToolProgress):
                     progress.tool(event)
                     if event.status == "running":
+                        said.acting = True
                         await self._queue_acknowledgement(chunks, marks)
                     continue
                 if isinstance(event, TextDelta):
@@ -516,12 +575,12 @@ class Conversation:
         while (chunk := await chunks.get()) is not None:
             if tts_failed:
                 continue  # Kokoro is down: the tone played once; the rest of the turn is dropped
-            if previous not in (None, self._s.acknowledgement_text) and not self._out.speaking:
-                METRICS.speech_gaps.inc()
+            # Silence after the bridge's own lines is expected (a tool runs, the owner approves).
+            watch_gap = previous not in (None, self._s.acknowledgement_text, APPROVAL_PROMPT, APPROVAL_DENIED)
             acknowledgement = bool(chunk) and chunk == self._s.acknowledgement_text
             try:
                 async with contextlib.aclosing(self._tts.synthesize(chunk)) as audio:
-                    await self._play(audio, ended, chunk, acknowledgement, None if acknowledgement else said)
+                    await self._play(audio, ended, chunk, acknowledgement, None if acknowledgement else said, watch_gap)
             except TTS_ERRORS as exc:
                 log.warning("speech synthesis failed: %s; playing a tone instead", describe(exc))
                 METRICS.turn_errors.inc("tts")
@@ -539,11 +598,17 @@ class Conversation:
         caption: str = "",
         acknowledgement: bool = False,
         answer: _Said | None = None,
+        watch_gap: bool = False,
     ) -> None:
-        """`answer`: the owner's turn this audio answers; it counts as heard from its first audio."""
+        """`answer`: the owner's turn this audio answers; it counts as heard from its first audio.
+        `watch_gap`: count it when the previous sentence had already played out before this one."""
         async for pcm in audio:
             if answer is not None:
                 answer.answered = True
+            if watch_gap:
+                if not self._out.speaking:
+                    METRICS.speech_gaps.inc()
+                watch_gap = False
             if ended is not None:
                 latency = time.monotonic() - ended
                 if acknowledgement:

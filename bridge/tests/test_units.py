@@ -14,7 +14,7 @@ import pytest
 from hermescall_bridge import config as config_mod
 from hermescall_bridge.audio import SpeechTrack
 from hermescall_bridge.conversation import APPROVAL_DENIED, APPROVAL_PROMPT, Conversation, TurnSettings
-from hermescall_bridge.hermes import ApprovalRequest, HermesClient, TextDelta
+from hermescall_bridge.hermes import ApprovalRequest, HermesClient, TextDelta, ToolProgress
 from hermescall_bridge.metrics import METRICS
 from hermescall_bridge.state import StateStore, new_device
 from hermescall_bridge.text import Chunker, speakable
@@ -432,6 +432,67 @@ async def test_owner_going_on_before_recognition_finished_is_recognized_as_one()
     await talk(conversation, quiet, speech, quiet, recognizing, speech, quiet)
     assert len(hermes.turns) == 1 and hermes.turns[0][1] == f"{lengths[-1]} samples"
     assert lengths[-1] > 2 * len(speech) and not hermes.turns[0][1].startswith("(I interrupted you.)")
+
+
+async def test_noise_after_a_question_does_not_lose_the_question() -> None:
+    hermes, tts, out = ThinkingHermes(), FakeTts(), SpeechTrack()
+    texts = iter(["call mom", ""])  # the going-on was a cough: nothing recognized
+    conversation = Conversation(hermes, tts, lambda a: asyncio.sleep(0, next(texts)), out, lambda r: asyncio.sleep(0, "x"))
+    speech, quiet = speech_16k()[: 61 * 512], np.zeros(16000, dtype=np.float32)
+
+    async def first_turn_started() -> None:
+        await until(lambda: len(hermes.turns) == 1)
+
+    await talk(conversation, quiet, speech, quiet, first_turn_started, speech, quiet)
+    assert [turn[1] for turn in hermes.turns] == ["call mom", "call mom"]
+    assert tts.spoken == ["Okay, done."]
+
+
+async def test_going_on_while_a_tool_runs_is_a_new_turn() -> None:
+    class ActingHermes(ThinkingHermes):
+        async def turn(self, system: str, text: str, images=(), session_id=None):
+            self.turns.append((system, text))
+            yield ToolProgress("send_email", "running", "c1")
+            await asyncio.sleep(0.3)
+            yield TextDelta("Sent.")
+
+    hermes, tts, out = ActingHermes(), FakeTts(), SpeechTrack()
+    texts = iter(["email Bob I am late", "and cc Alice"])
+    conversation = Conversation(hermes, tts, lambda a: asyncio.sleep(0, next(texts)), out, lambda r: asyncio.sleep(0, "x"))
+    speech, quiet = speech_16k()[: 61 * 512], np.zeros(16000, dtype=np.float32)
+
+    async def tool_running() -> None:
+        await until(lambda: conversation._said is not None and conversation._said.acting)
+
+    await talk(conversation, quiet, speech, quiet, tool_running, speech, quiet)
+    assert [turn[1] for turn in hermes.turns] == ["email Bob I am late", "(I interrupted you.) and cc Alice"]
+
+
+async def test_a_finished_turn_is_never_continued() -> None:
+    hermes, tts, out = FakeHermes(), FakeTts(), SpeechTrack()
+    conversation = Conversation(hermes, tts, lambda a: asyncio.sleep(0, "x"), out, lambda r: asyncio.sleep(0, "x"))
+    player = drain(out)
+    await conversation._run_turn(None, time.monotonic(), "hello", 0)
+    player.cancel()
+    assert conversation._said is None
+
+
+async def test_device_stt_asks_the_question_again_when_no_transcript_follows(monkeypatch) -> None:
+    monkeypatch.setattr("hermescall_bridge.conversation.CARRY_WAIT_S", 0.05)
+    hermes, tts, out = ThinkingHermes(), FakeTts(), SpeechTrack()
+    conversation = Conversation(hermes, tts, lambda a: asyncio.sleep(0, "x"), out, lambda r: asyncio.sleep(0, "x"))
+    conversation.use_device_stt()
+    speech, quiet = speech_16k()[: 61 * 512], np.zeros(16000, dtype=np.float32)
+
+    async def asked() -> None:
+        conversation.submit_text("what time is it", stt_ms=100)
+        await until(lambda: len(hermes.turns) == 1)
+
+    async def wait_for_retry() -> None:
+        await until(lambda: len(hermes.turns) == 2)
+
+    await talk(conversation, quiet, asked, speech, quiet, wait_for_retry)
+    assert [turn[1] for turn in hermes.turns] == ["what time is it", "what time is it"]
 
 
 async def test_speaking_over_an_answer_that_is_playing_still_interrupts() -> None:
