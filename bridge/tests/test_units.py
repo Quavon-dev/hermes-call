@@ -368,7 +368,7 @@ class ThinkingHermes(FakeHermes):
 
     async def turn(self, system: str, text: str, images=(), session_id=None):
         self.turns.append((system, text))
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(1.5)  # longer than feeding the next utterance takes on a busy test machine
         yield TextDelta("Okay, done.")
 
 
@@ -453,7 +453,7 @@ async def test_going_on_while_a_tool_runs_is_a_new_turn() -> None:
         async def turn(self, system: str, text: str, images=(), session_id=None):
             self.turns.append((system, text))
             yield ToolProgress("send_email", "running", "c1")
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(1.5)
             yield TextDelta("Sent.")
 
     hermes, tts, out = ActingHermes(), FakeTts(), SpeechTrack()
