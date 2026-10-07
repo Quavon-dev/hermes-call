@@ -51,9 +51,18 @@ class _Job:
 
 
 class Transcriber:
-    def __init__(self, model_path: str, threads: int, compute_type: str = "int8") -> None:
+    def __init__(
+        self,
+        model_path: str,
+        threads: int,
+        language: str = "en",
+        beam_size: int = 1,
+        compute_type: str = "int8",
+    ) -> None:
+        self._language = language
+        self._beam_size = beam_size
         self._model = WhisperModel(model_path, device="cpu", compute_type=compute_type, cpu_threads=threads)
-        self._model.transcribe(np.zeros(RATE, dtype=np.float32), language="en", beam_size=1)
+        self._model.transcribe(np.zeros(RATE, dtype=np.float32), language=language, beam_size=beam_size)
         self._jobs: queue.PriorityQueue[_Job] = queue.PriorityQueue()
         self._serial = itertools.count()
         self._worker = threading.Thread(target=self._work, name="stt", daemon=True)
@@ -62,8 +71,8 @@ class Transcriber:
     def _transcribe(self, audio: np.ndarray) -> str:
         segments, _ = self._model.transcribe(
             audio,
-            language="en",
-            beam_size=1,
+            language=self._language,
+            beam_size=self._beam_size,
             vad_filter=False,
             condition_on_previous_text=False,
             without_timestamps=True,
