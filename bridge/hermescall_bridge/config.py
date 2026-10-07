@@ -45,6 +45,7 @@ class Config:
     end_silence_ms: int = 550
     acknowledgement_after_ms: int = 0
     acknowledgement_text: str = ""
+    barge_in: bool = True
     # [turn]: which of the relay's TURN URLs the bridge uses first (aiortc uses one)
     turn_transport: str = "auto"
     # [log]
@@ -99,6 +100,9 @@ def _extras(raw: dict) -> dict:
     acknowledgement_text = voice.get("acknowledgement_text", "")
     if not isinstance(acknowledgement_text, str) or len(acknowledgement_text) > 120:
         raise ConfigError("acknowledgement_text: a string of at most 120 characters")
+    barge_in = voice.get("barge_in", True)
+    if not isinstance(barge_in, bool):
+        raise ConfigError("barge_in: true or false")
     return {
         "ring_timeout": _seconds(calls, "ring_timeout", 45, 10, 300),
         "approval_timeout": _seconds(calls, "approval_timeout", 60, 10, 600),
@@ -108,6 +112,7 @@ def _extras(raw: dict) -> dict:
         "end_silence_ms": end_silence,
         "acknowledgement_after_ms": acknowledgement_after,
         "acknowledgement_text": acknowledgement_text.strip(),
+        "barge_in": barge_in,
         "turn_transport": _choice(turn, "transport", "auto", TURN_TRANSPORTS),
         "log_level": _choice(logs, "level", "INFO", LOG_LEVELS),
         "log_format": _choice(logs, "format", "text", LOG_FORMATS),
