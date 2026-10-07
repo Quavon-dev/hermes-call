@@ -284,8 +284,18 @@ async def serve(config: Config) -> None:
             await tts.preload(config.acknowledgement_text)
         except TTS_ERRORS as exc:  # Kokoro still starting: the acknowledgement is synthesized when used
             log.warning("acknowledgement not preloaded: %s", describe(exc))
-    log.info("loading speech recognition model %s", config.stt_model)
-    transcriber = Transcriber(str(Path(config.stt_model_dir) / config.stt_model), config.stt_threads)
+    log.info(
+        "loading speech recognition model %s for %s with beam size %d",
+        config.stt_model,
+        config.stt_language,
+        config.stt_beam_size,
+    )
+    transcriber = Transcriber(
+        str(Path(config.stt_model_dir) / config.stt_model),
+        config.stt_threads,
+        config.stt_language,
+        config.stt_beam_size,
+    )
     options = options_from(config, transcriber.transcribe_background)
     bridge = build_bridge(
         state,
