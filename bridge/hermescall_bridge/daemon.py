@@ -236,6 +236,7 @@ def options_from(config: Config, transcribe_long: Callable | None) -> BridgeOpti
             end_silence_ms=config.end_silence_ms,
             acknowledgement_after_ms=config.acknowledgement_after_ms,
             acknowledgement_text=config.acknowledgement_text,
+            barge_in=config.barge_in,
         ),
         timeouts=CallTimeouts(
             ring=config.ring_timeout,
