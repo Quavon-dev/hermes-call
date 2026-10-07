@@ -1,0 +1,10 @@
+torch==2.8.0+cpu
+transformers==4.56.2
+huggingface-hub
+loguru
+numpy
+addict
+regex
+phonemizer-fork
+espeakng-loader
+aiohttp

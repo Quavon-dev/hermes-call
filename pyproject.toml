@@ -2,7 +2,7 @@
 name = "hermes-call-dev"
 version = "0.7.2"
 requires-python = ">=3.11"
-dependencies = ["hermescall-common", "hermescall-relay", "hermescall-bridge", "hermescall-testclient"]
+dependencies = ["hermescall-common", "hermescall-relay", "hermescall-bridge", "hermescall-testclient", "hermescall-tts"]
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "pytest-aiohttp>=1.0", "pytest-cov>=5", "ruff>=0.6"]
@@ -11,18 +11,19 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24", "pytest-aiohttp>=1.0", "pytest-cov>=
 package = false
 
 [tool.uv.workspace]
-members = ["common", "relay", "bridge", "testclient"]
+members = ["common", "relay", "bridge", "testclient", "tts"]
 
 [tool.uv.sources]
 hermescall-common = { workspace = true }
 hermescall-relay = { workspace = true }
 hermescall-bridge = { workspace = true }
 hermescall-testclient = { workspace = true }
+hermescall-tts = { workspace = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-testpaths = ["common/tests", "relay/tests", "bridge/tests"]
+testpaths = ["common/tests", "relay/tests", "bridge/tests", "tts/tests"]
 
 [tool.ruff]
 line-length = 130
@@ -38,4 +39,4 @@ ignore = ["S101", "S603", "ASYNC109"]
 "*/tests/*" = ["S105", "S106", "S107", "B008", "S311", "ASYNC110", "F811"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["hermescall_common", "hermescall_relay", "hermescall_bridge", "hermescall_testclient"]
+known-first-party = ["hermescall_common", "hermescall_relay", "hermescall_bridge", "hermescall_testclient", "hermescall_tts"]

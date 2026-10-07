@@ -47,8 +47,8 @@ jobs:
       # for every package, raise the floor when coverage grows.
       - name: pytest with coverage
         run: >
-          uv run pytest -q bridge/tests common/tests relay/tests tools/tests
-          --cov=hermescall_common --cov=hermescall_relay --cov=hermescall_bridge
+          uv run pytest -q bridge/tests common/tests relay/tests tools/tests tts/tests
+          --cov=hermescall_common --cov=hermescall_relay --cov=hermescall_bridge --cov=hermescall_tts
           --cov-report=term --cov-fail-under=88
 
   dependency-audit:
