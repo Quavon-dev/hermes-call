@@ -44,6 +44,7 @@ STT_BEAM_SIZE=${STT_BEAM_SIZE:-}
 TTS_VOICE=${TTS_VOICE:-}
 TTS_SPEED=${TTS_SPEED:-}
 END_SILENCE_MS=${END_SILENCE_MS:-}
+BARGE_IN=${BARGE_IN:-}
 ACKNOWLEDGEMENT_AFTER_MS=${ACKNOWLEDGEMENT_AFTER_MS:-}
 ACKNOWLEDGEMENT_TEXT=${ACKNOWLEDGEMENT_TEXT:-}
 AGENT_NAME=${AGENT_NAME:-}
@@ -75,6 +76,7 @@ Usage: install.sh [install|update|uninstall] [options]
   --voice NAME           Kokoro voice (default: bm_george)
   --tts-speed NUMBER     Kokoro speech speed between 0.5 and 2.0
   --end-silence-ms N     silence ending an utterance, 200 to 3000 ms
+  --barge-in BOOL         true lets speech interrupt playback; false suppresses playback echo
   --ack-after-ms N       0 disables; otherwise speak the acknowledgement after 1 to 5000 ms
   --ack-text TEXT        short acknowledgement spoken while Hermes is still working
   --agent-name NAME      name shown on the phone for calls (default: Hermes)
@@ -99,6 +101,7 @@ parse_flags() {
       --voice) TTS_VOICE=${2:?}; shift ;;
       --tts-speed) TTS_SPEED=${2:?}; shift ;;
       --end-silence-ms) END_SILENCE_MS=${2:?}; shift ;;
+      --barge-in) BARGE_IN=${2:?}; shift ;;
       --ack-after-ms) ACKNOWLEDGEMENT_AFTER_MS=${2:?}; shift ;;
       --ack-text) ACKNOWLEDGEMENT_TEXT=${2:?}; shift ;;
       --agent-name) AGENT_NAME=${2:?}; shift ;;
@@ -119,6 +122,8 @@ toml_value() { { sed -n "s/^$1 = \"\\(.*\\)\"\$/\\1/p" "$ETC/bridge.toml" 2>/dev
 toml_section_value() { python3 -c 'import sys,tomllib; data=tomllib.load(open(sys.argv[1], "rb")); value=data.get(sys.argv[2], {}).get(sys.argv[3], ""); print(value if isinstance(value, str) else "")' "$ETC/bridge.toml" "$1" "$2" 2>/dev/null || true; }
 
 toml_section_number() { python3 -c 'import sys,tomllib; data=tomllib.load(open(sys.argv[1], "rb")); value=data.get(sys.argv[2], {}).get(sys.argv[3], ""); print(value if isinstance(value, (int, float)) and not isinstance(value, bool) else "")' "$ETC/bridge.toml" "$1" "$2" 2>/dev/null || true; }
+
+toml_section_bool() { python3 -c 'import sys,tomllib; data=tomllib.load(open(sys.argv[1], "rb")); value=data.get(sys.argv[2], {}).get(sys.argv[3]); print(str(value).lower() if isinstance(value, bool) else "")' "$ETC/bridge.toml" "$1" "$2" 2>/dev/null || true; }
 
 toml_port() { { sed -n "s/^$1 = \\([0-9][0-9]*\\)\$/\\1/p" "$ETC/bridge.toml" 2>/dev/null || true; } | head -1; }
 
@@ -153,6 +158,7 @@ load_settings() {
   [[ -n $STT_LANGUAGE ]] || STT_LANGUAGE=$(toml_section_value stt language)
   [[ -n $STT_BEAM_SIZE ]] || STT_BEAM_SIZE=$(toml_section_number stt beam_size)
   [[ -n $END_SILENCE_MS ]] || END_SILENCE_MS=$(toml_section_number voice end_silence_ms)
+  [[ -n $BARGE_IN ]] || BARGE_IN=$(toml_section_bool voice barge_in)
   [[ -n $ACKNOWLEDGEMENT_AFTER_MS ]] || ACKNOWLEDGEMENT_AFTER_MS=$(toml_section_number voice acknowledgement_after_ms)
   [[ -n $ACKNOWLEDGEMENT_TEXT ]] || ACKNOWLEDGEMENT_TEXT=$(toml_section_value voice acknowledgement_text)
   HERMES_USER=${HERMES_USER:-hermes}
@@ -165,6 +171,7 @@ load_settings() {
   TTS_VOICE=${TTS_VOICE:-bm_george}
   TTS_SPEED=${TTS_SPEED:-1.0}
   END_SILENCE_MS=${END_SILENCE_MS:-550}
+  BARGE_IN=${BARGE_IN:-true}
   ACKNOWLEDGEMENT_AFTER_MS=${ACKNOWLEDGEMENT_AFTER_MS:-0}
   ACKNOWLEDGEMENT_TEXT=${ACKNOWLEDGEMENT_TEXT:-}
   AGENT_NAME=${AGENT_NAME:-Hermes}
@@ -183,6 +190,7 @@ load_settings() {
     ! python3 -c 'import sys; raise SystemExit(not 200 <= int(sys.argv[1]) <= 3000)' "$END_SILENCE_MS"; then
     die "invalid --end-silence-ms"
   fi
+  [[ $BARGE_IN == true || $BARGE_IN == false ]] || die "invalid --barge-in"
   if [[ ! $ACKNOWLEDGEMENT_AFTER_MS =~ ^[0-9]+$ ]] ||
     ! python3 -c 'import sys; raise SystemExit(not 0 <= int(sys.argv[1]) <= 5000)' "$ACKNOWLEDGEMENT_AFTER_MS"; then
     die "invalid --ack-after-ms"
@@ -404,6 +412,7 @@ beam_size = $STT_BEAM_SIZE
 
 [voice]
 end_silence_ms = $END_SILENCE_MS
+barge_in = $BARGE_IN
 acknowledgement_after_ms = $ACKNOWLEDGEMENT_AFTER_MS
 acknowledgement_text = $(toml_quote "$ACKNOWLEDGEMENT_TEXT")
 

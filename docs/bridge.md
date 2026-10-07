@@ -230,6 +230,7 @@ media_timeout = 20       # a call whose audio never arrives ends
 [voice]
 end_silence_ms = 550     # silence that ends your utterance (200–3000); recognition already
                          # starts after 250 ms of it and is kept if you stay quiet
+barge_in = true          # false ignores microphone audio while agent audio is playing
 [turn]
 transport = "auto"       # TURN transport the bridge uses: auto/udp, tcp or tls (turns:)
 [log]
@@ -239,7 +240,7 @@ format = "text"          # or "json" (one object per line)
 
 The bridge gets all TURN URLs from the relay and uses the preferred one (aiortc uses one TURN
 server per call; the phone uses all of them). Set `transport = "tcp"` or `"tls"` when the bridge's
-network blocks outbound UDP. Restart the service after changing the file.
+network blocks outbound UDP. With `barge_in = false`, speaker echo cannot become an owner turn while the agent is playing audio. Voice barge-in is disabled in that mode, but tapping the presence still interrupts playback. Restart the service after changing the file.
 
 ## Several agents on one host
 
