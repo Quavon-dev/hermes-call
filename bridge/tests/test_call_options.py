@@ -49,7 +49,7 @@ def test_call_timeouts_from_config(tmp_path) -> None:
     path = tmp_path / "bridge.toml"
     path.write_text(
         "[calls]\nring_timeout = 30\nmax_call_seconds = 1800\n"
-        "[voice]\nend_silence_ms = 700\nacknowledgement_after_ms = 900\nacknowledgement_text = 'One moment.'\n"
+        "[voice]\nend_silence_ms = 700\nbarge_in = false\nacknowledgement_after_ms = 900\nacknowledgement_text = 'One moment.'\n"
         "[tts]\nspeed = 1.08\n"
         "[stt]\nmodel = 'small'\nlanguage = 'de'\nbeam_size = 3\n"
         "[hermes]\nmodel = 'voice-fast'\nprovider = 'openrouter'\nreasoning_effort = 'none'\n"
@@ -58,6 +58,7 @@ def test_call_timeouts_from_config(tmp_path) -> None:
     config = load(path)
     assert (config.ring_timeout, config.max_call_seconds, config.approval_timeout) == (30.0, 1800.0, 60.0)
     assert config.end_silence_ms == 700 and config.log_format == "json" and config.turn_transport == "auto"
+    assert config.barge_in is False
     assert config.acknowledgement_after_ms == 900 and config.acknowledgement_text == "One moment."
     assert config.tts_speed == 1.08
     assert (config.stt_model, config.stt_language, config.stt_beam_size) == ("small", "de", 3)
@@ -70,6 +71,7 @@ def test_call_timeouts_from_config(tmp_path) -> None:
         "[calls]\nring_timeout = 1\n",
         "[voice]\nend_silence_ms = 'x'\n",
         "[voice]\nacknowledgement_after_ms = 6000\n",
+        "[voice]\nbarge_in = 'no'\n",
         "[tts]\nspeed = 3\n",
         "[stt]\nlanguage = 'german'\n",
         "[stt]\nbeam_size = 9\n",
