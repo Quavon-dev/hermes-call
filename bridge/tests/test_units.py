@@ -534,6 +534,23 @@ async def test_noise_shorter_than_barge_in_does_not_interrupt() -> None:
     assert hermes.turns == [] and out.speaking
 
 
+async def test_disabled_barge_in_ignores_audio_during_playback() -> None:
+    hermes, tts, out = FakeHermes(), FakeTts(), SpeechTrack()
+    conversation = Conversation(
+        hermes,
+        tts,
+        lambda a: asyncio.sleep(0, "echo"),
+        out,
+        lambda r: asyncio.sleep(0, "deny"),
+        settings=TurnSettings(barge_in=False),
+    )
+    out.enqueue_pcm(b"\1\0" * 48000 * 5, 48000)
+    silence = np.zeros(16000, dtype=np.float32)
+    await asyncio.wait_for(feed(conversation, blocks_of(np.concatenate([speech_16k(), silence]))), 10)
+    assert hermes.turns == []
+    assert out.speaking
+
+
 async def test_push_to_talk_and_phone_approval() -> None:
     hermes, tts, out = FakeHermes(), FakeTts(), SpeechTrack()
     hermes.ask_approval = True
