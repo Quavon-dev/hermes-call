@@ -96,8 +96,11 @@ pct exec <hermes-id> -- journalctl -u hermes-call-bridge -f
 "Hermes", e.g. `--agent-name Atlas`); you can also rename it per relay in the
 app (*Relays → relay → Assistant*).
 
-`base.en` is the default (≈0.45 s per utterance on 2 cores). `--stt-model small.en` is more
-accurate but ≈1.7 s per utterance on 2 cores — too slow for the 2.5 s target on a 2-core container.
+`base.en` is the default English model. `small.en` improves English accuracy. For other languages,
+use the multilingual `small` model together with `--stt-language`, for example
+`--stt-model small --stt-language de --stt-beam-size 3`. A larger beam can improve recognition at
+the cost of additional CPU time. Keep `end_silence_ms` near the 550 ms default when recognition
+quality matters more than shaving a few hundred milliseconds from turn-taking.
 
 ## Test client (M2): call the agent without the app
 
