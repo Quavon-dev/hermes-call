@@ -79,7 +79,7 @@ Usage: install.sh [install|update|uninstall] [options]
   --stt-prompt TEXT      optional vocabulary hint for Whisper (names it should expect), up to 200 characters
   --tts-url URL          loopback TTS service (default: http://127.0.0.1:8880, for de: http://127.0.0.1:8881)
   --voice NAME           TTS voice (default: bm_george for en, dm_thorsten for de)
-  --tts-speed NUMBER     speech speed between 0.5 and 2.0
+  --tts-speed NUMBER     speech speed between 0.5 and 2.0 (default: 1.0, for de 1.05)
   --end-silence-ms N     silence ending an utterance, 200 to 3000 ms
   --barge-in BOOL         true lets speech interrupt playback; false suppresses playback echo
   --ack-after-ms N       0 disables; otherwise speak the acknowledgement after 1 to 5000 ms (default 1800)
@@ -186,7 +186,7 @@ load_settings() {
   fi
   case $LANGUAGE in
     en) TTS_VOICE=${TTS_VOICE:-bm_george} TTS_URL=${TTS_URL:-http://127.0.0.1:8880} ;;
-    de) TTS_VOICE=${TTS_VOICE:-dm_thorsten} TTS_URL=${TTS_URL:-http://127.0.0.1:8881} ;;
+    de) TTS_VOICE=${TTS_VOICE:-dm_thorsten} TTS_URL=${TTS_URL:-http://127.0.0.1:8881} TTS_SPEED=${TTS_SPEED:-1.05} ;;
     *)
       [[ -n $TTS_VOICE ]] || die "no default voice for --language $LANGUAGE; pass --voice"
       TTS_URL=${TTS_URL:-http://127.0.0.1:8880}

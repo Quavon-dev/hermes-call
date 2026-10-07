@@ -55,6 +55,7 @@ PHRASES = {
     ),
 }
 DEFAULT_VOICES = {"en": "bm_george", "de": "dm_thorsten"}
+DEFAULT_SPEEDS = {"de": 1.05}
 DEFAULT_TTS_URLS = {"de": "http://127.0.0.1:8881"}
 DEFAULT_TTS_URL = "http://127.0.0.1:8880"
 

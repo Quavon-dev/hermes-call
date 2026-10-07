@@ -165,7 +165,7 @@ def load(path: Path = DEFAULT_CONFIG) -> Config:
             hermes_reasoning_effort=str(hermes.get("reasoning_effort", "")).strip(),
             tts_url=_local_url(str(tts.get("url", lang.DEFAULT_TTS_URLS.get(language, lang.DEFAULT_TTS_URL)))),
             tts_voice=str(voice),
-            tts_speed=float(tts.get("speed", 1.0)),
+            tts_speed=float(tts.get("speed", lang.DEFAULT_SPEEDS.get(language, 1.0))),
             stt_model=str(stt.get("model", "base.en" if language == "en" else "small")),
             stt_model_dir=str(stt.get("model_dir", "/var/lib/hermes-call-bridge/models")),
             stt_threads=int(stt.get("threads", 2)),

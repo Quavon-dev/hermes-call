@@ -37,7 +37,7 @@ def write(tmp_path, text: str):
 def test_german_call_language_sets_every_default(tmp_path) -> None:
     config = load(write(tmp_path, "[voice]\nlanguage = 'de'\n"))
     assert (config.language, config.stt_model, config.stt_beam_size) == ("de", "small", 2)
-    assert (config.tts_voice, config.tts_url) == ("dm_thorsten", "http://127.0.0.1:8881")
+    assert (config.tts_voice, config.tts_url, config.tts_speed) == ("dm_thorsten", "http://127.0.0.1:8881", 1.05)
     assert (config.acknowledgement_after_ms, config.acknowledgement_text) == (1800, "Einen Moment.")
     assert config.end_silence_ms == 500 and config.warnings == []
 
