@@ -11,6 +11,9 @@ EnvironmentFile=/etc/hermes-call-tts/tts.env
 ExecStart=/opt/hermes-call-tts/venv/bin/python -m hermescall_tts --host 127.0.0.1 --port ${PORT} --voices ${VOICES} --threads ${THREADS} --models /var/lib/hermes-call-tts/models
 Environment=PYTHONPATH=/opt/hermes-call-tts/app:/opt/hermes-call-tts/src/kokoro:/opt/hermes-call-tts/src/misaki
 Environment=PYTHONDONTWRITEBYTECODE=1 HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 TRANSFORMERS_OFFLINE=1
+Environment=HOME=/var/cache/hermes-call-tts XDG_CACHE_HOME=/var/cache/hermes-call-tts HF_HOME=/var/cache/hermes-call-tts/huggingface
+CacheDirectory=hermes-call-tts
+CacheDirectoryMode=0700
 TimeoutStartSec=180
 Restart=on-failure
 RestartSec=5
@@ -20,7 +23,6 @@ IPAddressAllow=localhost
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadOnlyPaths=/var/lib/hermes-call-tts
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectHostname=yes

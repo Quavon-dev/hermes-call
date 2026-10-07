@@ -3,6 +3,7 @@ voice, the call language, the speech model, disk space and the running service. 
 check; exit 1 when one failed."""
 
 import asyncio
+import re
 import shutil
 import socket
 from collections.abc import Callable
@@ -81,7 +82,7 @@ async def _voice(config: Config) -> Check:
         return Check("voice", "warn", f"{config.tts_url}/v1/audio/voices: {exc.__class__.__name__}")
     if not isinstance(voices, list):
         return Check("voice", "warn", f"{config.tts_url} does not list its voices; {config.tts_voice} not checked")
-    if config.tts_voice not in voices:
+    if not set(re.sub(r"\([\d.]+\)", "", config.tts_voice).split("+")) <= set(voices):
         return Check("voice", "fail", f"{config.tts_voice} is not offered by {config.tts_url} (language {config.language})")
     return Check("voice", "ok", f"{config.tts_voice} offered by {config.tts_url}")
 

@@ -184,7 +184,7 @@ def load(path: Path = DEFAULT_CONFIG) -> Config:
         raise ConfigError("tts.speed: a number between 0.5 and 2.0")
     if config.hermes_reasoning_effort not in ("", "none", "minimal", "low", "medium", "high"):
         raise ConfigError("hermes.reasoning_effort: one of none, minimal, low, medium, high")
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_.+-]{0,63}", config.tts_voice):
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_.+()-]{0,63}", config.tts_voice):
         raise ConfigError("tts.voice: a voice name such as dm_thorsten or bm_george")
     if not 1 <= config.stt_beam_size <= 5:
         raise ConfigError("stt.beam_size: an integer between 1 and 5")

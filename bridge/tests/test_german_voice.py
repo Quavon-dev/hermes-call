@@ -52,7 +52,7 @@ def test_english_defaults_are_unchanged(tmp_path) -> None:
 def test_older_configs_take_the_language_from_stt(tmp_path) -> None:
     config = load(write(tmp_path, "[stt]\nmodel = 'small'\nlanguage = 'de'\n[tts]\nvoice = 'bm_george'\n"))
     assert config.language == "de" and config.tts_url == "http://127.0.0.1:8881"
-    assert config.warnings == ["tts.voice bm_george is a en Kokoro voice, but the call language is de"]
+    assert config.warnings == ["tts.voice bm_george is a Kokoro voice for en, but the call language is de"]
 
 
 @pytest.mark.parametrize(
@@ -376,6 +376,8 @@ async def test_doctor_finds_a_missing_german_voice(tmp_path, aiohttp_server) -> 
     assert check.status == "fail" and "dm_thorsten is not offered" in check.detail
     english = load(write(tmp_path, f"[tts]\nurl = '{url}'\n"))
     assert (await _voice(english)).status == "ok"
+    mixed = load(write(tmp_path, f"[tts]\nurl = '{url}'\nvoice = 'af_heart(2)+bm_george(1)'\n"))
+    assert (await _voice(mixed)).status == "ok"
     hack = load(write(tmp_path, f"[voice]\nlanguage = 'de'\n[tts]\nurl = '{url}'\nvoice = 'bm_george'\n"))
     assert _language(hack).status == "warn" and _language(german).status == "ok"
     down = load(write(tmp_path, "[tts]\nurl = 'http://127.0.0.1:9'\n"))

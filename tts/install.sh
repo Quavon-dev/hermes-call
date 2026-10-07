@@ -30,9 +30,9 @@ declare -A VOICE_FILES=(
 SRC_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly SRC_ROOT
 
-VOICES=${VOICES:-}
-THREADS=${THREADS:-}
-PORT=${PORT:-}
+VOICES=${TTS_VOICES:-}
+THREADS=${TTS_THREADS:-}
+PORT=${TTS_PORT:-}
 PURGE=0
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }

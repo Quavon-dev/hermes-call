@@ -70,5 +70,5 @@ def voice_language_mismatch(voice: str, language: str) -> str | None:
     letters = KOKORO_LETTERS.get(language)
     if match is None or letters is None or match[1] in letters:
         return None
-    spoken = next((code for code, owned in KOKORO_LETTERS.items() if match[1] in owned), None)
-    return f"tts.voice {voice} is a {spoken or 'non-' + language} Kokoro voice, but the call language is {language}"
+    spoken = next((code for code, owned in KOKORO_LETTERS.items() if match[1] in owned), "another language")
+    return f"tts.voice {voice} is a Kokoro voice for {spoken}, but the call language is {language}"

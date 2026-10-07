@@ -39,7 +39,7 @@ HERMES_MODEL=${HERMES_MODEL:-}
 HERMES_PROVIDER=${HERMES_PROVIDER:-}
 HERMES_REASONING_EFFORT=${HERMES_REASONING_EFFORT:-}
 STT_MODEL=${STT_MODEL:-}
-LANGUAGE=${LANGUAGE:-${STT_LANGUAGE:-}}
+CALL_LANGUAGE=${CALL_LANGUAGE:-${STT_LANGUAGE:-}}
 STT_BEAM_SIZE=${STT_BEAM_SIZE:-}
 STT_PROMPT=${STT_PROMPT:-}
 TTS_URL=${TTS_URL:-}
@@ -101,7 +101,7 @@ parse_flags() {
       --hermes-provider) HERMES_PROVIDER=${2:?}; shift ;;
       --reasoning-effort) HERMES_REASONING_EFFORT=${2:?}; shift ;;
       --stt-model) STT_MODEL=${2:?}; shift ;;
-      --language | --stt-language) LANGUAGE=${2:?}; shift ;;
+      --language | --stt-language) CALL_LANGUAGE=${2:?}; shift ;;
       --stt-beam-size) STT_BEAM_SIZE=${2:?}; shift ;;
       --stt-prompt) STT_PROMPT=${2:?}; shift ;;
       --tts-url) TTS_URL=${2:?}; shift ;;
@@ -159,36 +159,41 @@ load_settings() {
   [[ -n $HERMES_MODEL ]] || HERMES_MODEL=$(toml_section_value hermes model)
   [[ -n $HERMES_PROVIDER ]] || HERMES_PROVIDER=$(toml_section_value hermes provider)
   [[ -n $HERMES_REASONING_EFFORT ]] || HERMES_REASONING_EFFORT=$(toml_section_value hermes reasoning_effort)
-  [[ -n $LANGUAGE ]] || LANGUAGE=$(toml_section_value voice language)
-  [[ -n $LANGUAGE ]] || LANGUAGE=$(toml_section_value stt language)
-  LANGUAGE=${LANGUAGE:-en}
-  [[ $LANGUAGE =~ ^[a-z]{2,3}$ ]] || die "invalid --language"
-  [[ -n $TTS_URL ]] || TTS_URL=$(section_url tts)
-  [[ -n $TTS_VOICE ]] || TTS_VOICE=$(toml_section_value tts voice)
-  [[ -n $TTS_SPEED ]] || TTS_SPEED=$(toml_section_number tts speed)
-  [[ -n $STT_MODEL ]] || STT_MODEL=$(toml_section_value stt model)
-  [[ -n $STT_BEAM_SIZE ]] || STT_BEAM_SIZE=$(toml_section_number stt beam_size)
+  local installed_language
+  installed_language=$(toml_section_value voice language)
+  [[ -n $installed_language ]] || installed_language=$(toml_section_value stt language)
+  [[ -n $installed_language || ! -f $ETC/bridge.toml ]] || installed_language=en
+  CALL_LANGUAGE=${CALL_LANGUAGE:-${installed_language:-en}}
+  [[ $CALL_LANGUAGE =~ ^[a-z]{2,3}$ ]] || die "invalid --language"
+  # Another language: its own defaults instead of the installed language's model and voice.
+  if [[ $CALL_LANGUAGE == "${installed_language:-$CALL_LANGUAGE}" ]]; then
+    [[ -n $TTS_URL ]] || TTS_URL=$(section_url tts)
+    [[ -n $TTS_VOICE ]] || TTS_VOICE=$(toml_section_value tts voice)
+    [[ -n $TTS_SPEED ]] || TTS_SPEED=$(toml_section_number tts speed)
+    [[ -n $STT_MODEL ]] || STT_MODEL=$(toml_section_value stt model)
+    [[ -n $STT_BEAM_SIZE ]] || STT_BEAM_SIZE=$(toml_section_number stt beam_size)
+    [[ -n $ACKNOWLEDGEMENT_TEXT ]] || ACKNOWLEDGEMENT_TEXT=$(toml_section_value voice acknowledgement_text)
+  fi
   [[ -n $STT_PROMPT ]] || STT_PROMPT=$(toml_section_value stt initial_prompt)
   [[ -n $END_SILENCE_MS ]] || END_SILENCE_MS=$(toml_section_number voice end_silence_ms)
   [[ -n $BARGE_IN ]] || BARGE_IN=$(toml_section_bool voice barge_in)
   [[ -n $ACKNOWLEDGEMENT_AFTER_MS ]] || ACKNOWLEDGEMENT_AFTER_MS=$(toml_section_number voice acknowledgement_after_ms)
-  [[ -n $ACKNOWLEDGEMENT_TEXT ]] || ACKNOWLEDGEMENT_TEXT=$(toml_section_value voice acknowledgement_text)
   HERMES_USER=${HERMES_USER:-hermes}
   HERMES_MODEL=${HERMES_MODEL:-hermes-agent}
   HERMES_PROVIDER=${HERMES_PROVIDER:-}
   HERMES_REASONING_EFFORT=${HERMES_REASONING_EFFORT:-}
-  if [[ $LANGUAGE == en ]]; then
+  if [[ $CALL_LANGUAGE == en ]]; then
     STT_MODEL=${STT_MODEL:-base.en}
     STT_BEAM_SIZE=${STT_BEAM_SIZE:-1}
   else
     STT_MODEL=${STT_MODEL:-small}
     STT_BEAM_SIZE=${STT_BEAM_SIZE:-2}
   fi
-  case $LANGUAGE in
+  case $CALL_LANGUAGE in
     en) TTS_VOICE=${TTS_VOICE:-bm_george} TTS_URL=${TTS_URL:-http://127.0.0.1:8880} ;;
     de) TTS_VOICE=${TTS_VOICE:-dm_thorsten} TTS_URL=${TTS_URL:-http://127.0.0.1:8881} TTS_SPEED=${TTS_SPEED:-1.05} ;;
     *)
-      [[ -n $TTS_VOICE ]] || die "no default voice for --language $LANGUAGE; pass --voice"
+      [[ -n $TTS_VOICE ]] || die "no default voice for --language $CALL_LANGUAGE; pass --voice"
       TTS_URL=${TTS_URL:-http://127.0.0.1:8880}
       ;;
   esac
@@ -200,13 +205,13 @@ load_settings() {
   AGENT_NAME=${AGENT_NAME:-Hermes}
   [[ -n ${MODEL_REVISIONS[$STT_MODEL]:-} ]] || die "unsupported --stt-model $STT_MODEL"
   [[ $STT_BEAM_SIZE =~ ^[1-5]$ ]] || die "invalid --stt-beam-size"
-  if [[ $STT_MODEL == *.en && $LANGUAGE != en ]]; then
-    die "--stt-model $STT_MODEL is English-only; --language $LANGUAGE needs a multilingual model (small)"
+  if [[ $STT_MODEL == *.en && $CALL_LANGUAGE != en ]]; then
+    die "--stt-model $STT_MODEL is English-only; --language $CALL_LANGUAGE needs a multilingual model (small)"
   fi
   [[ $TTS_URL =~ ^http://(127\.0\.0\.1|localhost|\[::1\]):[0-9]{2,5}$ ]] || die "invalid --tts-url (a loopback http:// URL with a port)"
   python3 -c 'import sys; raise SystemExit(len(sys.argv[1]) > 200)' "$STT_PROMPT" || die "invalid --stt-prompt (at most 200 characters)"
-  if [[ $LANGUAGE != en && $TTS_VOICE =~ ^[ab][fm]_ ]]; then
-    warn "--voice $TTS_VOICE is an English Kokoro voice but the call language is $LANGUAGE (see docs/german-voice.md)"
+  if [[ $CALL_LANGUAGE != en && $TTS_VOICE =~ ^[ab][fm]_ ]]; then
+    warn "--voice $TTS_VOICE is an English Kokoro voice but the call language is $CALL_LANGUAGE (see docs/german-voice.md)"
   fi
   [[ $HERMES_REASONING_EFFORT =~ ^(none|minimal|low|medium|high)?$ ]] || die "invalid --reasoning-effort"
   if [[ ! $TTS_SPEED =~ ^[0-9]+([.][0-9]+)?$ ]] ||
@@ -224,7 +229,7 @@ load_settings() {
   fi
   python3 -c 'import sys; raise SystemExit(len(sys.argv[1]) > 120)' "$ACKNOWLEDGEMENT_TEXT" || die "invalid --ack-text (at most 120 characters)"
   [[ $HERMES_USER =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "invalid --hermes-user"
-  [[ $TTS_VOICE =~ ^[a-z0-9][a-z0-9_.+-]{0,63}$ ]] || die "invalid --voice"
+  [[ $TTS_VOICE =~ ^[a-z0-9][a-z0-9_.+()-]{0,63}$ ]] || die "invalid --voice"
   [[ $AGENT_NAME =~ ^[A-Za-z0-9][A-Za-z0-9\ ._\'-]{0,31}$ ]] || die "invalid --agent-name (1-32 letters, digits, spaces, . _ ' -)"
 }
 
@@ -438,7 +443,7 @@ beam_size = $STT_BEAM_SIZE
 initial_prompt = $(toml_quote "$STT_PROMPT")
 
 [voice]
-language = $(toml_quote "$LANGUAGE")
+language = $(toml_quote "$CALL_LANGUAGE")
 end_silence_ms = $END_SILENCE_MS
 barge_in = $BARGE_IN
 acknowledgement_after_ms = $ACKNOWLEDGEMENT_AFTER_MS

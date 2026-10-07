@@ -349,8 +349,9 @@ class Conversation:
             probability = self._vad.probability(chunk)
         if self._hears_playback():
             METRICS.playback_ignored_seconds.inc(amount=CHUNK_MS / 1000)
-            self._drop_speculation()
-            self._reset_utterance()
+            if self._utterance is not None or self._speech_run or self._preroll:
+                self._drop_speculation()
+                self._reset_utterance()
             return
         speech = probability >= self._s.threshold
         if self._utterance is None:

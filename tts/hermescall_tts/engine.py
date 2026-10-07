@@ -81,6 +81,8 @@ class KokoroGerman:
         parts = [self.phonemes(text)]
         if len(parts[0]) > CONTEXT:
             parts = [self.phonemes(clause) for clause in _CLAUSE.split(text)]
+        if any(len(part) > CONTEXT for part in parts):
+            log.warning("a clause longer than %d phonemes was cut short", CONTEXT)
         audio = [self._infer(part[:CONTEXT], voice, speed) for part in parts if part.strip()]
         return np.concatenate(audio) if audio else np.zeros(0, dtype=np.float32)
 

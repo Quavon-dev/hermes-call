@@ -75,8 +75,8 @@ def configure(tmp_path: Path, *flags: str) -> subprocess.CompletedProcess:
         (tools / "nproc").write_text("#!/bin/sh\necho 4\n")
         (tools / "nproc").chmod(0o755)
     script = f'source "{INSTALL}"; ETC="$1"; shift; parse_flags "$@"; load_settings; write_config'
-    env = {**os.environ, "PATH": f"{tools}:{os.environ['PATH']}"}
-    for name in ("HERMES_MODEL", "LANGUAGE", "STT_LANGUAGE", "TTS_URL", "TTS_VOICE", "BARGE_IN", "STT_MODEL"):
+    env = {**os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "LANGUAGE": "en_US:en"}
+    for name in ("HERMES_MODEL", "CALL_LANGUAGE", "STT_LANGUAGE", "TTS_URL", "TTS_VOICE", "BARGE_IN", "STT_MODEL"):
         env.pop(name, None)
     return subprocess.run(
         [BASH, "-c", script, "install.sh", str(tmp_path / "etc"), *flags], env=env, capture_output=True, text=True, check=False
@@ -139,6 +139,15 @@ def test_a_fresh_german_install_gets_german_defaults(tmp_path) -> None:
     assert (config.tts_voice, config.tts_url, config.tts_speed) == ("dm_thorsten", "http://127.0.0.1:8881", 1.05)
     assert (config.acknowledgement_after_ms, config.acknowledgement_text) == (1800, "Einen Moment.")
     assert config.barge_in is True and config.end_silence_ms == 500
+    assert configure(tmp_path, "--language", "en").returncode == 0
+    english = load(etc / "bridge.toml")
+    assert (english.stt_model, english.tts_voice, english.tts_url, english.tts_speed) == (
+        "base.en",
+        "bm_george",
+        "http://127.0.0.1:8880",
+        1.0,
+    )
+    assert english.acknowledgement_text == "One moment." and english.barge_in is True
     (etc / "bridge.toml").unlink()
     result = configure(tmp_path, "--language", "fr")
     assert result.returncode != 0 and "no default voice" in result.stderr
