@@ -329,6 +329,34 @@ struct TypingIndicator: View {
     }
 }
 
+/// The reply the agent is still writing: its newest lines, until the finished message replaces it.
+struct DraftBubble: View {
+    let text: String
+    let hud: Bool
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 6) {
+            Text(tail)
+                .font(.body)
+                .foregroundStyle(hud ? AnyShapeStyle(HUD.glow) : AnyShapeStyle(.primary))
+                .lineLimit(8, reservesSpace: false)
+                .truncationMode(.head)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "ellipsis")
+                .symbolEffect(.variableColor.iterative.dimInactiveLayers)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 16).fill(.quaternary))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("writing: \(tail)")
+    }
+
+    /// Long drafts show their end, where the agent is writing.
+    private var tail: String { text.count > 600 ? "…" + text.suffix(600) : text }
+}
+
 struct ChatApprovalSheet: View {
     let approval: ChatApproval
     @Environment(ChatModel.self) private var chat

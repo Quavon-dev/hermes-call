@@ -35,6 +35,8 @@ final class ChatModel {
     private(set) var window = ChatWindow()
     var messages: [ChatMessage] { window.messages }
     private(set) var agentTyping = false
+    /// The reply the shown agent is still writing (live drafts, never stored); replaces the typing dots.
+    private(set) var agentDraft: String?
     /// Unread agent messages per agent (kept in the app group); their sum is the badge.
     private(set) var unreadCounts: UnreadCounts
     var unread: Int { unreadCounts.total }
@@ -66,7 +68,12 @@ final class ChatModel {
     /// Outbox claims (`ChatStore.claim`): longer than connecting (15 s), uploading and the ack wait.
     static let claimOwner = "app"
     static let claimDuration: TimeInterval = 120
-    private nonisolated static let chatTypes: Set<String> = ["chat", "chat_ack", "typing", "approval_done", "history_page"]
+    private nonisolated static let chatTypes: Set<String> = ["chat", "chat_ack", "typing", "approval_done", "history_page",
+                                                             "chat_draft", "chat_attach"]
+    /// A draft without an update for this long is dropped (the reply failed, or its final message is lost).
+    static let draftLifetime: Duration = .seconds(30)
+    /// Live drafts and the mailed reply take different paths: a draft arriving just after its reply is stale.
+    static let draftHoldoff: TimeInterval = 2
 
     let app: AppModel
     // Internal (not private) for the extension files (ChatModel+History).
@@ -76,6 +83,10 @@ final class ChatModel {
     let log = Logger(subsystem: "de.quavon.hermescall", category: "chat")
     private var shownProfile: UUID?
     private var typingReset: Task<Void, Never>?
+    private var draftReset: Task<Void, Never>?
+    /// Messages whose `chat_attach` is being handled (a resend while it downloads is dropped).
+    private var attaching: Set<String> = []
+    private var lastAgentReply = Date.distantPast
     private var acks: [String: CheckedContinuation<Bool, Never>] = [:]
     private var inFlight: Set<String> = []
     private var loadingPage = false
@@ -165,6 +176,7 @@ final class ChatModel {
         shownProfile = profile
         searchResults = []
         agentTyping = false
+        clearDraft()
         guard let profile else {
             window = ChatWindow()
             return
@@ -291,6 +303,8 @@ final class ChatModel {
             case "chat_ack": await receiveAck(body, profile: profile.id)
             case "history_page": await receiveHistory(body, profile: profile, session: session)
             case "typing" where profile.id == shownProfile: showTyping()
+            case "chat_draft" where profile.id == shownProfile: showDraft(body)
+            case "chat_attach": await receiveAttachments(body, profile: profile, session: session)
             case "approval_request":
                 if showApproval(body, profile: profile.id, mailID: mailID) { return }
             case "approval_done":
@@ -325,6 +339,10 @@ final class ChatModel {
         apply(message, profile: profile.id)
         guard message.role == .agent else { return }
         agentTyping = false
+        if profile.id == shownProfile {
+            clearDraft()
+            lastAgentReply = Date()
+        }
         autoPlay(message, profile: profile.id)
         if message.presentation != nil, profile.id == app.activeProfile?.id { spotlight = message }
         saveSnapshot(message, profile: profile)
@@ -416,6 +434,49 @@ final class ChatModel {
         let total = unreadCounts.total
         ChatBadge.set(total)
         Task { try? await UNUserNotificationCenter.current().setBadgeCount(total) }
+    }
+
+    private func showDraft(_ body: [String: JSON]) {
+        guard let draft = ChatWire.draft(from: body), Date().timeIntervalSince(lastAgentReply) > Self.draftHoldoff,
+              !draft.text.isEmpty else { return }
+        agentDraft = draft.text
+        agentTyping = false
+        draftReset?.cancel()
+        draftReset = Task {
+            try? await Task.sleep(for: Self.draftLifetime)
+            if !Task.isCancelled { agentDraft = nil }
+        }
+    }
+
+    private func clearDraft() {
+        draftReset?.cancel()
+        agentDraft = nil
+    }
+
+    /// A spoken reply's voice note, after its text (`voice_follow`): added to that message.
+    private func receiveAttachments(_ body: [String: JSON], profile: RelayProfile, session: any ChatLink) async {
+        guard let (id, incoming) = ChatWire.attach(from: body), attaching.insert(id).inserted else { return }
+        defer { attaching.remove(id) }
+        // The text came first, but its own handling may still be storing it.
+        var found = await store.message(id, in: profile.id)
+        for _ in 0..<10 where found == nil {
+            try? await Task.sleep(for: .milliseconds(200))
+            found = await store.message(id, in: profile.id)
+        }
+        guard let existing = found, existing.role == .agent else { return }
+        let new = incoming.filter { item in !existing.attachments.contains { $0.kind == item.kind && $0.name == item.name } }
+        guard !new.isEmpty else { return }
+        var downloaded: [ChatAttachment] = []
+        for attachment in new { downloaded.append(await download(attachment, profile: profile.id, session: session)) }
+        let added = downloaded
+        guard let updated = try? await store.update(id, in: profile.id, { message in
+            // Checked again here: a resent `chat_attach` may have been handled meanwhile.
+            message.attachments += added.filter { item in
+                !message.attachments.contains { $0.kind == item.kind && $0.name == item.name }
+            }
+        }) else { return }
+        apply(updated, profile: profile.id)
+        autoPlay(updated, profile: profile.id)
     }
 
     private func showTyping() {

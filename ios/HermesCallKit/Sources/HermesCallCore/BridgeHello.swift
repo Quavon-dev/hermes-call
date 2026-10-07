@@ -7,7 +7,11 @@ import Foundation
 public enum AppHello {
     public static let protocolVersion = 1
     /// What this app understands beyond protocol v1.
-    public static let caps = ["unsupported", CallReconnect.cap, ChatHistorySync.cap]
+    public static let caps = ["unsupported", CallReconnect.cap, ChatHistorySync.cap, draftCap, voiceFollowCap]
+    /// Live drafts of a reply the agent is still writing (`chat_draft`).
+    public static let draftCap = "chat_draft"
+    /// A spoken reply's audio after its text (`chat_attach`).
+    public static let voiceFollowCap = "voice_follow"
     /// Types the app never answers with `unsupported` (no loops, and `hello` is handled by the session).
     static let neverAnswered: Set<String> = ["unsupported", "hello"]
 

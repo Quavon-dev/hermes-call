@@ -174,17 +174,7 @@ public enum ChatWire {
         let role: ChatMessage.Role = body["role"]?.string == "owner" ? .owner : .agent
         let kind = body["kind"]?.string.flatMap { kinds.contains($0) ? $0 : nil } ?? "text"
         let text = String((body["text"]?.string ?? "").prefix(maxText))
-        var attachments: [ChatAttachment] = []
-        if case .array(let raw)? = body["attachments"] {
-            for item in raw.prefix(4) {
-                guard let kindName = item["kind"]?.string, let kind = ChatAttachment.Kind(rawValue: kindName),
-                      let blobID = item["blob_id"]?.string, let key = item["key"]?.string,
-                      (try? Base64URL.decode(key, length: 32)) != nil else { continue }
-                let name = String((item["name"]?.string ?? kindName).prefix(120))
-                attachments.append(ChatAttachment(kind: kind, name: name, mime: item["mime"]?.string ?? "application/octet-stream",
-                                                  size: Int(item["size"]?.int ?? 0), blobID: blobID, key: key))
-            }
-        }
+        let attachments = Self.attachments(body["attachments"])
         let presentation = kind == "presentation" && role == .agent ? Presentation.parse(body["presentation"]) : nil
         guard !text.isEmpty || !attachments.isEmpty || presentation != nil else { return nil }
         let status: ChatMessage.Status = role == .owner ? .delivered : .received
@@ -194,6 +184,38 @@ public enum ChatWire {
                            attachments: attachments, date: date, status: status, replyTo: body["reply_to"]?.string,
                            presentation: presentation)
     }
+
+    /// Attachment references of a `chat` or `chat_attach` body (at most 4; invalid ones are left out).
+    static func attachments(_ value: JSON?) -> [ChatAttachment] {
+        guard case .array(let raw)? = value else { return [] }
+        var attachments: [ChatAttachment] = []
+        for item in raw.prefix(4) {
+            guard let kindName = item["kind"]?.string, let kind = ChatAttachment.Kind(rawValue: kindName),
+                  let blobID = item["blob_id"]?.string, let key = item["key"]?.string,
+                  (try? Base64URL.decode(key, length: 32)) != nil else { continue }
+            let name = String((item["name"]?.string ?? kindName).prefix(120))
+            attachments.append(ChatAttachment(kind: kind, name: name, mime: item["mime"]?.string ?? "application/octet-stream",
+                                              size: Int(item["size"]?.int ?? 0), blobID: blobID, key: key))
+        }
+        return attachments
+    }
+
+    /// A `chat_attach` body (`voice_follow`): attachments for an agent message the phone already has.
+    public static func attach(from body: [String: JSON]) -> (id: String, attachments: [ChatAttachment])? {
+        guard body["type"]?.string == "chat_attach", let id = body["id"]?.string, (try? Base64URL.decode(id, length: 16)) != nil
+        else { return nil }
+        let attachments = attachments(body["attachments"])
+        return attachments.isEmpty ? nil : (id, attachments)
+    }
+
+    /// A live `chat_draft` (`chat_draft`): the reply the agent is still writing.
+    public static func draft(from body: [String: JSON]) -> (id: String, text: String)? {
+        guard body["type"]?.string == "chat_draft", let id = body["draft"]?.string, !id.isEmpty, id.count <= 32,
+              let text = body["text"]?.string else { return nil }
+        return (id, String(text.prefix(maxDraft)))
+    }
+
+    public static let maxDraft = 4000
 
     /// The body the phone sends for an owner message whose attachments are already uploaded.
     /// `voiceReplies`: a voice note asks the agent to answer by voice too (ignored without a voice attachment).

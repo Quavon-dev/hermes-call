@@ -58,7 +58,13 @@ struct ChatView: View {
                 messageList
                 if searching && !query.trimmingCharacters(in: .whitespaces).isEmpty { searchResults }
             }
-            if chat.agentTyping && !searching {
+            if let draft = chat.agentDraft, !searching {
+                DraftBubble(text: draft, hud: hud)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+                    .transition(.opacity)
+            } else if chat.agentTyping && !searching {
                 TypingIndicator(hud: hud)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
@@ -68,6 +74,7 @@ struct ChatView: View {
             if !searching { ChatComposer(hud: hud, composing: $composing) }
         }
         .animation(.easeInOut(duration: 0.2), value: chat.agentTyping)
+        .animation(.easeInOut(duration: 0.2), value: chat.agentDraft == nil)
         .animation(.easeInOut(duration: 0.2), value: searching)
         .background { if hud { Color.black.ignoresSafeArea() } }
         .navigationBarTitleDisplayMode(.inline)

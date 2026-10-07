@@ -103,6 +103,7 @@
 		ADF4B258A9DCEB0FA724B943 /* HermesCallUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D0F0E8CC40692D674FCAC4D /* HermesCallUITests.swift */; };
 		B44781F861489076E3C760F4 /* PresenceGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = C46B5E45723A531832767176 /* PresenceGeometry.swift */; };
 		BACF3B7B6D9DFD07EB0026AF /* StopAgentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB862AAFBC6BDC6F93DBB86C /* StopAgentTests.swift */; };
+		BC93372557886758FF1A494B /* LiveChatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 672B60E2FE1A517ED4967FF8 /* LiveChatTests.swift */; };
 		BE2C00892758D0D888C9D13A /* PresenceDemo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99FC5198B587F12FFF21A16C /* PresenceDemo.swift */; };
 		C08FE008BFC5BD065763671A /* AppIconPresence.icon in Resources */ = {isa = PBXBuildFile; fileRef = 0585C9BC14686AE8E2E6A6C7 /* AppIconPresence.icon */; };
 		C22912A9CE3C328D426461EB /* PresenceHaptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4646A34CA3E08ED0B0D222D4 /* PresenceHaptics.swift */; };
@@ -283,6 +284,7 @@
 		62AAE2F00FE5E83BDD8A46B2 /* StopAgentIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StopAgentIntent.swift; sourceTree = "<group>"; };
 		65F0DBE26949EE2A0C2DAC3D /* WebRTCCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebRTCCall.swift; sourceTree = "<group>"; };
 		66A1D6CBC2CA7794BEEB0322 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		672B60E2FE1A517ED4967FF8 /* LiveChatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveChatTests.swift; sourceTree = "<group>"; };
 		68E6173D52C43474ABB6AA0A /* PlaceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceMonitor.swift; sourceTree = "<group>"; };
 		6C3D219A4A37E119CBBBC58C /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		6CD3DCA5B3774486AC69C1EF /* RingbackTone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RingbackTone.swift; sourceTree = "<group>"; };
@@ -738,6 +740,7 @@
 				D6EC0C66622260736F15B2E3 /* HermesCallTests.swift */,
 				E8BB18A24766F66B2C7A9E98 /* HistorySyncTests.swift */,
 				A8527312597E0F062D0FE282 /* InboxTests.swift */,
+				672B60E2FE1A517ED4967FF8 /* LiveChatTests.swift */,
 				B65AFE29F0E2D63B68B204EB /* PhoneAndTaskTests.swift */,
 				198029FAD108D3DFFFA9E9D5 /* RelayClientTests.swift */,
 				2CDD99D92ED7BC15B65B1940 /* SpeakerTests.swift */,
@@ -1074,6 +1077,7 @@
 				6AB0C865B170C12438EC62AD /* HermesCallTests.swift in Sources */,
 				EF64AA73DC0C64B91AEB12D8 /* HistorySyncTests.swift in Sources */,
 				F57DB747BACC9621BF39BCCC /* InboxTests.swift in Sources */,
+				BC93372557886758FF1A494B /* LiveChatTests.swift in Sources */,
 				5EEBB2C91E1F39519D4E30E0 /* PhoneAndTaskTests.swift in Sources */,
 				60F553B91DC3FAF9009985A0 /* RelayClientTests.swift in Sources */,
 				1DE6EA4F237881443A511934 /* SpeakerTests.swift in Sources */,
