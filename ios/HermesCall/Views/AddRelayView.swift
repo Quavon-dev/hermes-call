@@ -124,6 +124,11 @@ struct AddRelayView: View {
 
     private func prepare() {
         error = nil
+        if URL(string: address).flatMap({ DeepLink.parse($0, secret: nil) }) == .demo {
+            app.startDemo()
+            dismiss()
+            return
+        }
         do {
             let invite = try makeInvite()
             guard invite.kind == .device else { throw ProtocolError.invalidLink }

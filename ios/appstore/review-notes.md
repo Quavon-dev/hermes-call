@@ -2,6 +2,7 @@
 
 Paste the text below into App Store Connect › App Review Information › Notes (it stays under Apple's
 4000-character limit; check after editing). Sign-in is **not required**: leave "Sign-in required" unchecked.
+TestFlight's Beta App Review notes come from `beta-review-notes.txt` (written by the release workflow).
 
 ---
 
@@ -10,10 +11,11 @@ The owner runs three pieces themselves: the agent, a bridge next to it, and a sm
 The app pairs with that relay by a one-time code; there are no accounts and no server run by us.
 
 HOW TO TEST WITHOUT A RELAY (demo mode)
-1. Launch the app, tap Continue on the three intro pages (the third one explains the microphone and
-   notification permissions before iOS asks; both may be skipped).
+1. Launch the app, tap Continue on the intro pages (microphone and notification prompts may be
+   skipped).
 2. Tap "Try a demo". A demo agent named Atlas starts. It runs only on the device, offline; nothing is
-   sent anywhere.
+   sent anywhere. Or scan the demo QR code (hermescall://demo, via "Add your relay" > "Scan QR"):
+   https://github.com/Quavon-dev/hermes-call/blob/main/ios/appstore/demo-qr.png?raw=true
 3. The consent screen appears (guideline 5.1.2(i)): it lists what the app would share with the owner's
    agent and says that the agent may pass it to a third-party AI service. Tap "Allow sharing with my
    agent" (or "Not now"; the demo works either way because it stays on the device).

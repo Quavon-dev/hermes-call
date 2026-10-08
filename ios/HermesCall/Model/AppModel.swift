@@ -174,6 +174,8 @@ final class AppModel {
             if let known, known != activeProfile?.id { activate(known) }
             tab = .call
             return true
+        case .demo:
+            if realProfiles.isEmpty { startDemo() }
         case .open:
             break
         }

@@ -83,6 +83,8 @@ class FakeAsc(asc.Asc):
             if route.endswith("/buildBetaDetail"):
                 state, self.external_state = self.external_state, "WAITING_FOR_BETA_REVIEW"
                 return {"data": {"attributes": {"externalBuildState": state}}}
+            if route.endswith("/betaAppReviewDetail"):
+                return {"data": {"id": "detail-1"}}
             if route.endswith("/appStoreVersions"):
                 return {"data": self._versions}
             if route.endswith("/appStoreVersionLocalizations"):
@@ -99,10 +101,11 @@ class FakeAsc(asc.Asc):
 
 def test_beta_add_submits_external_build(capsys) -> None:
     fake = FakeAsc()
-    asc.beta_add(fake, "0.6.0", "7", "Internal", "Beta", "- Recents call-back", wait=0)
+    asc.beta_add(fake, "0.6.0", "7", "Internal", "Beta", "- Recents call-back", wait=0, review_notes="Try a demo")
     assert fake.writes == [
         ("POST", "/v1/betaGroups/g-int/relationships/builds"),
         ("POST", "/v1/betaBuildLocalizations"),
+        ("PATCH", "/v1/betaAppReviewDetails/detail-1"),
         ("POST", "/v1/betaGroups/g-ext/relationships/builds"),
         ("POST", "/v1/betaAppReviewSubmissions"),
     ]

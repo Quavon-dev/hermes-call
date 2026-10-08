@@ -35,6 +35,7 @@ import Testing
     @Test func otherLinks() {
         #expect(parse("hermescall://pair?v=1&k=device&r=a.example&c=ABC12345") == .pair("hermescall://pair?v=1&k=device&r=a.example&c=ABC12345"))
         #expect(parse("hermescall://open") == .open)
+        #expect(parse("hermescall://demo") == .demo)
         #expect(parse("hermescall://evil") == nil)
         #expect(parse("https://call?agent=\(agent.uuidString)") == nil)
         #expect(parse("hermescall://call?agent=not-a-uuid") == .call(agent: nil, trusted: false))

@@ -246,7 +246,7 @@ jobs:
           git log --format='- %s' ${previous:+$previous..}HEAD -- ios | head -30 >"$RUNNER_TEMP/what-to-test.txt"
           ASC_KEY_PATH="$RUNNER_TEMP/AuthKey.p8" uv run --quiet --no-project --with cryptography \
             python tools/asc.py beta-add --version "$VERSION" --build "$BUILD" --external "$EXTERNAL" \
-            --notes-file "$RUNNER_TEMP/what-to-test.txt"
+            --notes-file "$RUNNER_TEMP/what-to-test.txt" --review-notes ios/appstore/beta-review-notes.txt
 
   app-store:
     name: App Review
