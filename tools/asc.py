@@ -2,7 +2,8 @@
 
     python tools/asc.py next-version --floor 0.6.0
     python tools/asc.py next-build --version 0.6.0 --at-least 42
-    python tools/asc.py beta-add --version 0.6.0 --build 7 --notes-file notes.txt
+    python tools/asc.py beta-add --version 0.6.0 --build 7 --notes-file notes.txt \
+        --review-notes ios/appstore/beta-review-notes.txt
     python tools/asc.py promote --version 0.6.0 --build 7 --notes ios/appstore/notes
 
 Credentials come from the environment, never from arguments: ASC_KEY_ID, ASC_ISSUER_ID and
@@ -14,7 +15,8 @@ HC_BUNDLE_ID (default de.quavon.hermescall).
 - Build numbers: highest number App Store Connect has for the train + 1, so manual and CI uploads
   share one sequence.
 - beta-add: the internal group (unless it gets every build), then the external group plus Beta App
-  Review. Apple reviews one build per train at a time; a later build waits in the group.
+  Review, with the reviewer notes (how to reach the demo) written first. Apple reviews one build
+  per train at a time; a later build waits in the group.
 - promote: attaches the build to the open App Store version and submits it, released after
   approval. Only one version can be with Apple at a time: while one is in review or approved and
   not yet live, this skips and the next push after that goes out as the next version.
@@ -184,7 +186,9 @@ def _rel(kind: str, ident: str) -> dict:
     return {"data": {"type": kind, "id": ident}}
 
 
-def beta_add(asc: Asc, version: str, number: str, internal: str, external: str, notes: str, wait: int) -> None:
+def beta_add(
+    asc: Asc, version: str, number: str, internal: str, external: str, notes: str, wait: int, review_notes: str = ""
+) -> None:
     build = asc.build(version, number, wait)
     group = asc.beta_group(internal)
     if group["attributes"].get("hasAccessToAllBuilds"):
@@ -216,6 +220,19 @@ def beta_add(asc: Asc, version: str, number: str, internal: str, external: str, 
     if not external:
         print("external beta: off (repository variable ASC_EXTERNAL_BETA)")
         return
+    if review_notes:
+        detail = asc.call("GET", f"/v1/apps/{asc.app_id}/betaAppReviewDetail")["data"]
+        asc.call(
+            "PATCH",
+            f"/v1/betaAppReviewDetails/{detail['id']}",
+            {
+                "data": {
+                    "type": "betaAppReviewDetails",
+                    "id": detail["id"],
+                    "attributes": {"notes": review_notes, "demoAccountRequired": False},
+                }
+            },
+        )
     group = asc.beta_group(external)
     asc.call("POST", f"/v1/betaGroups/{group['id']}/relationships/builds", {"data": [{"type": "builds", "id": build["id"]}]})
     print(f"build {version} ({number}) -> {external}")
@@ -360,6 +377,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--version", required=True)
     p.add_argument("--build", required=True)
     p.add_argument("--notes-file", type=pathlib.Path, required=True)
+    p.add_argument("--review-notes", type=pathlib.Path)
     p.add_argument("--internal", default="Internal")
     p.add_argument("--external", default="Beta")
     p.add_argument("--wait", type=int, default=2400)
@@ -379,7 +397,8 @@ def main(argv: list[str] | None = None) -> int:
             print(max([args.at_least, *(n + 1 for n in numbers)]))
         elif args.command == "beta-add":
             notes = args.notes_file.read_text().strip()[:4000] or DEFAULT_NOTES["en"]
-            beta_add(asc, args.version, args.build, args.internal, args.external, notes, args.wait)
+            review = args.review_notes.read_text().strip()[:4000] if args.review_notes else ""
+            beta_add(asc, args.version, args.build, args.internal, args.external, notes, args.wait, review)
         else:
             promote(asc, args.version, args.build, args.notes, args.wait)
     except AscError as err:

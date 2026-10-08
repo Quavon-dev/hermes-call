@@ -1,0 +1,21 @@
+No account, no sign-in and no QR code are needed: the app has a built-in demo agent that runs offline on the device.
+
+FASTEST WAY IN (no QR code)
+1. Launch the app and tap Continue on the intro pages (permission prompts may be skipped).
+2. On the last page tap "Try a demo". A demo agent named Atlas is added.
+3. On the consent screen tap "Allow sharing with my agent" (or "Not now"; the demo stays on the device either way).
+
+DEMO QR CODE (if you prefer the scanner)
+QR image: https://github.com/Quavon-dev/hermes-call/blob/main/ios/appstore/demo-qr.png?raw=true
+It encodes: hermescall://demo
+Scan it in the app (last intro page > "Add your relay" > "Scan QR") or with the iPhone Camera app; either starts the same demo agent.
+
+WHAT TO TEST
+- Chat tab: send "plan my day" (formatted answer), "places for dinner" (place cards with a map) or "help". "/stop" cancels a reply.
+- Call tab: tap "Call Atlas". A simulated call with captions starts; no microphone audio is recorded or sent in the demo. Mute, Speaker and hang-up work.
+- Settings (gear): agent list (Atlas marked Demo, "Remove demo agent"), Privacy > "Share with my agent", Phone access (all capabilities default to No), Diagnostics.
+
+WHY A QR CODE EXISTS AT ALL
+Real use pairs the app with the user's own self-hosted relay and AI agent; the QR code shown by that server is a one-time pairing code. We run no server and there are no accounts, so the demo agent above stands in for it.
+
+Contact: contact@quavon.de
