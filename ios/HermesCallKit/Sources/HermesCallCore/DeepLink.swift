@@ -14,6 +14,7 @@ public enum DeepLink: Equatable, Sendable {
     case call(agent: UUID?, trusted: Bool)
     /// Just open the app (Live Activity).
     case open
+    case demo
 
     public static let scheme = "hermescall"
 
@@ -28,6 +29,7 @@ public enum DeepLink: Equatable, Sendable {
         case "chat": return .chat(agent: trusted ? agent : nil)
         case "call": return .call(agent: agent, trusted: trusted)
         case "open": return .open
+        case "demo": return .demo
         default: return nil
         }
     }

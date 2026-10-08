@@ -65,7 +65,10 @@ account to get incoming calls.
   Review. Its profile exists only in memory (fresh keys each launch, relay `demo.invalid`), is never written
   to the Keychain or connected; its chat answers a few keywords (Markdown plan, place cards, help) and its
   calls are simulated by `PresenceDemo` (no CallKit, no audio). Labelled Demo everywhere; *Remove demo agent*
-  deletes it and its chat. Review notes and privacy answers: `ios/appstore/`.
+  deletes it and its chat. `hermescall://demo` (QR `ios/appstore/demo-qr.png`, for reviewers who look for a
+  code) starts it from the pairing scanner, or from outside the app while no real agent is paired. Review
+  notes and privacy answers: `ios/appstore/`; `beta-review-notes.txt` is written into TestFlight's Beta App
+  Review notes by `tools/asc.py beta-add`.
 - **Onboarding**: four pages (what agent, bridge and relay are; microphone and notification priming before
   iOS asks; pair or try the demo; setup guide link). `hermescall://pair?…` links opened on the phone open the
   pairing sheet, which still shows the relay and asks before pairing.

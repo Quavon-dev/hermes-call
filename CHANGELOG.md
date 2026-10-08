@@ -8,6 +8,10 @@ versioned separately and is at **0.8.2** in this release.
 
 ## [Unreleased]
 
+- Demo QR code for App Review: `hermescall://demo` (scanned in the pairing sheet or opened from the
+  Camera app) starts the offline demo agent; from outside the app only while no real agent is paired.
+  The release workflow writes `ios/appstore/beta-review-notes.txt` into TestFlight's Beta App Review
+  notes before each external submission.
 - Chat shows what the agent is doing: a live card with the running tool, its command or argument and
   the turn's steps; streaming replies appear as a growing bubble; the title names the current step.
 - Typing `/` in the chat lists Hermes' commands (`/new`, `/retry`, `/undo`, `/model` …); new session,
