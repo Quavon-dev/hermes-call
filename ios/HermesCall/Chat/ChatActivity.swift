@@ -274,11 +274,16 @@ struct SlashSuggestions: View {
                         .foregroundStyle(hud ? HUD.glow : HUD.alert)
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(command.text).font(.subheadline.monospaced().weight(.semibold))
-                        Text(command.summary).font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 6) {
+                            Text(command.text).font(.subheadline.monospaced().weight(.semibold))
+                            if let arguments = command.arguments {
+                                Text(arguments).font(.caption.monospaced()).foregroundStyle(.tertiary).lineLimit(1)
+                            }
+                        }
+                        Text(command.summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer()
-                    Image(systemName: command.takesArgument ? "text.cursor" : "arrow.up.circle.fill")
+                    Image(systemName: command.runsAtOnce ? "arrow.up.circle.fill" : "text.cursor")
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 12)

@@ -404,10 +404,14 @@ access › Place reminders lists them (swipe to delete).
   scrolled to the end. New messages spring in from their side; Reduce Motion turns the motion off.
   Messages of one sender within three minutes are grouped (joined corners, one time stamp); an arrow
   button returns to the newest message; an empty chat offers starter questions.
-- **Commands**: typing `/` lists Hermes' gateway commands (`/new`, `/retry`, `/undo`, `/compress`,
-  `/usage`, `/model`, `/help`, `/stop`); a tap sends it (`/model` waits for an argument). New session,
-  retry and undo are also in the composer's **+** menu, new session and retry in the call button's
-  menu. Commands that change the session come back as an approval (Face ID).
+- **Commands**: typing `/` lists Hermes' gateway commands (about 60, from `/new`, `/retry`, `/btw`,
+  `/steer`, `/queue` and `/goal` to `/model`, `/status`, `/context` and `/usage`), filtered by name or
+  alias (`/reset`, `/fork`, `/ctx` …) with their arguments as a hint. Commands without required
+  arguments are sent on tap; the others, and risky ones (`/yolo`, `/restart`, `/update`, `/approvals`
+  …), are typed into the field to finish and send. `/start` and `/topic` (Telegram) and `/approve` /
+  `/deny` (approvals use Face ID here) are left out; skill commands are reached with `/commands`. New
+  session, retry and undo are also in the composer's **+** menu, new session and retry in the call
+  button's menu. Commands that change the session come back as an approval (Face ID).
 - **Outbox**: owner messages not yet confirmed by the bridge (also those the share sheet wrote).
   A sender *claims* a message in the database while sending it, so the app and the share
   extension never send the same one twice.

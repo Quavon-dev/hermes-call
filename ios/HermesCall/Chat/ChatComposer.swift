@@ -82,7 +82,7 @@ struct ChatComposer: View {
     }
 
     private func pick(_ command: SlashCommand) {
-        if command.takesArgument {
+        if !command.runsAtOnce {
             draft = command.text + " "
             return
         }

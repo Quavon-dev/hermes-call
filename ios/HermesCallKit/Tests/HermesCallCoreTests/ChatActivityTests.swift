@@ -5,12 +5,21 @@ import Testing
 struct ChatActivityTests {
     @Test func slashSuggestionsFollowTheTypedPrefix() {
         #expect(SlashCommand.suggestions(for: "/").count == SlashCommand.all.count)
-        #expect(SlashCommand.suggestions(for: "/U").map(\.name) == ["undo", "usage"])
-        #expect(SlashCommand.suggestions(for: "/new").map(\.name) == ["new"])
+        #expect(SlashCommand.suggestions(for: "/U").map(\.name) == ["undo", "usage", "update"])
+        #expect(SlashCommand.suggestions(for: "/reset").map(\.name) == ["new"])
+        #expect(SlashCommand.suggestions(for: "/ctx").map(\.name) == ["context"])
         #expect(SlashCommand.suggestions(for: "/model gpt").isEmpty)
         #expect(SlashCommand.suggestions(for: "hello /new").isEmpty)
         #expect(SlashCommand.suggestions(for: "/zzz").isEmpty)
         #expect(SlashCommand.new.text == "/new")
+    }
+
+    @Test func commandsAreUniqueAndRiskyOnesNeverRunAtOnce() {
+        let names = SlashCommand.all.flatMap { [$0.name] + $0.aliases }
+        #expect(Set(names).count == names.count)
+        for risky in ["yolo", "restart", "update", "approvals", "debug", "login", "pause"] {
+            #expect(SlashCommand.all.first { $0.name == risky }?.runsAtOnce == false)
+        }
     }
 
     private func update(_ step: Int, _ tool: String, turn: String = "t1", state: TaskContentState.State = .running) -> TaskUpdate {

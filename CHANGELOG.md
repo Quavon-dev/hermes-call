@@ -10,8 +10,9 @@ versioned separately and is at **0.8.2** in this release.
 
 - Chat shows what the agent is doing: a live card with the running tool, its command or argument and
   the turn's steps; streaming replies appear as a growing bubble; the title names the current step.
-- Typing `/` in the chat lists Hermes' commands (`/new`, `/retry`, `/undo`, `/model` …); new session,
-  retry and undo are one tap away in the composer and call menus.
+- Typing `/` in the chat lists Hermes' commands (about 60, with aliases and argument hints); safe ones
+  send on tap, the rest are filled in to finish. New session, retry and undo are one tap away in the
+  composer and call menus.
 - New chat animations: arriving messages, bouncing typing dots, the send/mic button morph and the
   command list (all off with Reduce Motion).
 - Chat: consecutive messages from one sender are grouped (one time stamp, joined corners), a button
