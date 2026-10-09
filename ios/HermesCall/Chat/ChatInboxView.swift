@@ -63,7 +63,7 @@ struct ChatInboxList: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background { if hud { Color.black.ignoresSafeArea() } else { AmbientBackground() } }
-        .navigationTitle(hud ? "Chats" : "Agents")
+        .navigationTitle("Chats")
         .navigationBarTitleDisplayMode(hud ? .inline : .large)
         .toolbarBackground(hud ? AnyShapeStyle(Color.black) : AnyShapeStyle(.clear), for: .navigationBar)
         .toolbar {
