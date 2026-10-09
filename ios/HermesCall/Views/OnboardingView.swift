@@ -20,16 +20,16 @@ struct OnboardingView: View {
                 PermissionsPage().tag(2)
                 StartPage(addRelay: { addingRelay = true }, tryDemo: { app.startDemo() }).tag(3)
             }
-            .tabViewStyle(.page(indexDisplayMode: .always))
-            .indexViewStyle(.page(backgroundDisplayMode: .always))
-            // Always laid out (hidden on the last page), so the page dots never jump.
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            PageDots(count: Self.pageCount, current: page).padding(.vertical, 14)
+            // Always laid out (hidden on the last page), so the dots never jump.
             Button {
-                withAnimation { page = min(page + 1, Self.pageCount - 1) }
+                withAnimation(.smooth(duration: 0.35)) { page = min(page + 1, Self.pageCount - 1) }
             } label: {
-                Text("Continue").frame(maxWidth: .infinity)
+                Text("Continue").font(.headline).frame(maxWidth: .infinity, minHeight: 50)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            .buttonStyle(.glassProminent)
+            .buttonBorderShape(.capsule)
             .padding(.horizontal, 24)
             .padding(.bottom, 12)
             .opacity(page < Self.pageCount - 1 ? 1 : 0)
@@ -37,7 +37,28 @@ struct OnboardingView: View {
             .accessibilityHidden(page == Self.pageCount - 1)
             .accessibilityIdentifier("onboarding.continue")
         }
+        .background { AmbientBackground() }
         .sheet(isPresented: $addingRelay) { AddRelayView().agentTheme() }
+    }
+}
+
+/// Where you are in the pages: the current one a longer capsule.
+private struct PageDots: View {
+    let count: Int
+    let current: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<count, id: \.self) { index in
+                Capsule().fill(index == current ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary.opacity(0.35)))
+                    .frame(width: index == current ? 22 : 7, height: 7)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .glassEffect(.regular, in: .capsule)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: current)
+        .accessibilityElement()
+        .accessibilityLabel("Page \(current + 1) of \(count)")
     }
 }
 
@@ -46,28 +67,81 @@ struct OnboardingView: View {
 private struct Page<Content: View>: View {
     let symbol: String
     let title: String
+    var subtitle: String?
     @ViewBuilder let content: Content
 
     var body: some View {
         GeometryReader { space in
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Image(systemName: symbol)
-                        .font(.system(size: 52, weight: .semibold))
-                        .foregroundStyle(.tint)
-                        .accessibilityHidden(true)
-                    Text(title).font(.largeTitle.bold()).fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 22) {
+                    Orb(symbol: symbol)
+                    VStack(spacing: 10) {
+                        Text(title)
+                            .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let subtitle {
+                            Text(subtitle).font(.body).foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                     content
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 28)
-                .padding(.top, 16)
-                .padding(.bottom, 56)
-                // Short pages sit a little above the middle instead of leaving the lower half empty.
-                .frame(minHeight: space.size.height * 0.9, alignment: .center)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 24)
+                .padding(.top, 24)
+                .padding(.bottom, 24)
+                // Short pages sit in the middle instead of leaving the lower half empty.
+                .frame(minHeight: space.size.height, alignment: .center)
             }
             .scrollBounceBehavior(.basedOnSize)
         }
+    }
+}
+
+/// The page's symbol in a glowing ball of the agent's colour.
+private struct Orb: View {
+    let symbol: String
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 44, weight: .semibold))
+            .foregroundStyle(.white)
+            .shadow(color: .black.opacity(0.15), radius: 2, y: 1)
+            .frame(width: 112, height: 112)
+            .background {
+                Circle().fill(LinearGradient(colors: [HUD.glow, HUD.alert, HUD.ownerBubble], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .overlay(Circle().stroke(LinearGradient(colors: [.white.opacity(0.6), .white.opacity(0)], startPoint: .top, endPoint: .bottom),
+                                             lineWidth: 1.5))
+            }
+            .background { Circle().fill(HUD.glow.opacity(0.5)).blur(radius: 36).scaleEffect(1.2) }
+            .accessibilityHidden(true)
+    }
+}
+
+/// A glass card holding a page's rows.
+private struct Card<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) { content }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28))
+    }
+}
+
+/// A row's symbol: white on a small tile of the agent's colour.
+private struct Tile: View {
+    let symbol: String
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 38, height: 38)
+            .background(RoundedRectangle(cornerRadius: 11).fill(LinearGradient(colors: [HUD.glow, HUD.alert], startPoint: .top, endPoint: .bottom)))
+            .accessibilityHidden(true)
     }
 }
 
@@ -76,20 +150,18 @@ private struct Point: View {
     let text: String
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Image(systemName: symbol).foregroundStyle(.tint).frame(width: 28).accessibilityHidden(true)
-            Text(text).fixedSize(horizontal: false, vertical: true)
+        HStack(alignment: .center, spacing: 14) {
+            Tile(symbol: symbol)
+            Text(text).font(.subheadline.weight(.medium)).fixedSize(horizontal: false, vertical: true)
         }
     }
 }
 
 private struct WelcomePage: View {
     var body: some View {
-        Page(symbol: "phone.bubble.fill", title: "Your own agent, on the phone") {
-            Text("Call your Hermes agent like a person, chat with it, and let it call you when something needs you.")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 14) {
+        Page(symbol: "phone.bubble.fill", title: "Your own agent, on the phone",
+             subtitle: "Call your Hermes agent like a person, chat with it, and let it call you when something needs you.") {
+            Card {
                 Point(symbol: "phone.fill", text: "Real phone calls through CallKit, also from the lock screen.")
                 Point(symbol: "bubble.left.and.bubble.right.fill", text: "Chat with photos, files and voice notes.")
                 Point(symbol: "checkmark.shield.fill", text: "Commands only run after you approve them with Face ID.")
@@ -101,17 +173,21 @@ private struct WelcomePage: View {
 private struct HowItWorksPage: View {
     var body: some View {
         Page(symbol: "point.3.connected.trianglepath.dotted", title: "Three pieces, all yours") {
-            Part(symbol: "brain.head.profile", name: "Agent",
-                 text: "Hermes, the AI agent you run on your own computer or server.")
-            Part(symbol: "arrow.left.arrow.right", name: "Bridge",
-                 text: "Runs next to your agent and turns calls and messages into its conversations.")
-            Part(symbol: "antenna.radiowaves.left.and.right", name: "Relay",
-                 text: "A small server you host that connects this iPhone to your bridge from anywhere. It forwards "
-                     + "only encrypted data.")
-            Point(symbol: "lock.fill", text: "Everything between this iPhone and your bridge is end-to-end encrypted. "
-                  + "No accounts, no cloud service of ours.")
+            Card {
+                Part(symbol: "brain.head.profile", name: "Agent",
+                     text: "Hermes, the AI agent you run on your own computer or server.")
+                Part(symbol: "arrow.left.arrow.right", name: "Bridge",
+                     text: "Runs next to your agent and turns calls and messages into its conversations.")
+                Part(symbol: "antenna.radiowaves.left.and.right", name: "Relay",
+                     text: "A small server you host that connects this iPhone to your bridge from anywhere. It forwards "
+                         + "only encrypted data.")
+            }
+            Label("End-to-end encrypted between this iPhone and your bridge. No accounts, no cloud service of ours.",
+                  systemImage: "lock.fill")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -122,7 +198,7 @@ private struct HowItWorksPage: View {
 
         var body: some View {
             HStack(alignment: .top, spacing: 14) {
-                Image(systemName: symbol).font(.title2).foregroundStyle(.tint).frame(width: 36).accessibilityHidden(true)
+                Tile(symbol: symbol)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name).font(.headline)
                     Text(text).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -139,9 +215,8 @@ private struct PermissionsPage: View {
     @State private var notifications: UNAuthorizationStatus = .notDetermined
 
     var body: some View {
-        Page(symbol: "hand.raised.fill", title: "Two permissions") {
-            Text("iOS asks for each once. You can change them later in Settings.")
-                .foregroundStyle(.secondary)
+        Page(symbol: "hand.raised.fill", title: "Two permissions",
+             subtitle: "iOS asks for each once. You can change them later in Settings.") {
             Permission(symbol: "mic.fill", title: "Microphone",
                        text: "For calls with your agent and voice notes. Only while you are on a call or recording.",
                        granted: microphone == .granted, denied: microphone == .denied) {
@@ -162,6 +237,7 @@ private struct PermissionsPage: View {
             Text("Camera, location, calendar and the rest are asked only when you use them.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
         .task { await refresh() }
     }
@@ -180,8 +256,8 @@ private struct PermissionsPage: View {
 
         var body: some View {
             HStack(alignment: .top, spacing: 14) {
-                Image(systemName: symbol).font(.title3).foregroundStyle(.tint).frame(width: 32).accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 6) {
+                Tile(symbol: symbol)
+                VStack(alignment: .leading, spacing: 8) {
                     Text(title).font(.headline)
                     Text(text).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     if granted {
@@ -193,11 +269,15 @@ private struct PermissionsPage: View {
                         .font(.subheadline.weight(.medium))
                     } else {
                         Button("Allow \(title.lowercased())", action: allow)
-                            .buttonStyle(.bordered)
+                            .font(.subheadline.weight(.semibold))
+                            .buttonStyle(.glass)
                             .accessibilityIdentifier("onboarding.allow.\(title.lowercased())")
                     }
                 }
+                Spacer(minLength: 0)
             }
+            .padding(20)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28))
         }
     }
 }
@@ -208,35 +288,43 @@ private struct StartPage: View {
 
     var body: some View {
         Page(symbol: "qrcode.viewfinder", title: "Connect your agent") {
-            Text("On the computer that runs your bridge, run")
-                .foregroundStyle(.secondary)
-            Text("hermes-call-bridge device add")
-                .font(.callout.monospaced())
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
-                .textSelection(.enabled)
-            Text("It shows a QR code and a pairing code. Scan it here, or open the hermescall:// link on this iPhone.")
-                .foregroundStyle(.secondary)
-            VStack(spacing: 12) {
-                Button(action: addRelay) { Text("Add your relay").frame(maxWidth: .infinity) }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .accessibilityIdentifier("onboarding.addRelay")
-                Button(action: tryDemo) { Text("Try a demo").frame(maxWidth: .infinity) }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    .accessibilityIdentifier("onboarding.demo")
+            Card {
+                Text("On the computer that runs your bridge, run")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Text("hermes-call-bridge device add")
+                    .font(.callout.monospaced().weight(.medium))
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
+                    .textSelection(.enabled)
+                Text("It shows a QR code and a pairing code. Scan it here, or open the hermescall:// link on this iPhone.")
+                    .font(.subheadline).foregroundStyle(.secondary)
             }
-            .padding(.top, 8)
+            GlassEffectContainer(spacing: 12) {
+                VStack(spacing: 12) {
+                    Button(action: addRelay) {
+                        Label("Add your relay", systemImage: "qrcode.viewfinder").font(.headline).frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .buttonBorderShape(.capsule)
+                    .accessibilityIdentifier("onboarding.addRelay")
+                    Button(action: tryDemo) {
+                        Label("Try a demo", systemImage: "sparkles").font(.headline).frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
+                    .accessibilityIdentifier("onboarding.demo")
+                }
+            }
             Text("The demo agent runs on this iPhone, offline; nothing is sent anywhere. Remove it any time.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
             if let guide = OnboardingView.setupGuide {
                 Link(destination: guide) {
                     Label("No bridge yet? Set one up", systemImage: "book")
                 }
-                .font(.subheadline.weight(.medium))
+                .font(.subheadline.weight(.semibold))
             }
         }
     }

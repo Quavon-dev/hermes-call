@@ -94,7 +94,6 @@
 		9F0970220E11A9277D843745 /* PresenceInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = A76AB9DB839DB8F4F3896675 /* PresenceInteraction.swift */; };
 		9F713F00136EA3665D6DD5DC /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = C69B417C9057C60B1C4F9AFE /* UITestSupport.swift */; };
 		A21CE3E56C5B7C9ABAC04063 /* ChatModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2D612D89592478D506EDDFC /* ChatModelTests.swift */; };
-		A3A06FF726BF93757E2CB5CF /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDDD59464AA12FBED0EF02FA /* HomeView.swift */; };
 		A91DA215CE16DBDF5DF3A433 /* TaskActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFD3AE043654DEAC0FE8B650 /* TaskActivityAttributes.swift */; };
 		A9FE8DBC3A6E8AF1F6C79717 /* PlaceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E6173D52C43474ABB6AA0A /* PlaceMonitor.swift */; };
 		AC87A3C5C2BF067024D5D9B6 /* PushRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59847A84BD5C3EB19DD1CAA1 /* PushRegistrar.swift */; };
@@ -349,7 +348,6 @@
 		D8FCBC150291B9E1126460F6 /* HermesCallWatchWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesCallWatchWidget.swift; sourceTree = "<group>"; };
 		DA7A3C6D127F97090BBCCFEE /* CallCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallCoordinator.swift; sourceTree = "<group>"; };
 		DB8078711B60EED4D041E42A /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
-		DDDD59464AA12FBED0EF02FA /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		DE6EB54A7ED404DD3D1C2954 /* HermesCallNotifications.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HermesCallNotifications.entitlements; sourceTree = "<group>"; };
 		E0CE17DE2FD0B7834525AD95 /* EngineAudioDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineAudioDevice.swift; sourceTree = "<group>"; };
 		E8BB18A24766F66B2C7A9E98 /* HistorySyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistorySyncTests.swift; sourceTree = "<group>"; };
@@ -574,7 +572,6 @@
 				345DEEF192F907CE5D0568DD /* CallLinkConfirmView.swift */,
 				F1E28AC90CD90F043D390AF8 /* ConsentView.swift */,
 				CFBFFB0EF4F5022D6EC15A2B /* DiagnosticsView.swift */,
-				DDDD59464AA12FBED0EF02FA /* HomeView.swift */,
 				CCEDED18A1E11A930531AD8D /* HUD.swift */,
 				B9273B76265898AEA3482C0E /* InCallView.swift */,
 				5E1C5DFA780BDBC4373649BF /* OnboardingView.swift */,
@@ -1168,7 +1165,6 @@
 				CA6411C2C9F24C2E833FF187 /* HUD.swift in Sources */,
 				982466646BCA4BD9A86F5D2B /* HealthHomeSources.swift in Sources */,
 				7E054F4A255F5388E088DCB7 /* HermesCallApp.swift in Sources */,
-				A3A06FF726BF93757E2CB5CF /* HomeView.swift in Sources */,
 				12829DEF400AD134415B6F3E /* InCallView.swift in Sources */,
 				594478F278A7DD7E654B9B39 /* LookCamera.swift in Sources */,
 				6E65F232E9C339D2180B76BD /* MarkdownView.swift in Sources */,

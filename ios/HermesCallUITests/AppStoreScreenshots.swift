@@ -36,7 +36,6 @@ final class AppStoreScreenshots: XCTestCase {
         app.launchArguments = ["-UITestReset", "YES", "-UITestConsent", "YES", "-appearance", "standard"]
         app.launch()
         startDemo()
-        app.tabBars.buttons["Chat"].tap()
         send("Plan my day")
         XCTAssertTrue(app.staticTexts["Your day"].waitForExistence(timeout: 10))
         send("Any quiet places for dinner nearby?")
@@ -45,7 +44,6 @@ final class AppStoreScreenshots: XCTestCase {
         app.terminate()
         app.launchArguments = ["-appearance", "standard"]
         app.launch()
-        app.tabBars.buttons["Chat"].tap()
         let place = app.staticTexts["Linden Reading Café"].firstMatch
         XCTAssertTrue(place.waitForExistence(timeout: 10))
         drag(from: 0.3, to: 0.75)

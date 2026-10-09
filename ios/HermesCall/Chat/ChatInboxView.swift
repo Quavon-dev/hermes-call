@@ -45,6 +45,8 @@ struct ChatInboxList: View {
     @Environment(AppModel.self) private var app
     @Environment(ChatModel.self) private var chat
     let open: (UUID) -> Void
+    @State private var showingSettings = false
+    @State private var addingAgent = false
 
     private var hud: Bool { app.preferences.appearance == .hud }
 
@@ -55,15 +57,28 @@ struct ChatInboxList: View {
                              ? .connected : app.status(of: row.id))
             }
             .buttonStyle(.plain)
-            .listRowBackground(hud ? Color.black : nil)
+            .listRowBackground(hud ? Color.black : Color.clear)
             .accessibilityIdentifier("inbox.\(row.name)")
         }
         .listStyle(.plain)
-        .scrollContentBackground(hud ? .hidden : .automatic)
-        .background { if hud { Color.black.ignoresSafeArea() } }
-        .navigationTitle("Chats")
+        .scrollContentBackground(.hidden)
+        .background { if hud { Color.black.ignoresSafeArea() } else { AmbientBackground() } }
+        .navigationTitle(hud ? "Chats" : "Agents")
         .navigationBarTitleDisplayMode(hud ? .inline : .large)
-        .toolbarBackground(hud ? AnyShapeStyle(Color.black) : AnyShapeStyle(.bar), for: .navigationBar)
+        .toolbarBackground(hud ? AnyShapeStyle(Color.black) : AnyShapeStyle(.clear), for: .navigationBar)
+        .toolbar {
+            if !hud {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showingSettings = true } label: { Label("Settings", systemImage: "gearshape") }
+                        .accessibilityIdentifier("home.settings")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { addingAgent = true } label: { Label("Add an agent", systemImage: "plus") }
+                }
+            }
+        }
+        .sheet(isPresented: $showingSettings) { SettingsView().agentTheme() }
+        .sheet(isPresented: $addingAgent) { AddRelayView().agentTheme() }
         .task { await chat.refreshInbox() }
     }
 }

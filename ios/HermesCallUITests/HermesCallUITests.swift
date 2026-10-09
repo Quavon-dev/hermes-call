@@ -25,7 +25,6 @@ final class HermesCallUITests: XCTestCase {
         snap("consent")
         tap("consent.allow")
 
-        app.tabBars.buttons["Chat"].tap()
         let field = app.textFields["Message"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
@@ -44,6 +43,30 @@ final class HermesCallUITests: XCTestCase {
         hangUp.tap()
         XCTAssertFalse(hangUp.waitForExistence(timeout: 3), "the call screen closes")
         XCTAssertTrue(app.staticTexts["Outgoing call"].firstMatch.waitForExistence(timeout: 5) || app.textFields["Message"].exists)
+    }
+
+    /// Search opens from the top bar and closes again (its ✕, or the top bar's button); the agent switcher pops over.
+    func testSearchClosesAndAgentSwitcherOpens() throws {
+        app.launchArguments += ["-UITestConsent", "YES"]
+        app.launch()
+        for _ in 0..<3 { tap("onboarding.continue") }
+        tap("onboarding.demo")
+        XCTAssertTrue(app.textFields["Message"].firstMatch.waitForExistence(timeout: 5))
+        tap("chat.search")
+        let search = app.textFields["Search messages"].firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        snap("search-open")
+        tap("chat.search.done")
+        XCTAssertTrue(app.textFields["Message"].firstMatch.waitForExistence(timeout: 3), "the composer is back")
+        XCTAssertFalse(search.exists)
+        tap("chat.search")
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        tap("chat.search")
+        XCTAssertTrue(app.textFields["Message"].firstMatch.waitForExistence(timeout: 3), "the top bar button closes it too")
+        tap("chat.title")
+        XCTAssertTrue(app.descendants(matching: .any)["switcher.Atlas"].waitForExistence(timeout: 3))
+        sleep(1)
+        snap("agent-switcher")
     }
 
     func testPresenceTapStartsTheDemoCall() throws {
@@ -73,7 +96,6 @@ final class HermesCallUITests: XCTestCase {
         app.launch()
         for _ in 0..<3 { tap("onboarding.continue") }
         tap("onboarding.demo")
-        app.tabBars.buttons["Chat"].tap()
         let field = app.textFields["Message"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["chat.stop"].exists, "no Stop while the agent is idle")
@@ -181,7 +203,6 @@ final class HermesCallUITests: XCTestCase {
     func testInboxListsEveryAgent() throws {
         app.launchArguments += ["-UITestConsent", "YES", "-UITestAgents", "YES"]
         app.launch()
-        app.tabBars.buttons["Chat"].tap()
         XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 8))
         let nova = app.buttons["inbox.Nova"].firstMatch
         XCTAssertTrue(nova.waitForExistence(timeout: 5))
@@ -202,7 +223,7 @@ final class HermesCallUITests: XCTestCase {
     func testOutsideCallLinkAsksFirst() throws {
         app.launchArguments += ["-UITestConsent", "YES", "-UITestAgents", "YES"]
         app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Call"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["home.settings"].waitForExistence(timeout: 8))
         app.open(URL(string: "hermescall://call")!)
         // iOS may ask "Open in Hermes Call?" for a link from outside.
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")

@@ -107,7 +107,8 @@ private struct CodeBlockView: View {
                     }
             }
         }
-        .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
     }
 
     private var code: some View {
@@ -177,7 +178,7 @@ private struct MarkdownTableView: View {
             }
             .padding(10)
         }
-        .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+        .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
     }
 
     private func cellText(_ text: String, column: Int) -> some View {

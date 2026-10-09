@@ -24,18 +24,29 @@ struct ChatComposer: View {
     private var suggestions: [SlashCommand] { recorder.isRecording ? [] : SlashCommand.suggestions(for: draft) }
 
     var body: some View {
-        VStack(spacing: 8) {
-            if !suggestions.isEmpty {
-                SlashSuggestions(commands: suggestions, hud: hud, pick: pick)
-                    .transition(.move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.96, anchor: .bottom)))
-            }
-            HStack(alignment: .bottom, spacing: 10) {
-                if recorder.isRecording {
-                    recordingBar.transition(.move(edge: .trailing).combined(with: .opacity))
-                } else {
-                    attachMenu
-                    field
-                    actionButton
+        GlassEffectContainer(spacing: 10) {
+            VStack(spacing: 8) {
+                if !suggestions.isEmpty {
+                    SlashSuggestions(commands: suggestions, hud: hud, pick: pick)
+                        .transition(.move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.96, anchor: .bottom)))
+                }
+                HStack(alignment: .bottom, spacing: 10) {
+                    if recorder.isRecording {
+                        recordingBar.transition(.move(edge: .trailing).combined(with: .opacity))
+                    } else if hud {
+                        attachMenu
+                        field
+                        actionButton
+                    } else {
+                        // Standard: a glass "+" beside a glass field that holds its own mic / send button.
+                        attachMenu
+                        HStack(alignment: .bottom, spacing: 6) {
+                            field
+                            actionButton.padding(.bottom, 5)
+                        }
+                        .padding(.trailing, 5)
+                        .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: Metrics.controlHeight / 2 + 1))
+                    }
                 }
             }
         }
@@ -43,8 +54,9 @@ struct ChatComposer: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: recorder.isRecording)
         .sensoryFeedback(.impact(weight: .light), trigger: sent)
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(hud ? AnyShapeStyle(Color.black) : AnyShapeStyle(.bar))
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+        .background { if hud { Color.black.ignoresSafeArea(edges: .bottom) } }
         .photosPicker(isPresented: $choosingPhotos, selection: $photoItems, maxSelectionCount: Self.maxFiles, matching: .images)
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
@@ -73,8 +85,13 @@ struct ChatComposer: View {
         Button {
             if isEmpty { Task { await startRecording() } } else { sendDraft() }
         } label: {
-            ComposerIcon(symbol: isEmpty ? "mic.fill" : "arrow.up", hud: hud)
-                .symbolEffect(.bounce, value: sent)
+            if hud {
+                ComposerIcon(symbol: isEmpty ? "mic.fill" : "arrow.up", hud: hud)
+                    .symbolEffect(.bounce, value: sent)
+            } else {
+                ComposerIcon(symbol: isEmpty ? "mic.fill" : "arrow.up", size: Self.inlineButton, quiet: isEmpty)
+                    .symbolEffect(.bounce, value: sent)
+            }
         }
         .disabled(isEmpty && calls.inCall)
         .animation(.snappy(duration: 0.2), value: isEmpty)
@@ -104,7 +121,15 @@ struct ChatComposer: View {
             }
             Button { importingFiles = true } label: { Label("Files", systemImage: "doc") }
         } label: {
-            ComposerIcon(symbol: "plus", hud: hud)
+            if hud {
+                ComposerIcon(symbol: "plus", hud: hud)
+            } else {
+                Image(systemName: "plus")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: Metrics.iconButton, height: Metrics.iconButton)
+                    .glassEffect(.regular.interactive(), in: .circle)
+            }
         }
         .accessibilityLabel("Attach")
     }
@@ -116,11 +141,10 @@ struct ChatComposer: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .frame(minHeight: Metrics.controlHeight)
+            .padding(.leading, hud ? 0 : 4)
             .background {
                 if hud {
                     RoundedRectangle(cornerRadius: Metrics.controlHeight / 2).stroke(HUD.glow.opacity(0.35), lineWidth: 0.75)
-                } else {
-                    RoundedRectangle(cornerRadius: Metrics.controlHeight / 2).fill(.quaternary)
                 }
             }
     }
@@ -128,7 +152,7 @@ struct ChatComposer: View {
     private var recordingBar: some View {
         HStack(spacing: 10) {
             Button(role: .destructive) { _ = recorder.stop(keep: false) } label: {
-                ComposerIcon(symbol: "trash.fill", hud: hud, tint: .red)
+                ComposerIcon(symbol: "trash.fill", hud: hud, tint: .red, size: hud ? Metrics.iconButton : Self.inlineButton)
             }
             .accessibilityLabel("Discard voice note")
             Circle().fill(.red).frame(width: 8, height: 8).accessibilityHidden(true)
@@ -143,12 +167,17 @@ struct ChatComposer: View {
             Button {
                 if let note = recorder.stop(keep: true) { Task { await chat.send(text: "", files: [note]) } }
             } label: {
-                ComposerIcon(symbol: "arrow.up", hud: hud)
+                ComposerIcon(symbol: "arrow.up", hud: hud, size: hud ? Metrics.iconButton : Self.inlineButton)
             }
             .accessibilityLabel("Send voice note")
         }
         .frame(maxWidth: .infinity, minHeight: Metrics.controlHeight)
+        .padding(.horizontal, hud ? 0 : 5)
+        .glassEffect(hud ? .identity : .regular, in: .capsule)
     }
+
+    /// The send / mic button inside the Standard appearance's glass field.
+    private static let inlineButton: CGFloat = 34
 
     private func startRecording() async {
         switch await recorder.start() {
@@ -211,15 +240,22 @@ struct ComposerIcon: View {
     let symbol: String
     var hud = false
     var tint: Color?
+    var size = Metrics.iconButton
+    /// Just the symbol, no filled circle (the mic inside the glass field).
+    var quiet = false
     @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Image(systemName: symbol)
             .contentTransition(.symbolEffect(.replace))
-            .font(.system(size: Metrics.iconButton * 0.42, weight: .semibold))
-            .foregroundStyle(hud ? HUD.deep : .white)
-            .frame(width: Metrics.iconButton, height: Metrics.iconButton)
-            .background(Circle().fill(tint.map(AnyShapeStyle.init) ?? (hud ? AnyShapeStyle(HUD.glow) : AnyShapeStyle(.tint))))
+            .font(.system(size: size * (quiet ? 0.5 : 0.42), weight: .semibold))
+            .foregroundStyle(quiet ? AnyShapeStyle(.secondary) : hud ? AnyShapeStyle(HUD.deep) : AnyShapeStyle(.white))
+            .frame(width: size, height: size)
+            .background {
+                if !quiet {
+                    Circle().fill(tint.map(AnyShapeStyle.init) ?? (hud ? AnyShapeStyle(HUD.glow) : AnyShapeStyle(.tint)))
+                }
+            }
             .opacity(isEnabled ? 1 : 0.4)
             .contentShape(Circle())
     }
