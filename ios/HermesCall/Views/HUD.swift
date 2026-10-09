@@ -131,3 +131,29 @@ struct HUDSurface: ViewModifier {
             .overlay(shape.stroke(tint.opacity(strong ? 0.8 : 0.28), lineWidth: strong ? 1.5 : 0.75))
     }
 }
+
+/// Standard appearance: the plain system background behind a screen.
+struct AmbientBackground: View {
+    var body: some View {
+        Color(.systemBackground).ignoresSafeArea().accessibilityHidden(true)
+    }
+}
+
+/// The owner's and the agent's bubble surfaces in the Standard appearance.
+@MainActor
+enum BubbleSurface {
+    /// The owner: the agent's colour, lit from the top edge.
+    static func owner(_ shape: some Shape) -> some View {
+        shape.fill(LinearGradient(colors: [HUD.alert, HUD.ownerBubble], startPoint: .topLeading, endPoint: .bottomTrailing))
+            .overlay(shape.stroke(LinearGradient(colors: [.white.opacity(0.35), .white.opacity(0)], startPoint: .top, endPoint: .center),
+                                  lineWidth: 0.75))
+            .shadow(color: HUD.ownerBubble.opacity(0.22), radius: 8, y: 4)
+    }
+
+    /// The agent: a soft grey card.
+    static func agent(_ shape: some Shape) -> some View {
+        shape.fill(Color(.secondarySystemBackground))
+            .overlay(shape.stroke(Color.primary.opacity(0.05), lineWidth: 0.5))
+    }
+}
+

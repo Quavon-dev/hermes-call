@@ -20,6 +20,10 @@ struct ChatView: View {
     @State private var atBottom = true
     @FocusState private var composing: Bool
     @FocusState private var searchFocused: Bool
+    @State private var showingSettings = false
+    @State private var showingAgents = false
+    @State private var managingAgents = false
+    @State private var addingAgent = false
 
     /// Pushed from the chat list (which owns the navigation stack) instead of standing alone.
     var embedded = false
@@ -55,21 +59,29 @@ struct ChatView: View {
     }
 
     private var screen: some View {
-        VStack(spacing: 0) {
-            if searching { searchBar }
-            ZStack {
-                messageList
-                if searching && !query.trimmingCharacters(in: .whitespaces).isEmpty { searchResults }
+        ZStack {
+            messageList
+            if searching && !query.trimmingCharacters(in: .whitespaces).isEmpty { searchResults }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) { if !hud { ConnectionBanner().padding(.top, 4) } }
+        // The messages scroll on under the composer, which turns into the search field while searching
+        // (at the bottom, under the thumb, as across iOS 26).
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if searching {
+                searchBar.transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                ChatComposer(hud: hud, composing: $composing)
             }
-            if !searching { ChatComposer(hud: hud, composing: $composing) }
         }
         .animation(.easeInOut(duration: 0.2), value: searching)
-        .background { if hud { Color.black.ignoresSafeArea() } }
+        .background { if hud { Color.black.ignoresSafeArea() } else { AmbientBackground() } }
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(hud ? AnyShapeStyle(Color.black) : AnyShapeStyle(.bar), for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+        .modifier(HUDNavigationBar(hud: hud))
         .toolbar { toolbar }
         .quickLookPreview($preview)
+        .sheet(isPresented: $showingSettings) { SettingsView().agentTheme() }
+        .sheet(isPresented: $managingAgents) { ProfilesView().agentTheme() }
+        .sheet(isPresented: $addingAgent) { AddRelayView().agentTheme() }
         .confirmationDialog("Delete this message on this iPhone?", isPresented: Binding(
             get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }), titleVisibility: .visible, presenting: pendingDelete) { message in
             Button("Delete", role: .destructive) { Task { await chat.delete(message) } }
@@ -91,7 +103,7 @@ struct ChatView: View {
                     }
                     ForEach(Array(chat.messages.enumerated()), id: \.element.id) { index, message in
                         if index == 0 || !Calendar.current.isDate(chat.messages[index - 1].date, inSameDayAs: message.date) {
-                            DayHeader(date: message.date).padding(.top, 8)
+                            DayHeader(date: message.date, hud: hud).padding(.top, 8)
                         }
                         let joinsPrevious = index > 0 && chat.messages[index - 1].joins(message)
                         let joinsNext = index + 1 < chat.messages.count && message.joins(chat.messages[index + 1])
@@ -142,7 +154,7 @@ struct ChatView: View {
             }
             .animation(.spring(response: 0.3, dampingFraction: 0.8), value: atBottom)
             .overlay(alignment: .bottomTrailing) {
-                if chat.window.hasNewer || !atBottom {
+                if chat.window.hasNewer || (!atBottom && !chat.messages.isEmpty && !searching) {
                     latestButton(proxy).transition(.scale(scale: 0.6).combined(with: .opacity))
                 }
             }
@@ -238,7 +250,7 @@ struct ChatView: View {
             Image(systemName: "arrow.down").font(.body.bold()).frame(width: 40, height: 40)
         }
         .buttonStyle(.glass)
-        .clipShape(Circle())
+        .buttonBorderShape(.circle)
         .padding(12)
         .accessibilityLabel("Show the newest messages")
     }
@@ -265,23 +277,42 @@ struct ChatView: View {
     private static let starters = ["What can you do?", "Plan my day", "What's on my calendar today?"]
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "lock.shield").font(.largeTitle).foregroundStyle(hud ? HUD.glow : .secondary)
-            Text("Chat with \(chat.agentName)").font(.headline)
+        VStack(spacing: 12) {
+            if hud {
+                Image(systemName: "lock.shield").font(.largeTitle).foregroundStyle(HUD.glow)
+            } else {
+                AgentAvatar(name: chat.agentName, size: 76, halo: true).padding(.bottom, 6)
+            }
+            Text("Chat with \(chat.agentName)").font(hud ? .headline : .system(.title2, design: .rounded, weight: .bold))
             Text("Messages, photos and voice notes are end-to-end encrypted to your bridge. The history stays on this iPhone.")
                 .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            VStack(spacing: 8) {
+            if !hud {
+                Button { Task { await calls.startCall() } } label: {
+                    Label("Call \(chat.agentName)", systemImage: "phone.fill").font(.headline)
+                        .padding(.horizontal, 10).frame(minHeight: 44)
+                }
+                .buttonStyle(.glassProminent)
+                .disabled(app.relayStatus != .connected || calls.inCall)
+                .padding(.top, 8)
+            }
+            VStack(spacing: 10) {
                 ForEach(Self.starters, id: \.self) { prompt in
                     Button { Task { await chat.send(text: prompt) } } label: {
-                        Text(prompt).font(.subheadline.weight(.medium))
-                            .padding(.horizontal, 14).padding(.vertical, 9)
-                            .background(Capsule().fill(hud ? AnyShapeStyle(HUD.glow.opacity(0.1)) : AnyShapeStyle(.tint.opacity(0.12))))
+                        if hud {
+                            Text(prompt).font(.subheadline.weight(.medium))
+                                .padding(.horizontal, 14).padding(.vertical, 9)
+                                .background(Capsule().fill(HUD.glow.opacity(0.1)))
+                        } else {
+                            Text(prompt).font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 18).padding(.vertical, 11)
+                                .glassEffect(.regular.interactive(), in: .capsule)
+                        }
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(hud ? HUD.glow : HUD.alert)
                 }
             }
-            .padding(.top, 8)
+            .padding(.top, 10)
         }
         .padding(.horizontal, 32)
     }
@@ -295,6 +326,7 @@ struct ChatView: View {
                 TextField("Search messages", text: $query)
                     .focused($searchFocused)
                     .submitLabel(.search)
+                    .onSubmit { if query.trimmingCharacters(in: .whitespaces).isEmpty { closeSearch() } }
                     .autocorrectionDisabled()
                 if !query.isEmpty {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
@@ -302,14 +334,27 @@ struct ChatView: View {
                         .accessibilityLabel("Clear")
                 }
             }
-            .padding(.horizontal, 10)
-            .frame(minHeight: 38)
-            .background(.quaternary, in: Capsule())
-            Button("Done") { closeSearch() }
+            .padding(.horizontal, 14)
+            .frame(minHeight: Metrics.controlHeight)
+            .modifier(SearchFieldSurface(hud: hud))
+            if hud {
+                Button("Done") { closeSearch() }
+            } else {
+                Button {
+                    withAnimation(.smooth(duration: 0.3)) { closeSearch() }
+                } label: {
+                    Image(systemName: "xmark").font(.body.weight(.semibold)).frame(width: 30, height: 30)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel("Done")
+                .accessibilityIdentifier("chat.search.done")
+            }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(hud ? AnyShapeStyle(Color.black) : AnyShapeStyle(.bar))
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+        .background { if hud { Color.black.ignoresSafeArea(edges: .bottom) } }
         .onAppear { searchFocused = true }
     }
 
@@ -324,8 +369,8 @@ struct ChatView: View {
             }
         }
         .listStyle(.plain)
-        .scrollContentBackground(hud ? .hidden : .automatic)
-        .background(hud ? AnyShapeStyle(Color.black) : AnyShapeStyle(.background))
+        .scrollContentBackground(.hidden)
+        .background { if hud { Color.black } else { AmbientBackground() } }
     }
 
     private func open(_ hit: ChatMessage) {
@@ -364,30 +409,36 @@ struct ChatView: View {
 
     // MARK: toolbar
 
+    /// Standard appearance on its own (not pushed from the chat list): settings sit top left.
+    private var ownsChrome: Bool { !hud && !embedded }
+
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        ToolbarItem(placement: .principal) {
-            VStack(spacing: 1) {
-                if hud {
-                    HUD.label(chat.agentName, size: 12).foregroundStyle(HUD.light)
-                } else {
-                    Text(chat.agentName).font(.headline)
-                }
-                Text(subtitle).font(.caption2)
-                    .foregroundStyle(agentWorking || chat.agentDraft != nil ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                    .contentTransition(.opacity)
-                    .animation(.easeInOut(duration: 0.2), value: subtitle)
+        if ownsChrome {
+            ToolbarItem(placement: .topBarLeading) {
+                Button { showingSettings = true } label: { Label("Settings", systemImage: "gearshape") }
+                    .accessibilityIdentifier("home.settings")
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("chat.title")
         }
-        ToolbarItem(placement: embedded ? .topBarTrailing : .topBarLeading) {
-            Button {
-                composing = false
-                searching = true
-            } label: {
-                Label("Search", systemImage: "magnifyingglass")
+        ToolbarItem(placement: .principal) {
+            if hud {
+                title
+            } else {
+                // Tap the agent to switch to another one, add one, or change it.
+                Button { showingAgents = true } label: { title }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Shows your agents")
+                    .popover(isPresented: $showingAgents, arrowEdge: .top) {
+                        AgentSwitcher(
+                            switchTo: { id in
+                                showingAgents = false
+                                if embedded { app.openChat(id) } else { app.activate(id) }
+                            },
+                            add: { showingAgents = false; addingAgent = true },
+                            manage: { showingAgents = false; managingAgents = true })
+                        .agentTheme()
+                        .presentationCompactAdaptation(.popover)
+                    }
             }
-            .disabled(searching)
         }
         if agentWorking && !searching {
             // Its own red circle, not part of the call button's glass capsule.
@@ -396,9 +447,27 @@ struct ChatView: View {
             ToolbarSpacer(.fixed, placement: .topBarTrailing)
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
+            Button {
+                if searching {
+                    withAnimation(.smooth(duration: 0.3)) { closeSearch() }
+                } else {
+                    composing = false
+                    withAnimation(.smooth(duration: 0.3)) { searching = true }
+                }
+            } label: {
+                Label(searching ? "Close search" : "Search", systemImage: searching ? "xmark" : "magnifyingglass")
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .accessibilityIdentifier("chat.search")
             Menu {
-                Button { Task { await calls.startCall() } } label: { Label("Call now", systemImage: "phone.fill") }
-                    .disabled(app.relayStatus != .connected || calls.inCall)
+                Button { Task { await calls.startCall(talkMode: .handsFree) } } label: {
+                    Label("Call hands-free", systemImage: "waveform")
+                }
+                .disabled(!canCall)
+                Button { Task { await calls.startCall(talkMode: .pushToTalk) } } label: {
+                    Label("Call with push to talk", systemImage: "hand.tap")
+                }
+                .disabled(!canCall)
                 Button { Task { await chat.send(text: ChatModel.callMeText) } } label: {
                     Label("Ask \(chat.agentName) to call me", systemImage: "phone.arrow.down.left")
                 }
@@ -411,11 +480,40 @@ struct ChatView: View {
                     Label("Stop agent", systemImage: "stop.circle")
                 }
             } label: {
-                Label("Call", systemImage: "phone")
+                Label("Call", systemImage: "phone.fill")
             } primaryAction: {
                 if !calls.inCall { Task { await calls.startCall() } }
             }
+            .accessibilityIdentifier("home.call")
         }
+    }
+
+    private var canCall: Bool { app.relayStatus == .connected && !calls.inCall }
+
+    /// The agent's name and status (with its avatar in Standard appearance).
+    private var title: some View {
+        HStack(spacing: 8) {
+            if !hud { AgentAvatar(name: chat.agentName, size: 30, speaking: agentWorking || chat.agentDraft != nil) }
+            VStack(alignment: hud ? .center : .leading, spacing: 1) {
+                if hud {
+                    HUD.label(chat.agentName, size: 12).foregroundStyle(HUD.light)
+                } else {
+                    HStack(spacing: 4) {
+                        Text(chat.agentName).font(.headline).lineLimit(1)
+                        Image(systemName: "chevron.down.circle.fill").font(.footnote)
+                            .symbolRenderingMode(.hierarchical).foregroundStyle(.secondary)
+                    }
+                }
+                Text(hud ? subtitle : shortSubtitle).font(.caption2)
+                    .foregroundStyle(agentWorking || chat.agentDraft != nil ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.2), value: subtitle)
+                    .lineLimit(1)
+            }
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("chat.title")
     }
 
     /// The agent is typing or a task of it runs: Stop sits next to the call button.
@@ -436,6 +534,17 @@ struct ChatView: View {
         .accessibilityIdentifier("chat.stop")
     }
 
+    /// Under the name in the Standard bar: a word or two (the offline banner says the rest).
+    private var shortSubtitle: String {
+        if chat.agentDraft != nil || chat.agentTyping || tasks.activeTask?.state == .running { return subtitle }
+        if app.activeProfile?.isDemo == true { return "demo" }
+        switch app.relayStatus {
+        case .connected: return "encrypted"
+        case .connecting: return "connecting…"
+        case .disconnected: return "offline"
+        }
+    }
+
     private var subtitle: String {
         if chat.agentDraft != nil { return "writing…" }
         if let task = tasks.activeTask, task.state == .running { return task.label + "…" }
@@ -446,6 +555,94 @@ struct ChatView: View {
         case .connecting: return "connecting…"
         case .disconnected: return "offline · messages wait in the outbox"
         }
+    }
+}
+
+/// HUD: an opaque black bar. Standard: the system's glass bar with its scroll edge blur.
+private struct HUDNavigationBar: ViewModifier {
+    let hud: Bool
+
+    func body(content: Content) -> some View {
+        if hud {
+            content.toolbarBackground(Color.black, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
+        } else {
+            content
+        }
+    }
+}
+
+/// The search field: a glass capsule (Standard), a hairline in the dark (HUD).
+private struct SearchFieldSurface: ViewModifier {
+    let hud: Bool
+
+    func body(content: Content) -> some View {
+        if hud {
+            content.background(.quaternary, in: Capsule())
+        } else {
+            content.glassEffect(.regular.interactive(), in: .capsule)
+        }
+    }
+}
+
+/// The agents, from the chat's title: switch with a tap, add one, or open the list to change them.
+private struct AgentSwitcher: View {
+    @Environment(AppModel.self) private var app
+    let switchTo: (UUID) -> Void
+    let add: () -> Void
+    let manage: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Agents").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                .padding(.horizontal, 12).padding(.top, 4)
+            ForEach(app.profiles) { profile in
+                Button { switchTo(profile.id) } label: { row(profile) }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("switcher.\(profile.bridgeName)")
+            }
+            Divider().padding(.vertical, 4).padding(.horizontal, 12)
+            action("Add an agent", symbol: "plus", run: add)
+            action("Manage agents", symbol: "slider.horizontal.3", run: manage)
+        }
+        .padding(8)
+        .frame(width: 300)
+    }
+
+    private func row(_ profile: RelayProfile) -> some View {
+        let active = profile.id == app.activeProfile?.id
+        let online = profile.isDemo || app.status(of: profile.id) == .connected
+        return HStack(spacing: 12) {
+            AgentAvatar(name: profile.bridgeName, size: 38, palette: profile.agentPalette)
+                .overlay(alignment: .bottomTrailing) {
+                    Circle().fill(online ? Color.green : Color.gray).frame(width: 11, height: 11)
+                        .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
+                        .offset(x: -3, y: -3)
+                }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(profile.bridgeName).font(.body.weight(.semibold)).lineLimit(1)
+                Text(profile.isDemo ? "Demo · on this iPhone" : online ? "Online" : "Offline")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            if active {
+                Image(systemName: "checkmark").font(.body.weight(.semibold)).foregroundStyle(.tint)
+            }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 16).fill(active ? AnyShapeStyle(.tint.opacity(0.12)) : AnyShapeStyle(.clear)))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(active ? .isSelected : [])
+    }
+
+    private func action(_ title: String, symbol: String, run: @escaping () -> Void) -> some View {
+        Button(action: run) {
+            Label(title, systemImage: symbol).font(.body.weight(.medium))
+                .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+                .padding(.horizontal, 12)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

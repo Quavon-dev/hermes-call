@@ -145,11 +145,8 @@ struct RootView: View {
             } else if presence {
                 PresenceView()
             } else {
-                TabView(selection: $app.tab) {
-                    Tab("Call", systemImage: "phone.fill", value: AppTab.call) { HomeView() }
-                    Tab("Chat", systemImage: "bubble.left.and.bubble.right.fill", value: AppTab.chat) { ChatHome() }
-                        .badge(chat.unread)
-                }
+                // Standard appearance: the conversation is the app; calls start from its call button.
+                ChatHome()
             }
         }
         .fullScreenCover(isPresented: .constant(callScreen)) { InCallView().agentTheme() }
@@ -163,6 +160,14 @@ struct RootView: View {
         .sheet(item: $app.route) { route in routeView(route).agentTheme() }
         .hudStyle(app.preferences.appearance == .hud)
         .onChange(of: calls.inCall) { _, live in if live { chat.player.stop() } }
+        #if DEBUG
+        .task {
+            // `-PresenceDemoAuto YES`: a simulated call starts by itself, as on the presence.
+            guard !presence, PresenceDemo.autoStart, !app.profiles.isEmpty, !calls.inCall else { return }
+            try? await Task.sleep(for: .seconds(1.5))
+            await calls.startCall()
+        }
+        #endif
         .task {
             // The Home Screen icon can be out of step with the setting (reinstall, restore): fix it once active.
             try? await Task.sleep(for: .seconds(1.5))

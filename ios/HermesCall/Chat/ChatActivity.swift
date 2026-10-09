@@ -46,7 +46,13 @@ struct TaskFeedCard: View {
             }
             .padding(12)
             .frame(maxWidth: 360, alignment: .leading)
-            .background { RoundedRectangle(cornerRadius: 18).fill(hud ? AnyShapeStyle(tint.opacity(0.06)) : AnyShapeStyle(.quaternary)) }
+            .background {
+                if hud {
+                    RoundedRectangle(cornerRadius: 18).fill(tint.opacity(0.06))
+                } else {
+                    BubbleSurface.agent(RoundedRectangle(cornerRadius: 18))
+                }
+            }
             .overlay { ScanningBorder(running: latest.state == .running && !reduceMotion, tint: tint) }
             .animation(.spring(response: 0.4, dampingFraction: 0.8), value: latest.step)
             .accessibilityElement(children: .combine)
@@ -199,7 +205,7 @@ struct StreamingBubble: View {
                     RoundedRectangle(cornerRadius: 16).fill(HUD.glow.opacity(0.05))
                         .overlay(RoundedRectangle(cornerRadius: 16).stroke(HUD.glow.opacity(0.22), lineWidth: 0.75))
                 } else {
-                    RoundedRectangle(cornerRadius: 20).fill(Color(.secondarySystemBackground))
+                    BubbleSurface.agent(RoundedRectangle(cornerRadius: 22))
                 }
             }
             .animation(.smooth(duration: 0.25), value: text)
@@ -240,7 +246,13 @@ struct TypingIndicator: View {
         .foregroundStyle(hud ? HUD.glow : .secondary)
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .background(RoundedRectangle(cornerRadius: 20).fill(hud ? AnyShapeStyle(HUD.glow.opacity(0.06)) : AnyShapeStyle(Color(.secondarySystemBackground))))
+        .background {
+            if hud {
+                RoundedRectangle(cornerRadius: 20).fill(HUD.glow.opacity(0.06))
+            } else {
+                BubbleSurface.agent(RoundedRectangle(cornerRadius: 22))
+            }
+        }
         .accessibilityElement()
         .accessibilityLabel("typing")
     }
@@ -259,10 +271,8 @@ struct SlashSuggestions: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .frame(height: min(CGFloat(commands.count), 4.5) * Self.rowHeight + 8)
-        .background(RoundedRectangle(cornerRadius: 18).fill(hud ? AnyShapeStyle(Color.black) : AnyShapeStyle(.regularMaterial)))
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay { if hud { RoundedRectangle(cornerRadius: 18).stroke(HUD.glow.opacity(0.35), lineWidth: 0.75) } }
-        .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+        .clipShape(RoundedRectangle(cornerRadius: 22))
+        .modifier(SuggestionSurface(hud: hud))
     }
 
     private var rows: some View {
@@ -293,6 +303,22 @@ struct SlashSuggestions: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("slash.\(command.name)")
             .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+}
+
+/// The slash-command list: a glass panel above the composer (Standard), black with a hairline (HUD).
+private struct SuggestionSurface: ViewModifier {
+    let hud: Bool
+
+    func body(content: Content) -> some View {
+        if hud {
+            content
+                .background(RoundedRectangle(cornerRadius: 22).fill(Color.black))
+                .overlay(RoundedRectangle(cornerRadius: 22).stroke(HUD.glow.opacity(0.35), lineWidth: 0.75))
+                .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+        } else {
+            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22))
         }
     }
 }

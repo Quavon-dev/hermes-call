@@ -34,7 +34,7 @@ struct InCallView: View {
             controls.padding(.bottom, 24)
         }
         .padding(.horizontal, 20)
-        .background(Color(.systemBackground))
+        .background { AmbientBackground() }
         .animation(.easeInOut(duration: 0.2), value: tasks.activeTask?.step)
         .animation(.easeInOut(duration: 0.2), value: tasks.activeTask?.state)
     }
@@ -43,9 +43,9 @@ struct InCallView: View {
 
     private var header: some View {
         VStack(spacing: 6) {
-            AgentAvatar(name: calls.peerName, size: 88, speaking: speaking)
-                .padding(.bottom, 10)
-            Text(calls.peerName).font(.title2.weight(.semibold)).multilineTextAlignment(.center).lineLimit(2)
+            AgentAvatar(name: calls.peerName, size: 104, speaking: speaking, halo: true)
+                .padding(.bottom, 14)
+            Text(calls.peerName).font(.system(.title, design: .rounded, weight: .bold)).multilineTextAlignment(.center).lineLimit(2)
             status.font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
             if !calls.callReason.isEmpty {
                 Text(calls.callReason).font(.callout).foregroundStyle(.secondary)
@@ -74,6 +74,10 @@ struct InCallView: View {
     }
 
     private var controls: some View {
+        GlassEffectContainer(spacing: 16) { controlStack }
+    }
+
+    private var controlStack: some View {
         VStack(spacing: 28) {
             HStack(spacing: 0) {
                 CallControl(icon: calls.isMuted ? "mic.slash.fill" : "mic.fill", label: calls.isMuted ? "Unmute" : "Mute",
@@ -89,9 +93,10 @@ struct InCallView: View {
                 Image(systemName: "phone.down.fill")
                     .font(.title)
                     .foregroundStyle(.white)
-                    .frame(width: buttonSize, height: buttonSize)
-                    .background(Circle().fill(.red))
+                    .frame(width: buttonSize * 1.15, height: buttonSize * 1.15)
+                    .glassEffect(.regular.tint(.red).interactive(), in: .circle)
             }
+            .buttonStyle(.plain)
             .accessibilityLabel("Hang up")
             .accessibilityIdentifier("call.hangUp")
         }
@@ -120,7 +125,7 @@ struct InCallView: View {
             .font(.headline)
             .foregroundStyle(.white)
             .frame(width: 140, height: 140)
-            .background(Circle().fill(calls.isTalking ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.tint)))
+            .glassEffect(.regular.tint(calls.isTalking ? .orange : HUD.alert).interactive(), in: .circle)
             .scaleEffect(calls.isTalking ? 1.05 : 1)
             .animation(.spring(duration: 0.2), value: calls.isTalking)
             .sensoryFeedback(.impact(weight: .light), trigger: calls.isTalking)
@@ -138,17 +143,34 @@ struct AgentAvatar: View {
     let name: String
     var size: CGFloat = 44
     var speaking = false
+    /// A soft glow of the agent's colour around it (the big avatars on the call screens).
+    var halo = false
+    /// Another agent's colours (lists of agents); nil: the active agent's.
+    var palette: AgentPalette?
+
+    private var glow: Color { palette.map { Color($0.glow) } ?? HUD.glow }
+    private var alert: Color { palette.map { Color($0.alert) } ?? HUD.alert }
+    private var deep: Color { palette.map { Color($0.ownerBubble) } ?? HUD.ownerBubble }
 
     var body: some View {
-        Circle().fill(HUD.alert)
+        Circle().fill(LinearGradient(colors: [glow, alert, deep], startPoint: .topLeading, endPoint: .bottomTrailing))
             .frame(width: size, height: size)
             .overlay {
                 Text(String(name.prefix(1)).uppercased())
-                    .font(.system(size: size * 0.42, weight: .semibold))
+                    .font(.system(size: size * 0.42, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.15), radius: 2, y: 1)
+            }
+            .overlay(Circle().stroke(LinearGradient(colors: [.white.opacity(0.55), .white.opacity(0)], startPoint: .top, endPoint: .bottom),
+                                     lineWidth: max(1, size / 60)))
+            .background {
+                if halo {
+                    Circle().fill(glow.opacity(0.45)).blur(radius: size * 0.35).scaleEffect(speaking ? 1.35 : 1.1)
+                }
             }
             .padding(5)
-            .overlay(Circle().stroke(HUD.alert.opacity(speaking ? 0.5 : 0), lineWidth: 2.5))
+            .overlay(Circle().stroke(alert.opacity(speaking ? 0.5 : 0), lineWidth: 2.5))
+            .scaleEffect(speaking ? 1.04 : 1)
             .animation(.easeInOut(duration: 0.25), value: speaking)
             .accessibilityHidden(true)
     }
@@ -162,7 +184,7 @@ private struct CallTaskRow: View {
             .font(.footnote.weight(.medium))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12).padding(.vertical, 6)
-            .background(Capsule().fill(Color(.secondarySystemBackground)))
+            .glassEffect(.regular, in: .capsule)
             .contentTransition(.opacity)
             .accessibilityElement(children: .combine)
     }
@@ -181,9 +203,14 @@ struct CallTranscript: View {
                         Text(caption.text)
                             .font(.callout)
                             .foregroundStyle(caption.fromAgent ? Color.primary : .white)
-                            .padding(.horizontal, 12).padding(.vertical, 8)
-                            .background(RoundedRectangle(cornerRadius: 18)
-                                .fill(caption.fromAgent ? AnyShapeStyle(Color(.secondarySystemBackground)) : AnyShapeStyle(HUD.ownerBubble)))
+                            .padding(.horizontal, 14).padding(.vertical, 9)
+                            .background {
+                                if caption.fromAgent {
+                                    BubbleSurface.agent(RoundedRectangle(cornerRadius: 20))
+                                } else {
+                                    BubbleSurface.owner(RoundedRectangle(cornerRadius: 20))
+                                }
+                            }
                         if caption.fromAgent { Spacer(minLength: 48) }
                     }
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -212,7 +239,7 @@ private struct CallControl: View {
                     .font(.title2)
                     .frame(width: size, height: size)
                     .foregroundStyle(active ? Color(.systemBackground) : Color.primary)
-                    .background(Circle().fill(active ? AnyShapeStyle(Color.primary) : AnyShapeStyle(Color(.secondarySystemBackground))))
+                    .glassEffect(active ? .regular.tint(.primary).interactive() : .regular.interactive(), in: .circle)
                 Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize()
             }
             .opacity(isEnabled ? 1 : 0.4)
@@ -231,7 +258,7 @@ private struct AudioOutputButton: View {
             RoutePicker()
                 .frame(width: size * 0.45, height: size * 0.45)
                 .frame(width: size, height: size)
-                .background(Circle().fill(Color(.secondarySystemBackground)))
+                .glassEffect(.regular.interactive(), in: .circle)
             Text("Audio").font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize()
         }
         .frame(maxWidth: .infinity)

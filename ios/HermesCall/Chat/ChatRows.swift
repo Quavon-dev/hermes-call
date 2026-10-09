@@ -40,8 +40,11 @@ struct MessageRow: View {
                 .contextMenu { deleteButton }
         } else if message.role == .system {
             Label(message.systemText, systemImage: systemSymbol)
-                .font(.caption)
+                .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
+                .padding(.horizontal, hud ? 0 : 12)
+                .padding(.vertical, hud ? 0 : 6)
+                .modifier(PillSurface(hud: hud))
                 .padding(.vertical, 4)
                 .frame(maxWidth: .infinity)
                 .contextMenu { deleteButton }
@@ -62,8 +65,8 @@ struct MessageRow: View {
     private var showsFooter: Bool { !joinsNext || message.status == .failed || message.status == .pending }
 
     private var bubbleShape: UnevenRoundedRectangle {
-        let full: CGFloat = hud ? 16 : 20
-        let joined: CGFloat = 6
+        let full: CGFloat = hud ? 16 : 22
+        let joined: CGFloat = hud ? 6 : 8
         let top = joinsPrevious ? joined : full
         let bottom = joinsNext ? joined : full
         return isOwner
@@ -102,8 +105,8 @@ struct MessageRow: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, hud ? 12 : 14)
+        .padding(.vertical, hud ? 8 : 10)
         // Links and controls in the owner's blue bubble are white (not the bubble's own tint).
         .tint(isOwner && !hud ? .white : nil)
         .environment(\.onOwnerBubble, isOwner && !hud)
@@ -136,11 +139,9 @@ struct MessageRow: View {
             bubbleShape.fill(tint.opacity(isOwner ? 0.1 : 0.05))
                 .overlay(bubbleShape.stroke(tint.opacity(0.22), lineWidth: 0.75))
         } else if isOwner {
-            bubbleShape.fill(LinearGradient(colors: [HUD.ownerBubble.opacity(0.88), HUD.ownerBubble], startPoint: .top, endPoint: .bottom))
-                .shadow(color: HUD.ownerBubble.opacity(0.25), radius: 6, y: 3)
+            BubbleSurface.owner(bubbleShape)
         } else {
-            bubbleShape.fill(Color(.secondarySystemBackground))
-                .overlay(bubbleShape.stroke(Color.primary.opacity(0.06), lineWidth: 0.5))
+            BubbleSurface.agent(bubbleShape)
         }
     }
 
@@ -151,6 +152,7 @@ struct MessageRow: View {
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
+        .padding(.horizontal, 6)
     }
 
     @ViewBuilder private var statusIcon: some View {
@@ -168,14 +170,32 @@ struct MessageRow: View {
     }
 }
 
+/// Small centred captions in the chat (days, calls): a glass pill in Standard appearance.
+struct PillSurface: ViewModifier {
+    let hud: Bool
+    /// HUD only: a faint fill (day headers) instead of nothing (call lines).
+    var filled = false
+
+    func body(content: Content) -> some View {
+        if !hud {
+            content.glassEffect(.regular, in: .capsule)
+        } else if filled {
+            content.background(.quaternary.opacity(0.6), in: Capsule())
+        } else {
+            content
+        }
+    }
+}
+
 /// "Today", "Yesterday", or the date, between the messages of different days.
 struct DayHeader: View {
     let date: Date
+    var hud = false
 
     var body: some View {
         Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            .padding(.horizontal, 10).padding(.vertical, 3)
-            .background(.quaternary.opacity(0.6), in: Capsule())
+            .padding(.horizontal, 12).padding(.vertical, 5)
+            .modifier(PillSurface(hud: hud, filled: true))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
             .accessibilityAddTraits(.isHeader)
