@@ -31,6 +31,14 @@ one the app pinned: a new self-signed certificate (reinstall, `rm /etc/caddy/her
 switch between IP and domain, or somebody in between. If you changed it yourself, pair again;
 otherwise check the network you are on.
 
+**"Couldn't set up a secure connection" (TLS error -1200/…).** The TLS handshake itself failed, before
+any key was compared, so the pairing link is fine. Something between the phone and Caddy breaks
+TLS: a VPN, a proxy, antivirus HTTPS scanning, or port forwarding into a VM or WSL2. Check that
+the relay address in the link (`r=`) is exactly the one you opened in Safari, including the port.
+On WSL2, prefer mirrored networking (`networkingMode=mirrored` in `.wslconfig`) or run Tailscale
+inside WSL instead of a `netsh portproxy` forward. The second number is the TLS error, and the
+details are in Console.app (subsystem `de.quavon.hermescall`, category `tls`).
+
 **The bridge does not connect to the relay.** `hermes-call-bridge status` shows `"connected": false`:
 the bridge needs outbound TCP 443 to the relay. After `relay add`, restart it
 (`systemctl restart hermes-call-bridge`). A relay moved to a new domain needs a new bridge pairing.

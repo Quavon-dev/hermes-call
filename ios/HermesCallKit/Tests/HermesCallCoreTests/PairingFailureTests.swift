@@ -19,8 +19,9 @@ struct PairingFailureTests {
         #expect(PairingFailure.classify(URLError(.cannotFindHost)) == .unreachable)
         #expect(PairingFailure.classify(URLError(.notConnectedToInternet)) == .unreachable)
         #expect(PairingFailure.classify(URLError(.timedOut)) == .unreachable)
-        #expect(PairingFailure.classify(URLError(.serverCertificateUntrusted)) == .tlsFailed(-1202))
-        #expect(PairingFailure.classify(URLError(.secureConnectionFailed)) == .tlsFailed(-1200))
+        #expect(PairingFailure.classify(URLError(.serverCertificateUntrusted)) == .tlsFailed("-1202"))
+        #expect(PairingFailure.classify(URLError(.secureConnectionFailed, userInfo: ["_kCFStreamErrorCodeKey": -9806]))
+            == .tlsFailed("-1200/-9806"))
         #expect(PairingFailure.classify(URLError(.badURL)) == .other)
     }
 
