@@ -10,7 +10,7 @@ struct RelayClientTests {
     @Test func tooManyDevicesHasItsOwnPairingMessage() {
         let limit = AddRelayView.explain(.tooManyDevices, relay: "relay.example.com")
         #expect(limit.contains("as many phones"))
-        let others: [PairingFailure] = [.invalidInput, .unreachable, .tlsMismatch, .rateLimited, .relayBusy, .wrongOrExpiredCode, .other]
+        let others: [PairingFailure] = [.invalidInput, .unreachable, .tlsMismatch, .tlsFailed(-1200), .rateLimited, .relayBusy, .wrongOrExpiredCode, .other]
         #expect(others.allSatisfy { AddRelayView.explain($0, relay: "relay.example.com") != limit })
     }
 

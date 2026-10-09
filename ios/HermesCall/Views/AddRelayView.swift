@@ -202,6 +202,9 @@ struct AddRelayView: View {
         case .tlsMismatch:
             "The relay's certificate does not match the pairing link, so nothing was sent. If the relay got a new "
                 + "certificate, create a new code on the bridge; otherwise someone may be in between."
+        case .tlsFailed(let code):
+            "Couldn't set up a secure connection to \(relay) (TLS error \(code)), so nothing was sent. The pairing link "
+                + "is not the problem: check what sits between this iPhone and the relay (VPN, proxy, port forwarding)."
         case .rateLimited:
             "Too many pairing attempts from this network. Wait 15 minutes, then try again with a new code."
         case .relayBusy:

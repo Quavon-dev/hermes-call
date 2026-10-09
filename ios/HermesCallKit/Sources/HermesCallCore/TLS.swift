@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 import Security
 
 /// SPKI SHA-256 pin, identical to hermescall_common.tls.spki_pin (base64url, no padding).
@@ -36,6 +37,7 @@ final class RelayTrust: NSObject, URLSessionWebSocketDelegate, @unchecked Sendab
     enum Mode { case pinned(String), webPKI, firstContact }
 
     private let mode: Mode
+    private let log = Logger(subsystem: "de.quavon.hermescall", category: "tls")
     private let lock = NSLock()
     private var observed: String?
     private var mismatched = false
@@ -69,6 +71,9 @@ final class RelayTrust: NSObject, URLSessionWebSocketDelegate, @unchecked Sendab
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error, lock.withLock({ openState == nil }) {
+            log.error("relay connection failed before open: \(String(describing: error), privacy: .public)")
+        }
         finishOpen(.failure(Self.openError(status: (task.response as? HTTPURLResponse)?.statusCode,
                                            pinMismatch: lock.withLock { mismatched }, error: error)))
     }
@@ -96,7 +101,9 @@ final class RelayTrust: NSObject, URLSessionWebSocketDelegate, @unchecked Sendab
         case .webPKI:
             return (.performDefaultHandling, nil)
         case .pinned(let expected):
-            guard TLSPin.pin(of: trust) == expected else {
+            let observed = TLSPin.pin(of: trust)
+            guard observed == expected else {
+                log.error("relay TLS pin mismatch: observed \(observed ?? "none (not an EC P-256/P-384 key)", privacy: .public), expected \(expected, privacy: .public)")
                 lock.withLock { mismatched = true }
                 return (.cancelAuthenticationChallenge, nil)
             }

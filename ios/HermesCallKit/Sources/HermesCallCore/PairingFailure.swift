@@ -6,8 +6,10 @@ public enum PairingFailure: Equatable, Sendable {
     case invalidInput
     /// No connection to the relay (wrong address, offline, relay down).
     case unreachable
-    /// The relay's TLS key is not the one in the pairing link (or its certificate is invalid).
+    /// The relay's TLS key is not the one in the pairing link.
     case tlsMismatch
+    /// The TLS handshake failed for another reason; carries the `URLError` code.
+    case tlsFailed(Int)
     /// The relay refuses more attempts from this network for a while (HTTP 429).
     case rateLimited
     /// The relay is at its connection limit (HTTP 503).
@@ -46,7 +48,7 @@ public enum PairingFailure: Equatable, Sendable {
         switch error.code {
         case .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid,
              .serverCertificateHasUnknownRoot, .clientCertificateRejected, .secureConnectionFailed:
-            .tlsMismatch
+            .tlsFailed(error.code.rawValue)
         case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .timedOut, .notConnectedToInternet,
              .networkConnectionLost, .internationalRoamingOff, .dataNotAllowed, .cannotLoadFromNetwork:
             .unreachable
