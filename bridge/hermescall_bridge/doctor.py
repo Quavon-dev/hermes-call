@@ -72,6 +72,23 @@ def _language(config: Config) -> Check:
     return Check("language", "ok", detail)
 
 
+def _voice_names(value: object) -> set[str] | None:
+    if not isinstance(value, list):
+        return None
+    names: set[str] = set()
+    for item in value:
+        if isinstance(item, str):
+            names.add(item)
+            continue
+        if isinstance(item, dict):
+            for key in ("id", "name", "voice"):
+                name = item.get(key)
+                if isinstance(name, str) and name:
+                    names.add(name)
+                    break
+    return names
+
+
 async def _voice(config: Config) -> Check:
     """The configured voice is one the TTS service offers (a missing German TTS shows up here)."""
     try:
@@ -80,9 +97,10 @@ async def _voice(config: Config) -> Check:
         voices = response.json().get("voices") if response.status_code == 200 else None
     except (httpx.HTTPError, ValueError, AttributeError) as exc:
         return Check("voice", "warn", f"{config.tts_url}/v1/audio/voices: {exc.__class__.__name__}")
-    if not isinstance(voices, list):
-        return Check("voice", "warn", f"{config.tts_url} does not list its voices; {config.tts_voice} not checked")
-    if not set(re.sub(r"\([\d.]+\)", "", config.tts_voice).split("+")) <= set(voices):
+    names = _voice_names(voices)
+    if names is None or not names:
+        return Check("voice", "warn", f"{config.tts_url} does not list usable voice names; {config.tts_voice} not checked")
+    if not set(re.sub(r"\([\d.]+\)", "", config.tts_voice).split("+")) <= names:
         return Check("voice", "fail", f"{config.tts_voice} is not offered by {config.tts_url} (language {config.language})")
     return Check("voice", "ok", f"{config.tts_voice} offered by {config.tts_url}")
 
