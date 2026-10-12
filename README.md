@@ -32,6 +32,17 @@ connections. The relay only ever sees ciphertext.
 
 ---
 
+## 🐳 Quick start (Docker)
+
+Run the relay on a Linux Docker host with the existing [Docker Compose setup](docs/relay.md#docker-compose),
+or build it locally and publish it through **Tailscale Serve or Funnel** using
+[`relay/deploy/docker-compose.tailscale.yml`](relay/deploy/docker-compose.tailscale.yml).
+The [Tailscale setup guide](docs/relay.md#docker-compose-with-tailscale) covers configuration,
+secrets, starting the stack and pairing. No Proxmox is required. The bridge still runs next to Hermes.
+
+Tailscale Serve provides private HTTPS and WebSockets (Funnel enables public access); voice calls
+also need a directly reachable TURN server (included as coturn in the sample).
+
 ## ⚡ Quick start (Proxmox VE)
 
 **1 · Relay**: one command on the Proxmox host, as root:

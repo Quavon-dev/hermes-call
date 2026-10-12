@@ -17,3 +17,5 @@ ios/build-device/
 ios/build-sim/
 ios/Config/Identity.local.xcconfig
 .internal/
+relay/deploy/config/
+relay/deploy/.env
