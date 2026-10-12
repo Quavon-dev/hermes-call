@@ -1,0 +1,23 @@
+# Tailscale HTTPS hostname proxied to http://relay:8743.
+authority = "hermes-call-relay.YOUR-TAILNET.ts.net"
+tls_pin = ""
+listen_host = "0.0.0.0"
+listen_port = 8743
+db_path = "/var/lib/hermescall-relay/relay.db"
+secrets_dir = "/etc/hermescall-relay"
+trust_proxy = true
+# Trust only Tailscale's fixed address, never the whole Docker subnet.
+trusted_proxies = ["172.30.87.10/32"]
+log_format = "text"
+
+[turn]
+# Hostname pointing directly to the coturn host; Serve/Funnel does not carry TURN.
+urls = ["turn:turn.example.com:3478?transport=udp", "turn:turn.example.com:3478?transport=tcp"]
+ttl = 5400
+
+[apns]
+enabled = false
+
+[push_gateway]
+enabled = true
+url = "https://hermes-push.quavon.de"

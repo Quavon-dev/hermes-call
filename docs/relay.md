@@ -298,6 +298,106 @@ version it shipped with, `HERMESCALL_RELAY_VERSION=X.Y.Z docker compose up -d` m
 one. `:latest` is the newest release and `:edge` follows `main` (not for production); neither is
 used by the compose file. Pin the image digests once it works.
 
+### Build the image locally
+
+From the repository root:
+
+```bash
+docker build -f relay/Dockerfile -t hermes-call-relay:local .
+```
+
+The existing Caddy Compose stack can also build from this checkout. After configuring
+`relay/deploy/config` as above, run:
+
+```bash
+HERMESCALL_RELAY_VERSION=local RELAY_DOMAIN=relay.example.com docker compose -f relay/deploy/docker-compose.yml up -d --build
+```
+
+Local builds use the source in your checkout; the published release images follow the signing
+process in [releasing.md](releasing.md#container-image).
+
+### Docker Compose with Tailscale
+
+[`docker-compose.tailscale.yml`](../relay/deploy/docker-compose.tailscale.yml) builds and runs
+three containers: the relay, Tailscale, and coturn. The relay database and attachments persist in
+`relay-data`; Tailscale's node identity persists in `tailscale-state`. Deploy on a **Linux Docker
+Engine host** because coturn uses host networking. Run only one Compose stack on a host: the
+Caddy and Tailscale samples share a project name, network and relay data volume.
+
+The default is **Tailscale Serve**, accessible only inside your tailnet. Install Tailscale on
+both the iPhone and Hermes host, connect them to the same tailnet and permit HTTPS access to
+this node in your tailnet policy. To make HTTPS publicly accessible instead, enable Funnel
+as described below. The bridge still runs next to Hermes.
+
+1. Enable MagicDNS and HTTPS certificates in the Tailscale admin console. Generate a
+   non-ephemeral auth key for this persistent server. Export it in your shell as `TS_AUTHKEY`,
+   or store `TS_AUTHKEY=tskey-auth-...` in the ignored `relay/deploy/.env` file and pass
+   `--env-file relay/deploy/.env` to every Compose command. The Compose file requires a key;
+   `TS_AUTH_ONCE=true` reuses the persisted login on subsequent starts.
+2. From the repository root, prepare the relay configuration:
+
+   ```bash
+   mkdir -p relay/deploy/config
+   cp relay/deploy/compose/relay.tailscale.toml.example relay/deploy/config/relay.toml
+   cp relay/deploy/compose/turnserver.conf.example relay/deploy/config/turnserver.conf
+   openssl rand -hex 32 > relay/deploy/config/turn_secret
+   openssl genpkey -algorithm ed25519 -out relay/deploy/config/push_gateway_key
+   ```
+
+   Set `authority` in `config/relay.toml` to the node's full HTTPS hostname, for example
+   `hermes-call-relay.your-tailnet.ts.net`. Keep `tls_pin` empty for the publicly trusted
+   HTTPS certificate. Tailscale substitutes its actual certificate domain into
+   [`compose/tailscale/serve.json`](../relay/deploy/compose/tailscale/serve.json) automatically.
+   Check the actual hostname with `tailscale status` after starting and update `authority`
+   before generating pairing invitations if the node was assigned a different name.
+
+   Set `turn.urls` to a directly reachable TURN hostname, for example `turn.example.com`.
+   Set `realm=turn.example.com` in `config/turnserver.conf` and replace `CHANGE_ME` with the
+   exact contents of `config/turn_secret`. Behind NAT add
+   `external-ip=<public IP>/<host LAN IP>`. Forward/allow **3478 TCP and UDP** and
+   **49160–49200 UDP** to this host. Serve and Funnel proxy HTTPS/WebSockets, not native TURN
+   traffic. With CGNAT, use a reachable external TURN server and configure its URLs and
+   matching secret in the relay; omit the sample's local coturn service.
+
+   ```bash
+   sudo chown -R 10001:10001 relay/deploy/config
+   sudo chmod 700 relay/deploy/config
+   sudo chmod 600 relay/deploy/config/*
+   ```
+
+   The relay and coturn run as UID 10001. Tailscale uses userspace networking, with no
+   `/dev/net/tun` mount or extra capabilities.
+3. Start the stack and inspect Tailscale:
+
+   ```bash
+   docker compose -f relay/deploy/docker-compose.tailscale.yml up -d --build
+   docker compose -f relay/deploy/docker-compose.tailscale.yml exec tailscale tailscale status
+   docker compose -f relay/deploy/docker-compose.tailscale.yml exec tailscale tailscale serve status
+   ```
+
+   From a tailnet-connected device, check `https://<node-hostname>/healthz`. Once `authority`
+   matches that hostname, generate a bridge invitation:
+
+   ```bash
+   docker compose -f relay/deploy/docker-compose.tailscale.yml exec relay python3 -m hermescall_relay.cli --config /etc/hermescall-relay/relay.toml pair
+   ```
+
+   On the Hermes host, run the printed `hermes-call-bridge relay add '<link>'`, restart the
+   bridge, then use `hermes-call-bridge device add --name iPhone` ([bridge setup](bridge.md)).
+
+For **public access**, enable [Tailscale Funnel](https://tailscale.com/docs/features/tailscale-funnel)
+in your tailnet policy and change `AllowFunnel["${TS_CERT_DOMAIN}:443"]` to `true` in
+`compose/tailscale/serve.json`. Tailscale watches the mounted configuration directory and applies
+changes. Public HTTPS clients then do not need Tailscale installed; TURN remains separate.
+
+Only Tailscale's fixed Docker address `172.30.87.10/32` is trusted for forwarded client addresses.
+If the subnet overlaps your network, change the subnet, Tailscale address and `trusted_proxies`
+together. The Tailscale image defaults to `v1.102.5`; override `TAILSCALE_IMAGE` with a tested tag
+or digest to update it. `down` keeps data and node identity; `down -v` deletes both.
+
+Configuration follows Tailscale's [Docker parameters](https://tailscale.com/docs/features/containers/docker/docker-params)
+and [Serve/Funnel example](https://tailscale.com/blog/docker-tailscale-guide).
+
 ## Install on a home server (Proxmox or any LXC/VM host)
 
 > **Check first:** many cable and fibre lines have **no public IPv4** (DS-Lite, carrier-grade

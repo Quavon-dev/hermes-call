@@ -1,0 +1,71 @@
+# Standalone Tailscale sample; setup in docs/relay.md.
+# TS_AUTHKEY=... docker compose -f relay/deploy/docker-compose.tailscale.yml up -d --build
+# Serve is tailnet-only by default. Enable AllowFunnel in compose/tailscale/serve.json
+# for public HTTPS. TURN uses a separate, directly reachable server.
+name: hermes-call
+
+services:
+  relay:
+    image: hermes-call-relay:local
+    build:
+      context: ../..
+      dockerfile: relay/Dockerfile
+    command: ["-m", "hermescall_relay.cli", "--config", "/etc/hermescall-relay/relay.toml", "serve"]
+    environment:
+      HEALTH_PORT: "8743"
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ./config:/etc/hermescall-relay:ro
+      - relay-data:/var/lib/hermescall-relay
+    networks: [relay]
+    restart: unless-stopped
+    stop_grace_period: 20s
+
+  tailscale:
+    image: ${TAILSCALE_IMAGE:-tailscale/tailscale:v1.102.5}
+    hostname: hermes-call-relay
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?set TS_AUTHKEY to a Tailscale auth key}
+      TS_AUTH_ONCE: "true"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./compose/tailscale:/config:ro
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      relay:
+        # Matches trusted_proxies in compose/relay.tailscale.toml.example.
+        ipv4_address: 172.30.87.10
+    depends_on:
+      relay:
+        condition: service_healthy
+    restart: unless-stopped
+
+  coturn:
+    image: coturn/coturn:4
+    user: "10001:10001"
+    network_mode: host
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    volumes:
+      - ./config/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    read_only: true
+    tmpfs: [/var/lib/coturn, /var/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+networks:
+  relay:
+    ipam:
+      config:
+        - subnet: 172.30.87.0/24
+
+volumes:
+  relay-data:
+  tailscale-state:
