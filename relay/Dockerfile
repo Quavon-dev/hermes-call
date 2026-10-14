@@ -13,7 +13,7 @@
 # purpose: Debian's mirrors keep only the current version of a package, so a pin would break the
 # build at the next security update instead of picking it up. Rebuilds (CI, weekly) take the
 # fixed packages; the digest pin and the image scan decide what is new.
-FROM debian:13-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
+FROM debian:13-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 python3-aiohttp python3-httpx python3-h2 \
