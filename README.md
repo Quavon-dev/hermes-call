@@ -25,6 +25,10 @@
   <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
+<p align="center">
+  <a href="https://testflight.apple.com/join/uPy1mUny"><img alt="Download on TestFlight" src="https://img.shields.io/badge/Download_on-TestFlight-0D96F6?style=for-the-badge&logo=apple&logoColor=white"></a>
+</p>
+
 Your agent rings your iPhone like a real call, also on the lock screen. You call it or text it from
 the app, and it can ask your phone for the context you allow. Everything runs on hardware you own:
 a small **relay** with a public address, and a **bridge** next to Hermes that never accepts inbound
@@ -92,7 +96,7 @@ pct exec <hermes-id> -- /usr/local/bin/hermes-call-bridge device add --name iPho
 
 Scan the QR code with the app, then restart Hermes and its gateway once so they load the plugin.
 
-**4 · App**: Hermes Call is on its way to the App Store (TestFlight until then). No relay yet? The
+**4 · App**: Hermes Call is on its way to the App Store; until then, [join the TestFlight beta](https://testflight.apple.com/join/uPy1mUny). No relay yet? The
 app has an offline **demo agent** to try it first. You can also
 [build it yourself](docs/ios.md#build-your-own-copy) with your own Apple team (then your relay
 needs your own APNs key).
@@ -108,7 +112,7 @@ Something not working? [Troubleshooting](docs/troubleshooting.md).
 | Relay in containers | Docker Compose with coturn and Caddy | signed image `ghcr.io/quavon-dev/hermes-call-relay` ([docs](docs/relay.md#docker-compose)) |
 | Relay behind your proxy | same, TLS by Nginx Proxy Manager/Traefik/Caddy | `relay/install.sh install --domain … --tls proxy --proxy-from <proxy IP>` ([docs](docs/relay.md#behind-your-own-reverse-proxy-nginx-proxy-manager-traefik-caddy)) |
 | Bridge + plugin | next to Hermes | `curl -fsSL …/bridge/get.sh \| sudo bash` ([docs](docs/bridge.md)) |
-| iPhone app | App Store (TestFlight until the release) | or Xcode with your own team ([docs](docs/ios.md)) |
+| iPhone app | App Store ([TestFlight](https://testflight.apple.com/join/uPy1mUny) until the release) | or Xcode with your own team ([docs](docs/ios.md)) |
 
 Proxmox helper without questions:
 `var_relay_address=relay.example.com var_relay_tls=proxy var_relay_proxy_from=192.168.0.10 bash -c "$(curl …)"`.
