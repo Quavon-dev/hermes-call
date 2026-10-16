@@ -44,6 +44,7 @@ LimitNOFILE=256
 CapabilityBoundingSet=
 AmbientCapabilities=
 SystemCallArchitectures=native
+SystemCallErrorNumber=EPERM
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged
 UMask=0077
