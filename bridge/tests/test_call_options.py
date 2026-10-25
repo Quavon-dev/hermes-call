@@ -219,6 +219,19 @@ async def test_undeliverable_approval_falls_back_to_deny(monkeypatch) -> None:
 
 # ---- J1/J2 -------------------------------------------------------------------------
 
+def test_doctor_voice_names_accepts_string_and_object_lists() -> None:
+    from hermescall_bridge.doctor import _voice_names
+
+    assert _voice_names(["bm_george", "df_eva"]) == {"bm_george", "df_eva"}
+    assert _voice_names([{"id": "bm_george"}, {"name": "df_eva"}, {"voice": "dm_bernd"}]) == {
+        "bm_george",
+        "df_eva",
+        "dm_bernd",
+    }
+    assert _voice_names([{"unknown": "x"}, 7]) == set()
+    assert _voice_names({"voices": ["x"]}) is None
+
+
 
 async def test_healthz_and_metrics_need_no_token_but_nothing_else_opens(h) -> None:  # noqa: F811
     METRICS.call_latency.observe(1.2)
